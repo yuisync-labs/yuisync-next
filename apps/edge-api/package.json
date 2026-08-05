@@ -1,0 +1,28 @@
+{
+  "name": "@yuisync/edge-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --env local",
+    "types": "wrangler types worker-configuration.d.ts --env-interface EdgeEnv --strict-vars false",
+    "types:check": "wrangler types worker-configuration.d.ts --env-interface EdgeEnv --strict-vars false --check",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "deploy:dry-run": "wrangler deploy --env staging --dry-run --outdir dist",
+    "deploy:staging": "wrangler deploy --env staging",
+    "rollback:staging": "wrangler rollback --env staging"
+  },
+  "dependencies": {
+    "hono": "^4.13.0"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.20.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.119.0"
+  }
+}

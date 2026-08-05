@@ -1,0 +1,5 @@
+# A fundação de health/readiness não exige secrets.
+# Copie para .dev.vars somente quando uma rota futura precisar autenticar adapters.
+# Nunca use credenciais de produção no YuiSync Next.
+
+# EDGE_INTERNAL_TOKEN=replace-with-local-only-value
