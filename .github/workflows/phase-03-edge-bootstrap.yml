@@ -1,4 +1,4 @@
-# Retry after registering the new npm workspace in the lockfile.
+# Retry with the current Workers Vitest ambient modules.
 name: Phase 3 edge bootstrap
 
 on:
