@@ -1,5 +1,11 @@
 export type LegacyRecord = Record<string, unknown>
 
+export type LegacyContractAdapterErrorBody = Readonly<{
+  code: 'LEGACY_CONTRACT_ADAPTER_FAILED'
+  field: string
+  message: string
+}>
+
 export class LegacyContractAdapterError extends Error {
   readonly code = 'LEGACY_CONTRACT_ADAPTER_FAILED' as const
   readonly field: string
@@ -10,7 +16,7 @@ export class LegacyContractAdapterError extends Error {
     this.field = field
   }
 
-  toJSON(): { code: typeof this.code; field: string; message: string } {
+  toJSON(): LegacyContractAdapterErrorBody {
     return { code: this.code, field: this.field, message: this.message }
   }
 }
