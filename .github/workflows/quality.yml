@@ -41,6 +41,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run typecheck:contracts
+      - run: npm run check:contract-boundaries
+      - run: npm run test:contracts
       - run: npm run test
       - run: npm run test:petbot
       - run: npm run test:luna:unit
