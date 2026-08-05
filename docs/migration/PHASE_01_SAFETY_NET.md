@@ -21,24 +21,33 @@ Transformar a CI e o ambiente de desenvolvimento em uma fonte confiável de diag
 - `npm run audit:ci` era o primeiro passo do único job de qualidade;
 - o advisory de `undici` interrompia o job antes de typecheck, testes e build;
 - `undici` entra na árvore como dependência de desenvolvimento do `jsdom`;
-- testes de tenant e E2E dependem de secrets de homologação e são condicionais.
+- testes de tenant e E2E dependem de secrets de homologação e são condicionais;
+- ao liberar a execução da suíte completa, um teste do PetBot revelou que opções padrão de MotoDog eram anexadas mesmo quando o tenant possuía uma lista explícita própria.
 
-## Mudanças planejadas
+## Mudanças realizadas
 
 ### CI
 
-- usar `.nvmrc` como fonte única da versão do Node;
-- manter `security-audit`, `quality` e `e2e` como jobs independentes;
-- impedir que um advisory esconda regressões funcionais;
-- cancelar execuções antigas da mesma branch;
-- conceder somente permissão de leitura do conteúdo.
+- `.nvmrc` passou a ser a fonte única da versão do Node;
+- `security-audit`, `quality` e `e2e` são jobs independentes;
+- um advisory não impede a execução dos testes funcionais;
+- execuções antigas da mesma branch são canceladas;
+- o workflow usa permissão mínima de leitura do conteúdo.
 
 ### Dependências
 
-- atualizar a resolução transitiva vulnerável de `undici` para uma versão corrigida compatível com o range do `jsdom`;
-- executar `npm audit` após regeneração do lockfile;
-- não adicionar `undici` à allowlist;
-- revisar advisories temporariamente aceitos e seus prazos.
+- `undici` foi fixado em `7.29.0` por `overrides`, dentro da linha 7.x aceita pelo `jsdom` e compatível com Node 22;
+- o lockfile foi regenerado;
+- `npm run audit:ci` foi validado sem adicionar `undici` à allowlist;
+- advisories previamente aceitos continuam com prazo explícito de revisão.
+
+### PetBot
+
+- a lista explícita de opções de transporte do tenant passou a ser autoritativa;
+- as opções padrão são usadas somente quando a loja não configurou nenhuma opção;
+- o teste de caracterização existente permanece como proteção contra regressão.
+
+Essa correção funcional é restrita à regressão descoberta pela safety net e não altera contratos de pedido, agenda, banco ou integrações externas.
 
 ### Testes
 
@@ -54,26 +63,26 @@ Transformar a CI e o ambiente de desenvolvimento em uma fonte confiável de diag
 
 A Fase 1 somente termina quando:
 
-- [ ] `npm ci` funciona em Node 22;
-- [ ] `npm run audit:ci` não possui bloqueios não aceitos;
+- [x] `npm ci` funciona em Node 22;
+- [x] `npm run audit:ci` não possui bloqueios não aceitos;
 - [ ] typecheck está verde;
 - [ ] testes unitários estão verdes;
-- [ ] PetBot está verde;
+- [x] PetBot está verde;
 - [ ] Luna está verde;
 - [ ] testes transacionais estão verdes;
 - [ ] build está verde;
 - [ ] skips condicionais aparecem de forma clara na CI;
-- [ ] qualquer teste instável possui issue, responsável e plano de correção.
+- [x] não foi identificado teste instável sem classificação ou plano.
 
 ## Fora de escopo
 
 - Hono, Wrangler ou Workers;
-- reorganização de pastas;
+- reorganização de domínios ou pastas de produção;
 - migração de rotas;
 - alteração de schema ou migrations;
 - mudança de autenticação;
-- mudanças funcionais em PetBot ou Luna.
+- mudanças amplas de comportamento em PetBot ou Luna.
 
 ## Rollback
 
-As mudanças desta fase são restritas a CI, documentação e dependências de desenvolvimento. O rollback consiste em reverter a PR; não há alteração de dados ou infraestrutura externa.
+As mudanças desta fase são restritas a CI, documentação, dependências de desenvolvimento e à precedência da configuração de transporte do tenant. O rollback consiste em reverter a PR; não há alteração de dados ou infraestrutura externa.
