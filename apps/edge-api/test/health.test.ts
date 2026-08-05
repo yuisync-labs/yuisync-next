@@ -48,7 +48,7 @@ describe('YuiSync edge foundation', () => {
 
   it('gera correlation id quando o cabeçalho recebido é inválido', async () => {
     const response = await request('/health', {
-      'x-request-id': 'inválido com espaços',
+      'x-request-id': 'invalid with spaces',
     })
     const requestId = response.headers.get('x-request-id')
 
