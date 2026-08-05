@@ -4,7 +4,7 @@
     "allowJs": false,
     "noEmit": true,
     "types": [
-      "@cloudflare/vitest-pool-workers"
+      "@cloudflare/vitest-pool-workers/types"
     ]
   },
   "include": [
