@@ -1,4 +1,4 @@
-# Retry with the current Workers Vitest ambient modules.
+# Retry with a clean install of the complete monorepo after lockfile generation.
 name: Phase 3 edge bootstrap
 
 on:
@@ -25,11 +25,14 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      - name: Register edge workspace and install dependencies
+      - name: Register edge workspace and resolve dependencies
         run: |
           npm install --package-lock-only --ignore-scripts
           npm install --workspace apps/edge-api hono
           npm install --workspace apps/edge-api --save-dev wrangler @cloudflare/vitest-pool-workers vitest typescript
+
+      - name: Install complete monorepo from generated lockfile
+        run: npm ci
 
       - name: Generate typed bindings
         run: npm run edge:types
