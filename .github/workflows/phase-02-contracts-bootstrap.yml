@@ -1,3 +1,4 @@
+# Retry after explicit PropertyKey serialization in contract errors.
 name: Phase 2 contracts bootstrap
 
 on:
