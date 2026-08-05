@@ -1,3 +1,4 @@
+# Retry after registering the new npm workspace in the lockfile.
 name: Phase 3 edge bootstrap
 
 on:
@@ -24,10 +25,11 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      - name: Install edge runtime dependencies
+      - name: Register edge workspace and install dependencies
         run: |
-          npm install --workspace @yuisync/edge-api hono
-          npm install --workspace @yuisync/edge-api --save-dev wrangler @cloudflare/vitest-pool-workers vitest typescript
+          npm install --package-lock-only --ignore-scripts
+          npm install --workspace apps/edge-api hono
+          npm install --workspace apps/edge-api --save-dev wrangler @cloudflare/vitest-pool-workers vitest typescript
 
       - name: Generate typed bindings
         run: npm run edge:types
