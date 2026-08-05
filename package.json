@@ -50,7 +50,8 @@
     "edge:test": "npm run test --workspace @yuisync/edge-api",
     "edge:dry-run": "npm run deploy:dry-run --workspace @yuisync/edge-api",
     "edge:check": "npm run edge:types:check && npm run edge:typecheck && npm run edge:test && npm run edge:dry-run",
-    "edge:dev": "npm run dev --workspace @yuisync/edge-api"
+    "edge:dev": "npm run dev --workspace @yuisync/edge-api",
+    "edge:smoke": "node scripts/smoke-edge-staging.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
