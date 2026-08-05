@@ -15,7 +15,7 @@
     "test:transactions": "node --test test/transactionalStatic.test.mjs test/agendaOperationalInfrastructure.test.mjs",
     "test:e2e": "playwright test",
     "test:tenant": "node scripts/test-tenant-isolation.mjs",
-    "test:all": "npm run typecheck && npm run test && npm run test:petbot && npm run test:luna && npm run test:transactions && npm run build",
+    "test:all": "npm run typecheck && npm run typecheck:contracts && npm run check:contract-boundaries && npm run test:contracts && npm run test && npm run test:petbot && npm run test:luna && npm run test:transactions && npm run build",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview",
@@ -37,7 +37,10 @@
     "test:luna:eval": "node scripts/run-luna-evals.mjs",
     "test:luna:eval:full": "node scripts/run-luna-evals.mjs --groups all --max-cases 500",
     "test:luna:eval:contracts": "node --test test/luna/evalPlatform.test.mjs test/luna/evalApiStatic.test.mjs",
-    "test:luna:eval:ci": "npm run test:luna:eval:contracts && npm run test:luna:eval"
+    "test:luna:eval:ci": "npm run test:luna:eval:contracts && npm run test:luna:eval",
+    "typecheck:contracts": "tsc -p tsconfig.contracts.json --noEmit",
+    "test:contracts": "vitest run --config vitest.contracts.config.ts",
+    "check:contract-boundaries": "node scripts/check-contract-boundaries.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
@@ -52,7 +55,8 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.1",
     "read-excel-file": "^9.3.3",
-    "recharts": "^3.9.2"
+    "recharts": "^3.9.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
