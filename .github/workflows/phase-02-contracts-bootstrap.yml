@@ -1,4 +1,4 @@
-# Retry with a dedicated Vitest configuration for contract tests.
+# Persists only dependency metadata; workflow gates are applied separately.
 name: Phase 2 contracts bootstrap
 
 on:
@@ -51,25 +51,6 @@ jobs:
           NODE
           npm install --package-lock-only --ignore-scripts
 
-      - name: Add contract gates to quality workflow
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('.github/workflows/quality.yml')
-          content = path.read_text()
-          needle = "      - run: npm run typecheck\n      - run: npm run test\n"
-          replacement = """      - run: npm run typecheck
-          - run: npm run typecheck:contracts
-          - run: npm run check:contract-boundaries
-          - run: npm run test:contracts
-          - run: npm run test
-          """
-          if content.count(needle) != 1:
-              raise SystemExit('quality workflow insertion point was not found exactly once')
-          path.write_text(content.replace(needle, replacement))
-          PY
-
       - name: Validate contract foundation
         run: |
           npm ci
@@ -86,11 +67,10 @@ jobs:
           npm run test:transactions
           npm run build
 
-      - name: Commit validated contract foundation
+      - name: Commit validated dependency metadata
         run: |
-          rm .github/workflows/phase-02-contracts-bootstrap.yml
           git config user.name 'yuisync-ci'
           git config user.email 'actions@users.noreply.github.com'
-          git add package.json package-lock.json .github/workflows/quality.yml .github/workflows/phase-02-contracts-bootstrap.yml
+          git add package.json package-lock.json
           git commit -m 'feat: establish versioned contract foundation'
           git push origin HEAD:phase/02-domain-contracts
