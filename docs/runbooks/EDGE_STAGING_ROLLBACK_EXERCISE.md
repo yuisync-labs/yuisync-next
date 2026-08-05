@@ -19,9 +19,6 @@
 5. Workers Logs permaneceu habilitado no painel Cloudflare;
 6. o painel registrou zero erros durante o ensaio.
 
-## Restrições preservadas
+## Estado final
 
-- nenhum tráfego produtivo;
-- nenhum dado real;
-- nenhum domínio customizado;
-- nenhum banco ou binding externo.
+O staging permaneceu executando o código atual da PR3 após o ensaio. Nenhuma rota produtiva, domínio customizado, banco ou binding externo foi ativado.
