@@ -16,6 +16,17 @@ Criar um runtime Workers reproduzível, observável e testado, sem migrar rotas 
 8. validar o bundle de staging por dry-run;
 9. documentar deploy, smoke test e rollback.
 
+## Implementação validada
+
+- Hono `4.13.x`;
+- Wrangler `4.119.x`;
+- integração `@cloudflare/vitest-pool-workers` `0.20.x`;
+- ambientes `local`, `test` e `staging` sem bindings externos;
+- tipos `EdgeEnv` gerados pelo próprio Wrangler;
+- cinco testes executados dentro do runtime Workers;
+- bundle de staging com aproximadamente 67 KiB antes de gzip e 16 KiB após gzip;
+- job `Cloudflare edge runtime` independente na CI oficial.
+
 ## Restrições
 
 - Express e Vercel permanecem ativos;
@@ -85,23 +96,23 @@ npm run edge:test
 npm run edge:dry-run
 ```
 
-O gate `edge:check` executa todos em sequência.
+O gate `edge:check` executa todos em sequência. A validação também executou auditoria, contratos, suíte legada, 198 testes do PetBot, Luna, transações e build no mesmo `npm ci` reproduzível.
 
 ## Gate de saída
 
-- [ ] dependências instaladas e lockfile reproduzível;
-- [ ] tipos Wrangler gerados e verificados;
-- [ ] typecheck do workspace verde;
-- [ ] testes no runtime Workers verdes;
-- [ ] bundle de staging gerado por dry-run;
-- [ ] observabilidade e correlation ID testados;
-- [ ] CI legada permanece verde;
-- [ ] runbook de staging e rollback revisado;
+- [x] dependências instaladas e lockfile reproduzível;
+- [x] tipos Wrangler gerados e verificados;
+- [x] typecheck do workspace verde;
+- [x] testes no runtime Workers verdes;
+- [x] bundle de staging gerado por dry-run;
+- [x] observabilidade e correlation ID testados;
+- [x] CI legada permanece verde;
+- [x] runbook de staging e rollback revisado;
 - [ ] primeiro deploy de staging executado com credenciais exclusivas;
 - [ ] health/readiness e logs validados no staging;
 - [ ] rollback por versão ensaiado.
 
-Os três últimos gates permanecem pendentes até a configuração da conta Cloudflare de staging.
+Os três últimos gates permanecem pendentes até a configuração da conta Cloudflare de staging. A PR deve permanecer em rascunho enquanto esses gates não forem executados ou formalmente transferidos para uma PR operacional separada.
 
 ## Rollback
 
