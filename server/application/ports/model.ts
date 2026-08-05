@@ -1,4 +1,5 @@
-import type { JsonValue, ToolResultV1 } from '../../../shared/contracts/v1/common'
+import type { JsonValue } from '../../../shared/contracts/v1/common'
+import type { ToolResultV1 } from '../../../shared/contracts/v1/toolResult'
 
 export type ModelMessage = Readonly<{
   role: 'system' | 'user' | 'assistant' | 'tool'
