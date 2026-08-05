@@ -80,5 +80,8 @@
   "license": "ISC",
   "engines": {
     "node": "22.x"
+  },
+  "overrides": {
+    "undici": "7.29.0"
   }
 }

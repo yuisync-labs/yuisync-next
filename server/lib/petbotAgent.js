@@ -1106,12 +1106,9 @@ function normalizeTransportOptions(settings = {}) {
     { id: 'somente_buscar', label: 'Somente buscar', fee: 15, active: true },
     { id: 'somente_levar', label: 'Somente levar', fee: 15, active: true },
   ]
-  const defaultIds = new Set(defaults.map((option) => option.id))
-  const configuredById = new Map(configured.map((option) => [clean(option?.id || option?.mode), option]))
-  const source = [
-    ...defaults.map((option) => ({ ...option, ...(configuredById.get(option.id) || {}) })),
-    ...configured.filter((option) => !defaultIds.has(clean(option?.id || option?.mode))),
-  ]
+  // An explicit tenant list is authoritative. Defaults are only a fallback
+  // when the store has not configured any transport option.
+  const source = configured.length ? configured : defaults
   return source
     .map((option, index) => ({
       id: clean(option.id || option.mode || `opcao_${index + 1}`),
