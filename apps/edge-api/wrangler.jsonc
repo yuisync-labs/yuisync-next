@@ -1,0 +1,44 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "yuisync-edge-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-05",
+  "workers_dev": true,
+  "preview_urls": true,
+  "keep_vars": false,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "APP_ENV": "local",
+    "SERVICE_NAME": "yuisync-edge-api",
+    "RELEASE_CHANNEL": "local"
+  },
+  "env": {
+    "local": {
+      "name": "yuisync-edge-api-local",
+      "vars": {
+        "APP_ENV": "local",
+        "SERVICE_NAME": "yuisync-edge-api",
+        "RELEASE_CHANNEL": "local"
+      }
+    },
+    "test": {
+      "name": "yuisync-edge-api-test",
+      "vars": {
+        "APP_ENV": "test",
+        "SERVICE_NAME": "yuisync-edge-api",
+        "RELEASE_CHANNEL": "test"
+      }
+    },
+    "staging": {
+      "name": "yuisync-edge-api-staging",
+      "vars": {
+        "APP_ENV": "staging",
+        "SERVICE_NAME": "yuisync-edge-api",
+        "RELEASE_CHANNEL": "staging"
+      }
+    }
+  }
+}
