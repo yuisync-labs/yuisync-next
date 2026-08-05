@@ -2,6 +2,8 @@ name: Edge staging deploy
 
 on:
   workflow_dispatch:
+  pull_request:
+    types: [labeled]
 
 permissions:
   contents: read
@@ -14,6 +16,17 @@ concurrency:
 jobs:
   deploy:
     name: Deploy and smoke test staging
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.action == 'labeled' &&
+        github.event.label.name == 'architecture' &&
+        github.event.pull_request.number == 4 &&
+        github.event.pull_request.head.ref == 'phase/03-cloudflare-foundation' &&
+        github.event.pull_request.base.ref == 'architecture/cloudflare-foundation' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment:
@@ -21,6 +34,8 @@ jobs:
       url: ${{ steps.deploy.outputs.deployment-url }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-node@v6
         with:
@@ -57,8 +72,9 @@ jobs:
       - name: Record deployment summary
         env:
           EDGE_STAGING_URL: ${{ steps.deploy.outputs.deployment-url }}
+          DEPLOYED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           echo "## Edge staging deployment" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${DEPLOYED_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: ${EDGE_STAGING_URL}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Health, readiness and sanitized 404: passed" >> "$GITHUB_STEP_SUMMARY"
