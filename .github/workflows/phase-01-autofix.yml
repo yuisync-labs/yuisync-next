@@ -28,23 +28,28 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('server/lib/petbotAgent.js')
           content = path.read_text()
-          old = """  const defaultIds = new Set(defaults.map((option) => option.id))
-          const configuredById = new Map(configured.map((option) => [clean(option?.id || option?.mode), option]))
-          const source = [
-            ...defaults.map((option) => ({ ...option, ...(configuredById.get(option.id) || {}) })),
-            ...configured.filter((option) => !defaultIds.has(clean(option?.id || option?.mode))),
-          ]
-          """
-          new = """  // An explicit tenant list is authoritative. Defaults are only a fallback
-          // when the store has not configured any transport option.
-          const source = configured.length ? configured : defaults
-          """
-          if content.count(old) != 1:
-              raise SystemExit('expected transport normalization block was not found exactly once')
-          path.write_text(content.replace(old, new))
+          pattern = re.compile(
+              r"  const defaultIds = new Set\(defaults\.map\(\(option\) => option\.id\)\)\n"
+              r"  const configuredById = .*?\n"
+              r"  const source = \[\n"
+              r".*?"
+              r"  \]\n"
+              r"(?=  return source)",
+              re.DOTALL,
+          )
+          replacement = (
+              "  // An explicit tenant list is authoritative. Defaults are only a fallback\n"
+              "  // when the store has not configured any transport option.\n"
+              "  const source = configured.length ? configured : defaults\n"
+          )
+          updated, count = pattern.subn(replacement, content)
+          if count != 1:
+              raise SystemExit(f'expected one transport normalization block, found {count}')
+          path.write_text(updated)
           PY
 
       - name: Pin patched Undici 7.x resolution
