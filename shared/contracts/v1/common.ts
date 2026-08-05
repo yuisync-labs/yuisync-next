@@ -57,9 +57,17 @@ export const JsonScalarSchema = z.union([
   z.null(),
 ])
 
+export type JsonScalar = z.infer<typeof JsonScalarSchema>
+export type JsonValue = JsonScalar | readonly JsonValue[] | { readonly [key: string]: JsonValue }
+
+export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() => z.union([
+  JsonScalarSchema,
+  z.array(JsonValueSchema),
+  z.record(z.string().min(1).max(120), JsonValueSchema),
+]))
+
 export function moneyToCents(value: number): number {
   return Math.round(value * 100)
 }
 
 export type AddressV1 = z.infer<typeof AddressV1Schema>
-export type JsonScalar = z.infer<typeof JsonScalarSchema>
