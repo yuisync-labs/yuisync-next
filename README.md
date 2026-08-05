@@ -9,48 +9,65 @@ Siga os passos abaixo para configurar o projeto localmente a partir do GitHub.
 ### 1. Pré-requisitos
 
 Certifique-se de ter instalado em sua máquina:
-- [Node.js](https://nodejs.org/) (Recomendado v18+)
-- [npm](https://www.npmjs.com/) ou [yarn](https://yarnpkg.com/)
-- Uma conta no [Supabase](https://supabase.com/)
+- Node.js 22.x, conforme `.nvmrc` e `package.json`;
+- npm;
+- uma conta no Supabase para executar o ambiente legado de desenvolvimento.
 
 ### 2. Clonar o Repositório
 
 ```bash
-git clone https://github.com/usuario/yuisync.git
-cd yuisync
+git clone https://github.com/yuisync-labs/yuisync-next.git
+cd yuisync-next
 ```
 
-### 3. Instalar Dependências
+### 3. Selecionar o Node correto
+
+Com um gerenciador compatível com `.nvmrc`:
 
 ```bash
-npm install
+nvm use
 ```
 
-### 4. Configurar Variáveis de Ambiente
+Confirme:
 
-O projeto utiliza um arquivo `.env` para gerenciar chaves de API e URLs. Copie o arquivo de exemplo e preencha com suas credenciais:
+```bash
+node --version
+```
+
+A versão deve pertencer à linha `22.x`.
+
+### 4. Instalar Dependências
+
+Para reproduzir exatamente o lockfile:
+
+```bash
+npm ci
+```
+
+Use `npm install` apenas quando estiver alterando dependências de forma intencional.
+
+### 5. Configurar Variáveis de Ambiente
+
+O projeto utiliza um arquivo `.env` para gerenciar chaves de API e URLs. Copie o arquivo de exemplo e preencha com credenciais exclusivas de desenvolvimento ou homologação:
 
 ```bash
 cp .env.example .env
 ```
 
-Abra o arquivo `.env` e preencha as seguintes informações essenciais:
-- **Supabase**: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
-- **OpenAI**: `OPENAI_API_KEY`.
-- **WhatsApp** (Opcional): Configurações da Cloud API se for utilizar.
+Variáveis essenciais do ambiente legado:
+- **Supabase**: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`;
+- **OpenAI**: `OPENAI_API_KEY`;
+- **WhatsApp**: configurações da Cloud API somente quando o fluxo for utilizado.
 
-### 5. Configurar o Banco de Dados (Supabase)
+Nunca use credenciais pessoais ou de produção no YuiSync Next.
 
-O diretório `database/` contém os scripts SQL necessários para criar a estrutura do banco de dados. 
+### 6. Configurar o Banco de Dados legado
 
-1. Acesse o **SQL Editor** no painel do seu projeto Supabase.
-2. Execute os scripts na seguinte ordem sugerida para garantir as dependências:
-   - `database/yuisync_core_bootstrap.sql`
-   - `database/yuisync_core_engine.sql`
-   - `database/DATABASE.sql`
-   - (Execute os demais scripts conforme a necessidade do seu módulo, como `petshop_*` se for o caso).
+O diretório `database/` contém os scripts SQL da implementação atual e o diretório `supabase/` contém migrations, funções e validações adicionais.
 
-### 6. Executar o Projeto
+A ordem de execução deve seguir a documentação de migrações existente. Não execute todos os arquivos indiscriminadamente e não altere migrations históricas.
+
+### 7. Executar o Projeto
 
 Para iniciar o servidor backend e o frontend simultaneamente:
 
@@ -58,32 +75,50 @@ Para iniciar o servidor backend e o frontend simultaneamente:
 npm start
 ```
 
-Isso executará:
-- **Backend (API)**: Porta 3090 (configurável no `.env`)
-- **Frontend (Vite)**: Geralmente porta 5173 ou similar.
+Isso executa:
+- backend Node/Express na porta configurada por `API_PORT`;
+- frontend Vite na porta de desenvolvimento disponível.
 
 ---
 
-## 🛠️ Scripts Disponíveis
+## 🛠️ Verificações locais
 
-- `npm run dev`: Inicia o servidor de desenvolvimento do Vite.
-- `npm run api`: Inicia apenas o servidor backend Node.js.
-- `npm start`: Inicia ambos (Frontend + API) usando `concurrently`.
-- `npm run build`: Gera a build de produção do frontend.
-- `npm run preview`: Visualiza a build de produção localmente.
+Antes de enviar mudanças:
 
-## 📂 Estrutura do Projeto
+```bash
+npm run typecheck
+npm run test
+npm run test:petbot
+npm run test:luna
+npm run test:transactions
+npm run build
+npm run audit:ci
+```
 
-- `src/`: Código fonte do frontend (React).
-- `server/`: Código fonte do backend Node.js.
-- `database/`: Scripts SQL para configuração do banco de dados.
-- `supabase/`: Funções de borda (Edge Functions) do Supabase.
-- `scripts/`: Scripts utilitários de desenvolvimento.
+Os testes de isolamento de tenant e E2E dependem de credenciais exclusivas de homologação.
 
----
+## 📂 Estrutura atual
+
+- `src/`: frontend React;
+- `server/`: backend Node/Express;
+- `api/` e `serverless/`: entradas serverless legadas;
+- `database/` e `supabase/`: esquema, migrations, funções e testes SQL;
+- `scripts/`: automação, avaliação e manutenção;
+- `test/`: testes unitários, de caracterização e regressão;
+- `docs/migration/`: plano da modernização Cloudflare-first;
+- `docs/adr/`: decisões arquiteturais.
+
+## 🌩️ Modernização Cloudflare-first
+
+O YuiSync Next está sendo modernizado de forma incremental. O sistema atual permanece como referência, enquanto contratos, domínios e adapters são estabilizados antes da migração do runtime e dos serviços.
+
+Consulte:
+
+- `docs/migration/README.md`;
+- `docs/migration/MIGRATION_PLAN.md`;
+- `docs/migration/RISK_REGISTER.md`;
+- `docs/adr/0001-cloudflare-first-modular-monolith.md`.
 
 ## 📄 Licença
 
 Este projeto está sob a licença ISC.
-
-<!-- production-deploy-retry: 2026-07-29T15:15:00-03:00 -->

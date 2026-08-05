@@ -3,13 +3,33 @@ name: Quality
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, architecture/cloudflare-foundation]
   workflow_dispatch:
   schedule:
     - cron: '17 3 * * *'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  security-audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run audit:ci
+
   quality:
+    name: Typecheck, tests and build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,10 +37,9 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npm run audit:ci
       - run: npm run typecheck
       - run: npm run test
       - run: npm run test:petbot
@@ -67,12 +86,13 @@ jobs:
       - run: npm run build
 
   e2e:
+    name: End-to-end
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - id: e2e-readiness
