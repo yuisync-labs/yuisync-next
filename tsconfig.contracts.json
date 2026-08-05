@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": false,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": [
+    "shared/contracts/**/*.ts",
+    "test/contracts/**/*.ts"
+  ]
+}
