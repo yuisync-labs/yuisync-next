@@ -4,21 +4,13 @@
 
 Criar contratos versionados e limites explícitos entre domínio, aplicação e infraestrutura antes de introduzir qualquer runtime Cloudflare.
 
-A fase preserva os provedores atuais. Express, Supabase, OpenAI e os caminhos legados continuam ativos enquanto passam a ser envolvidos por ports e adapters testáveis.
+A fase preserva os provedores atuais. Express, Supabase, OpenAI e os caminhos legados continuam ativos. Os contratos e adapters novos permanecem fora do caminho crítico.
 
-## Escopo
+## Entregas concluídas
 
-1. introduzir Zod como biblioteca de validação de contratos;
-2. definir convenções de versão, compatibilidade e evolução;
-3. criar erros tipados e serializáveis;
-4. separar estruturalmente pedido de produto e reserva de serviço;
-5. definir ports para banco, fila, modelo, storage, relógio e geração de IDs;
-6. envolver integrações legadas com adapters sem alterar o tráfego;
-7. adicionar checagem automática de dependências proibidas nas novas pastas de domínio.
+### Contratos V1
 
-## Primeira fatia
-
-A implementação começa pelos contratos que já possuem invariantes críticos e testes de caracterização:
+Foram implementados e exportados por `shared/contracts/v1/index.ts`:
 
 - `TenantContextV1`;
 - `InboundMessageV1`;
@@ -28,87 +20,96 @@ A implementação começa pelos contratos que já possuem invariantes críticos 
 - `ToolResultV1`;
 - `DomainEventEnvelopeV1`.
 
-A separação entre `ProductOrderV1` e `ServiceBookingV1` é obrigatória. Campos de pagamento, troco, entrega e retirada não pertencem ao contrato de agendamento de serviço.
+Todos possuem `type` e `version` explícitos, schemas estritos e funções de parse que retornam `ContractValidationError` sanitizado.
 
-## Estrutura-alvo inicial
+### Separação comercial
+
+`ProductOrderV1` e `ServiceBookingV1` são contratos independentes.
+
+O contrato de produto controla itens, pagamento, troco, retirada ou entrega e revalida o total. O contrato de serviço controla pet, serviço, agenda, duração, benefício, adicionais e MotoDog. Ele não possui forma de pagamento, troco ou entrega de produto e mantém `payment_status: a_receber`.
+
+### Invariantes determinísticas
+
+Os schemas verificam, entre outros pontos:
+
+- total dos itens e taxa de entrega;
+- troco somente para dinheiro;
+- pagamento a combinar na retirada;
+- total e duração de serviços e adicionais;
+- benefício de plano zerando somente o serviço principal;
+- raça, peso e decisão de transporte para banho/tosa;
+- sintoma obrigatório e ausência de MotoDog no contrato veterinário;
+- tenant idêntico entre confirmação e operação;
+- estados coerentes de confirmação;
+- resultados de ferramenta coerentes com sucesso, erro e retry;
+- envelopes de evento JSON, versionados e idempotentes.
+
+### Ports de aplicação
+
+Foram criados ports puros para:
+
+- relógio;
+- geração de IDs;
+- persistência de pedidos, reservas e confirmações;
+- publicação de eventos;
+- object storage;
+- modelo de linguagem estruturado.
+
+Esses ports não importam Express, Supabase, OpenAI, Cloudflare ou variáveis de ambiente.
+
+### Adapters legados
+
+Adapters em `server/infrastructure/adapters/contracts/` convertem o formato atual do PetBot em `ProductOrderV1` ou `ServiceBookingV1`.
+
+Eles preservam tenant, idempotência, itens, totais, agenda e transporte, mas não controlam nenhuma rota. Falhas de conversão usam `LegacyContractAdapterError` sanitizado.
+
+### Gates automáticos
+
+A CI executa:
 
 ```text
-shared/contracts/
-  README.md
-  v1/
-    tenant-context.*
-    inbound-message.*
-    product-order.*
-    service-booking.*
-    confirmation.*
-    tool-result.*
-    domain-event.*
-
-server/domain/
-  */
-
-server/application/
-  ports/
-
-server/infrastructure/
-  adapters/
+npm run typecheck:contracts
+npm run check:contract-boundaries
+npm run test:contracts
 ```
 
-Os nomes finais serão confirmados ao implementar a primeira fatia. Nenhuma movimentação ampla de arquivos será feita apenas para reproduzir essa árvore.
+O checker impede dependências de infraestrutura em contratos, domínio e aplicação, além de impedir `process.env` nessas camadas.
 
-## Regras de dependência
+## Compatibilidade e adoção
 
-- contratos podem depender de Zod e utilitários puros;
-- domínio pode depender de contratos, mas não de Express, Supabase, OpenAI, Cloudflare ou variáveis de ambiente;
-- aplicação pode depender de domínio, contratos e ports;
-- adapters podem depender de SDKs e provedores;
-- entradas HTTP, jobs e webhooks compõem os casos de uso e adapters;
-- código de domínio não acessa `process.env` diretamente;
-- código de domínio não importa bindings Cloudflare diretamente.
-
-## Compatibilidade
-
-- todo contrato externo possui versão explícita;
-- mudanças aditivas preservam a versão quando mantêm compatibilidade de leitura;
+- mudanças aditivas podem preservar V1 somente quando mantêm compatibilidade de leitura;
 - remoção, renomeação ou mudança semântica exige nova versão;
-- adapters convertem formatos legados para contratos canônicos;
-- mensagens persistidas ou enfileiradas nunca dependem apenas da versão do código em execução;
-- erros de validação não podem expor secrets, tokens ou payloads sensíveis completos.
+- contratos persistidos ou enfileirados sempre carregam versão;
+- adapters entram primeiro em observação;
+- nenhuma rota passa a depender dos novos contratos sem comparação de paridade e feature flag explícita;
+- o formato legado permanece disponível para rollback.
 
-## Estratégia de adoção
+## Validação final
 
-1. definir schema e testes;
-2. adicionar adapter do formato legado para o contrato;
-3. executar o adapter em modo observação, sem controlar o fluxo;
-4. comparar resultado canônico com o comportamento atual;
-5. ativar por feature flag somente após paridade;
-6. manter rollback para o caminho legado durante a fase.
+- 41 testes específicos de contratos e adapters;
+- typecheck principal e typecheck dos contratos verdes;
+- checker de limites arquiteturais verde;
+- auditoria sem bloqueios não aceitos;
+- Vitest legado verde;
+- 198 testes do PetBot verdes;
+- Luna unitária, regressões e avaliações determinísticas verdes;
+- testes transacionais verdes;
+- build verde;
+- tenant isolation e E2E reportados como condicionais quando não há credenciais de homologação.
 
 ## Gates de saída
 
-- [ ] Zod instalado e lockfile reproduzível;
-- [ ] contratos V1 implementados e exportados por um único entrypoint;
-- [ ] casos válidos, inválidos e compatibilidade testados;
-- [ ] erros tipados não vazam dados sensíveis;
-- [ ] imports de infraestrutura proibidos nas novas pastas de domínio;
-- [ ] adapters legados preservam os formatos atuais;
-- [ ] pedido de produto e reserva de serviço permanecem estruturalmente distintos;
-- [ ] typecheck, Vitest, PetBot, Luna, transações e build verdes;
-- [ ] nenhum schema, migration ou provedor alterado;
-- [ ] nenhuma rota produtiva controlada pelos novos contratos sem feature flag.
-
-## Riscos
-
-- duplicar validações sem definir uma fonte canônica;
-- converter `null`, ausência e string vazia de forma incompatível;
-- misturar DTO de transporte com entidade de domínio;
-- mover arquivos demais e dificultar a revisão;
-- introduzir dependência circular entre contratos e adapters;
-- validar payloads sensíveis e registrar o conteúdo integral em logs;
-- transformar a fase em reescrita funcional de PetBot ou Luna.
+- [x] Zod instalado e lockfile reproduzível;
+- [x] contratos V1 implementados e exportados por um único entrypoint;
+- [x] casos válidos, inválidos e compatibilidade testados;
+- [x] erros tipados não vazam dados sensíveis;
+- [x] imports de infraestrutura proibidos nas novas pastas de domínio e aplicação;
+- [x] adapters legados preservam os formatos atuais;
+- [x] pedido de produto e reserva de serviço permanecem estruturalmente distintos;
+- [x] typecheck, Vitest, PetBot, Luna, transações e build verdes;
+- [x] nenhum schema, migration ou provedor alterado;
+- [x] nenhuma rota produtiva controlada pelos novos contratos.
 
 ## Rollback
 
-Os novos contratos e adapters começam fora do caminho crítico. O rollback consiste em desativar as feature flags e remover a composição nova. O formato legado continua disponível durante toda a fase.
-
-Não há mudança de banco, dados, autenticação, deploy ou infraestrutura externa nesta fase.
+Os novos contratos, ports e adapters estão fora do caminho crítico. Reverter a PR remove essa fundação sem alterar banco, dados, autenticação, deploy ou infraestrutura externa.
