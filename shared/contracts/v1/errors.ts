@@ -15,11 +15,15 @@ export type ContractErrorBodyV1 = Readonly<{
 
 function issuePath(issue: ZodIssue): string {
   if (!issue.path.length) return '$'
-  return issue.path.reduce<string>((path, segment) => (
-    typeof segment === 'number'
-      ? `${path}[${segment}]`
-      : path === '$' ? `$.${segment}` : `${path}.${segment}`
-  ), '$')
+
+  return issue.path.reduce<string>((path, segment) => {
+    const serializedSegment = String(segment)
+    return typeof segment === 'number'
+      ? `${path}[${serializedSegment}]`
+      : path === '$'
+        ? `$.${serializedSegment}`
+        : `${path}.${serializedSegment}`
+  }, '$')
 }
 
 function safeIssueMessage(issue: ZodIssue): string {
