@@ -49,29 +49,28 @@ Transformar a CI e o ambiente de desenvolvimento em uma fonte confiável de diag
 
 Essa correção funcional é restrita à regressão descoberta pela safety net e não altera contratos de pedido, agenda, banco ou integrações externas.
 
-### Testes
+### Validação final
 
-- confirmar `typecheck`;
-- confirmar testes Vitest;
-- confirmar matrizes PetBot;
-- confirmar Luna unitária, regressões e evals determinísticos;
-- confirmar testes transacionais;
-- confirmar build Vite;
-- registrar explicitamente quando tenant/E2E forem ignorados por ausência de secrets.
+A execução final da CI confirmou:
+
+- instalação reproduzível com `npm ci` no Node 22;
+- auditoria sem bloqueios não aceitos;
+- typecheck, Vitest e 198 testes do PetBot verdes;
+- testes unitários, regressões e avaliações determinísticas da Luna verdes;
+- testes transacionais e build verdes;
+- testes de isolamento de tenant e E2E reportados explicitamente como condicionais e ignorados quando as credenciais de homologação não estão disponíveis.
 
 ## Gates de saída
 
-A Fase 1 somente termina quando:
-
 - [x] `npm ci` funciona em Node 22;
 - [x] `npm run audit:ci` não possui bloqueios não aceitos;
-- [ ] typecheck está verde;
-- [ ] testes unitários estão verdes;
+- [x] typecheck está verde;
+- [x] testes unitários estão verdes;
 - [x] PetBot está verde;
-- [ ] Luna está verde;
-- [ ] testes transacionais estão verdes;
-- [ ] build está verde;
-- [ ] skips condicionais aparecem de forma clara na CI;
+- [x] Luna está verde;
+- [x] testes transacionais estão verdes;
+- [x] build está verde;
+- [x] skips condicionais aparecem de forma clara na CI;
 - [x] não foi identificado teste instável sem classificação ou plano.
 
 ## Fora de escopo
