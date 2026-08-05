@@ -47,3 +47,24 @@ export {
   parseServiceBookingV1,
   type ServiceBookingV1,
 } from './serviceBooking'
+
+export {
+  ConfirmableOperationV1Schema,
+  PendingConfirmationV1Schema,
+  parsePendingConfirmationV1,
+  type PendingConfirmationV1,
+} from './confirmation'
+
+export {
+  ToolErrorV1Schema,
+  ToolResultV1Schema,
+  parseToolResultV1,
+  type ToolResultV1,
+} from './toolResult'
+
+export {
+  DomainAggregateRefV1Schema,
+  DomainEventEnvelopeV1Schema,
+  parseDomainEventEnvelopeV1,
+  type DomainEventEnvelopeV1,
+} from './domainEvent'
