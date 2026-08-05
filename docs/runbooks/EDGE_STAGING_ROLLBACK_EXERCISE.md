@@ -7,7 +7,7 @@
 - versão estável anterior restaurada: `357d5aed-6ea6-49ae-bde0-f48dba74ed60`
 - versão ativa antes do ensaio: `6998c7b9-edcd-4c21-a298-30ee861e56ea`
 - versão ativa após restauração final: `42c12bba-4017-45a1-b216-faa14e32dd03`
-- commit restaurado ao final: `7aad6f228fe4ede42634ce16aad44e1e439b7335`
+- commit implantado ao final: `7aad6f228fe4ede42634ce16aad44e1e439b7335`
 - ambiente: somente staging
 
 ## Resultado
