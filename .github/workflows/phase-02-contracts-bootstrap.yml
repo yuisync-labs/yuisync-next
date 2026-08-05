@@ -1,0 +1,95 @@
+name: Phase 2 contracts bootstrap
+
+on:
+  push:
+    branches:
+      - phase/02-domain-contracts
+    paths:
+      - .github/workflows/phase-02-contracts-bootstrap.yml
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap-contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase/02-domain-contracts
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Zod and register contract scripts
+        run: |
+          npm install 'zod@^4.1.0' --save --ignore-scripts
+          node <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises'
+
+          const path = 'package.json'
+          const pkg = JSON.parse(await readFile(path, 'utf8'))
+          pkg.scripts['typecheck:contracts'] = 'tsc -p tsconfig.contracts.json --noEmit'
+          pkg.scripts['test:contracts'] = 'vitest run test/contracts'
+          pkg.scripts['check:contract-boundaries'] = 'node scripts/check-contract-boundaries.mjs'
+          pkg.scripts['test:all'] = [
+            'npm run typecheck',
+            'npm run typecheck:contracts',
+            'npm run check:contract-boundaries',
+            'npm run test:contracts',
+            'npm run test',
+            'npm run test:petbot',
+            'npm run test:luna',
+            'npm run test:transactions',
+            'npm run build',
+          ].join(' && ')
+          await writeFile(path, `${JSON.stringify(pkg, null, 2)}\n`)
+          NODE
+          npm install --package-lock-only --ignore-scripts
+
+      - name: Add contract gates to quality workflow
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/quality.yml')
+          content = path.read_text()
+          needle = "      - run: npm run typecheck\n      - run: npm run test\n"
+          replacement = """      - run: npm run typecheck
+          - run: npm run typecheck:contracts
+          - run: npm run check:contract-boundaries
+          - run: npm run test:contracts
+          - run: npm run test
+          """
+          if content.count(needle) != 1:
+              raise SystemExit('quality workflow insertion point was not found exactly once')
+          path.write_text(content.replace(needle, replacement))
+          PY
+
+      - name: Validate contract foundation
+        run: |
+          npm ci
+          npm run audit:ci
+          npm run typecheck
+          npm run typecheck:contracts
+          npm run check:contract-boundaries
+          npm run test:contracts
+          npm run test
+          npm run test:petbot
+          npm run test:luna:unit
+          npm run test:luna:regressions
+          npm run test:luna:eval
+          npm run test:transactions
+          npm run build
+
+      - name: Commit validated contract foundation
+        run: |
+          rm .github/workflows/phase-02-contracts-bootstrap.yml
+          git config user.name 'yuisync-ci'
+          git config user.email 'actions@users.noreply.github.com'
+          git add package.json package-lock.json .github/workflows/quality.yml .github/workflows/phase-02-contracts-bootstrap.yml
+          git commit -m 'feat: establish versioned contract foundation'
+          git push origin HEAD:phase/02-domain-contracts
