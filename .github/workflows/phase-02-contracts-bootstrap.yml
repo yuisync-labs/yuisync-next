@@ -1,4 +1,4 @@
-# Retry after explicit PropertyKey serialization in contract errors.
+# Retry with a dedicated Vitest configuration for contract tests.
 name: Phase 2 contracts bootstrap
 
 on:
@@ -34,7 +34,7 @@ jobs:
           const path = 'package.json'
           const pkg = JSON.parse(await readFile(path, 'utf8'))
           pkg.scripts['typecheck:contracts'] = 'tsc -p tsconfig.contracts.json --noEmit'
-          pkg.scripts['test:contracts'] = 'vitest run test/contracts'
+          pkg.scripts['test:contracts'] = 'vitest run --config vitest.contracts.config.ts'
           pkg.scripts['check:contract-boundaries'] = 'node scripts/check-contract-boundaries.mjs'
           pkg.scripts['test:all'] = [
             'npm run typecheck',
