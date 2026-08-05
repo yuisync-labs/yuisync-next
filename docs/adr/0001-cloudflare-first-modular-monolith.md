@@ -1,6 +1,6 @@
 # ADR-0001: Cloudflare-first com monólito modular e migração incremental
 
-- Status: proposed
+- Status: accepted
 - Data: 2026-08-05
 - Decisores: mantenedores do YuiSync Next
 - Domínios afetados: todos
