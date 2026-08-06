@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  hasHyperdriveBinding,
+  hasD1Binding,
   isEdgeDatabaseEnabled,
 } from '../src/databaseFeature'
 
 describe('Edge database feature gate', () => {
-  it('permanece desligado quando o binding não existe ou é inválido', () => {
+  it('permanece desligado quando a flag não é true', () => {
     expect(isEdgeDatabaseEnabled(undefined)).toBe(false)
     expect(isEdgeDatabaseEnabled('')).toBe(false)
     expect(isEdgeDatabaseEnabled('1')).toBe(false)
@@ -18,10 +18,8 @@ describe('Edge database feature gate', () => {
     expect(isEdgeDatabaseEnabled(' TRUE ')).toBe(true)
   })
 
-  it('considera Hyperdrive configurado somente com connection string', () => {
-    expect(hasHyperdriveBinding(undefined)).toBe(false)
-    expect(hasHyperdriveBinding({ connectionString: '' })).toBe(false)
-    expect(hasHyperdriveBinding({ connectionString: '   ' })).toBe(false)
-    expect(hasHyperdriveBinding({ connectionString: 'postgres://binding' })).toBe(true)
+  it('considera D1 configurado somente quando o binding existe', () => {
+    expect(hasD1Binding(undefined)).toBe(false)
+    expect(hasD1Binding({} as D1Database)).toBe(true)
   })
 })
