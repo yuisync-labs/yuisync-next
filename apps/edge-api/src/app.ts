@@ -3,6 +3,10 @@ import { Hono } from 'hono'
 import { DatabaseDependencyError } from '../../../server/application/ports/database'
 import { D1ReadOnlyAdapter } from './adapters/d1ReadOnly'
 import {
+  hasCoordinationBinding,
+  isEdgeCoordinationEnabled,
+} from './coordination/coordinationFeature'
+import {
   hasD1Binding,
   isEdgeDatabaseEnabled,
 } from './databaseFeature'
@@ -117,7 +121,27 @@ app.get('/ready', async (context) => {
     }
   }
 
-  const isReady = missingBindings.length === 0 && databaseReady
+  const coordinationEnabled = isEdgeCoordinationEnabled(
+    context.env.EDGE_COORDINATION_ENABLED,
+  )
+  let coordinationCheck = 'disabled'
+  let coordinationReady = true
+
+  if (coordinationEnabled) {
+    if (hasCoordinationBinding(context.env.COORDINATOR)) {
+      coordinationCheck = 'ready'
+    } else {
+      coordinationCheck = 'not_configured'
+      coordinationReady = false
+      emitEdgeLog('warn', 'edge.coordination.not_ready', {
+        request_id: requestId,
+        environment: context.env.APP_ENV,
+        code: 'COORDINATION_BINDING_UNAVAILABLE',
+      })
+    }
+  }
+
+  const isReady = missingBindings.length === 0 && databaseReady && coordinationReady
   const payload = {
     service: context.env.SERVICE_NAME,
     environment: context.env.APP_ENV,
@@ -127,6 +151,7 @@ app.get('/ready', async (context) => {
     checks: {
       configuration: missingBindings.length ? 'failed' : 'ok',
       database: databaseCheck,
+      coordination: coordinationCheck,
     },
     database_latency_ms: databaseLatencyMs,
     missing_bindings: missingBindings,

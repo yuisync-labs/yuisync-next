@@ -1,0 +1,49 @@
+name: Phase 6 Wrangler types bootstrap
+
+on:
+  push:
+    branches:
+      - phase/06-durable-coordination
+    paths:
+      - apps/edge-api/wrangler.jsonc
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase-06-wrangler-types
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: phase/06-durable-coordination
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+
+      - run: npm ci
+      - run: npm run edge:types
+      - run: npm run edge:types:check
+
+      - name: Commit generated Wrangler types when changed
+        run: |
+          set -euo pipefail
+          git add apps/edge-api/worker-configuration.d.ts
+          if git diff --cached --quiet; then
+            echo "Wrangler types are already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: regenerate Wrangler types for coordination"
+          git push origin HEAD:phase/06-durable-coordination
