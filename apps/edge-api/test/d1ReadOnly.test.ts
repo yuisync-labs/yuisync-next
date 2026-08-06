@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import { D1ReadOnlyAdapter } from '../src/adapters/d1ReadOnly'
-import { DatabaseDependencyError } from '../../../server/application/ports/database'
 
 type FakeDatabaseOptions = Readonly<{
   row?: { canary_value: number } | null
@@ -50,7 +49,7 @@ describe('D1ReadOnlyAdapter', () => {
     await expect(adapter.checkCanary({
       requestId: 'request-d1-missing',
       timeoutMs: 500,
-    })).rejects.toMatchObject<Partial<DatabaseDependencyError>>({
+    })).rejects.toMatchObject({
       name: 'DatabaseDependencyError',
       code: 'DATABASE_NOT_CONFIGURED',
       message: 'Database dependency check failed.',
@@ -65,7 +64,7 @@ describe('D1ReadOnlyAdapter', () => {
     await expect(adapter.checkCanary({
       requestId: 'request-d1-error',
       timeoutMs: 500,
-    })).rejects.toMatchObject<Partial<DatabaseDependencyError>>({
+    })).rejects.toMatchObject({
       name: 'DatabaseDependencyError',
       code: 'DATABASE_UNAVAILABLE',
       message: 'Database dependency check failed.',
