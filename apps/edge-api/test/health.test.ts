@@ -6,12 +6,20 @@ import {
 import { describe, expect, it } from 'vitest'
 
 import worker from '../src/index'
+import type { EdgeAppEnvironment } from '../src/types'
 
-async function request(path: string, headers?: HeadersInit): Promise<Response> {
+type TestBindings = EdgeAppEnvironment['Bindings']
+const testBindings = env as TestBindings
+
+async function request(
+  path: string,
+  headers?: HeadersInit,
+  bindings: TestBindings = testBindings,
+): Promise<Response> {
   const context = createExecutionContext()
   const response = await worker.fetch(
     new Request(`https://edge.test${path}`, { headers }),
-    env,
+    bindings,
     context,
   )
   await waitOnExecutionContext(context)
@@ -55,11 +63,12 @@ describe('YuiSync edge foundation', () => {
     expect(requestId).toMatch(/^[0-9a-f-]{36}$/)
   })
 
-  it('responde readiness sem acessar banco ou integrações reais', async () => {
+  it('mantém o banco desligado por padrão', async () => {
     const response = await request('/ready')
     const body = await response.json<{
       status: string
       checks: { configuration: string; database: string }
+      database_latency_ms: number | null
       missing_bindings: string[]
     }>()
 
@@ -70,8 +79,46 @@ describe('YuiSync edge foundation', () => {
         configuration: 'ok',
         database: 'disabled',
       },
+      database_latency_ms: null,
       missing_bindings: [],
     }))
+  })
+
+  it('valida D1 no readiness quando a feature flag é habilitada', async () => {
+    const response = await request('/ready', undefined, {
+      ...testBindings,
+      EDGE_DATABASE_ENABLED: 'true',
+    })
+    const body = await response.json<{
+      status: string
+      checks: { database: string }
+      database_latency_ms: number | null
+    }>()
+
+    expect(response.status).toBe(200)
+    expect(body.status).toBe('ready')
+    expect(body.checks.database).toBe('ready')
+    expect(body.database_latency_ms).toEqual(expect.any(Number))
+  })
+
+  it('falha fechado quando a flag está ativa sem binding D1', async () => {
+    const response = await request('/ready', undefined, {
+      ...testBindings,
+      EDGE_DATABASE_ENABLED: 'true',
+      DB: undefined,
+    })
+    const body = await response.json<{
+      status: string
+      checks: { database: string }
+      database_latency_ms: number | null
+    }>()
+
+    expect(response.status).toBe(503)
+    expect(body).toMatchObject({
+      status: 'not_ready',
+      checks: { database: 'not_configured' },
+      database_latency_ms: null,
+    })
   })
 
   it('expõe somente a fundação na raiz', async () => {
