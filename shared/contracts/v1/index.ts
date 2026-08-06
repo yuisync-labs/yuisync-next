@@ -68,3 +68,12 @@ export {
   parseDomainEventEnvelopeV1,
   type DomainEventEnvelopeV1,
 } from './domainEvent'
+
+export {
+  ASYNC_CANARY_EVENT_NAME_V1,
+  AsyncCanaryEventV1Schema,
+  AsyncCanaryPayloadV1Schema,
+  parseAsyncCanaryEventV1,
+  type AsyncCanaryEventV1,
+  type AsyncCanaryPayloadV1,
+} from './asyncCanary'
