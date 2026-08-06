@@ -2,16 +2,18 @@
 
 ## Objetivo
 
-Publicar e reverter exclusivamente `yuisync-edge-api-staging`. Este runbook não autoriza tráfego produtivo, domínio customizado, banco real ou substituição do backend Express.
+Publicar e reverter exclusivamente `yuisync-edge-api-staging`. Este runbook não autoriza tráfego produtivo, domínio customizado ou substituição do backend Express.
+
+A operação do banco D1 está detalhada em `docs/runbooks/D1_STAGING.md`.
 
 ## Pré-requisitos
 
 - conta Cloudflare exclusiva da organização;
-- token de API com privilégio mínimo para Workers Scripts no ambiente de staging;
+- token de API com privilégios mínimos para Workers Scripts e D1 no staging;
 - GitHub Environment `cloudflare-staging`, preferencialmente com aprovação obrigatória;
-- secrets `CLOUDFLARE_API_TOKEN` e `CLOUDFLARE_ACCOUNT_ID` armazenados no Environment ou cofre da organização;
+- secrets `CLOUDFLARE_API_TOKEN` e `CLOUDFLARE_ACCOUNT_ID` armazenados no Environment;
 - branch baseada em `architecture/cloudflare-foundation` com CI verde;
-- nenhum route pattern ou custom domain configurado no `wrangler.jsonc`.
+- nenhum route pattern ou custom domain produtivo configurado no `wrangler.jsonc`.
 
 O token não deve ser salvo em arquivo, variável não secreta, log, comentário ou commit.
 
@@ -27,30 +29,30 @@ npm ci
 npm run edge:check
 ```
 
-Confirme a identidade Cloudflare em uma sessão local autorizada:
+Confirme que o `wrangler.jsonc` de staging aponta apenas para:
 
-```bash
-npx wrangler whoami --cwd apps/edge-api
+```text
+Worker: yuisync-edge-api-staging
+D1: yuisync-next-staging
+Binding: DB
 ```
 
 ## Deploy protegido pelo GitHub
 
-1. abra **Actions**;
-2. selecione **Edge staging deploy**;
-3. escolha **Run workflow** na branch aprovada;
-4. aprove o GitHub Environment quando solicitado.
+O workflow **Edge staging deploy** pode ser iniciado pela label `architecture` em uma PR válida da própria organização, com base `architecture/cloudflare-foundation` e branch `phase/*`.
 
 O workflow:
 
 1. exige os dois secrets Cloudflare;
 2. executa `npm ci` e `npm run edge:check`;
-3. usa a ação oficial `cloudflare/wrangler-action`;
-4. executa `wrangler deploy --env staging`;
-5. obtém a URL implantada;
+3. aplica migrations pendentes no D1 de staging;
+4. verifica o metadata de fundação do banco;
+5. publica o Worker com `cloudflare/wrangler-action`;
 6. executa smoke tests automatizados;
-7. registra SHA, URL e resultado no resumo da execução.
+7. confirma `checks.database = ready`;
+8. registra SHA, URL e resultado no resumo da execução.
 
-O deploy local equivalente é:
+O deploy local equivalente, após aplicar migrations, é:
 
 ```bash
 npm run deploy:staging --workspace @yuisync/edge-api
@@ -72,9 +74,15 @@ Ele valida:
 - propagação de `x-request-id`;
 - `cache-control: no-store`.
 
-Após a automação, confirme também que os logs estruturados aparecem no painel do Worker e que nenhum request é encaminhado para Express, Supabase ou outro serviço.
+O workflow também confirma separadamente que o readiness contém:
 
-## Rollback protegido pelo GitHub
+```text
+checks.database = ready
+```
+
+Após a automação, confirme que os logs estruturados aparecem no painel do Worker e não contêm SQL, parâmetros, tokens ou dados pessoais.
+
+## Rollback de versão do Worker
 
 Liste os deployments e identifique a versão estável:
 
@@ -91,13 +99,20 @@ No GitHub:
 5. digite `ROLLBACK` no campo de confirmação;
 6. aprove o GitHub Environment.
 
-O workflow valida os inputs, executa `wrangler rollback <VERSION_ID> --env staging --message ...` sem prompt interativo e repete os smoke tests.
+O workflow executa o rollback de versão e repete os smoke tests.
 
-O rollback local para a versão anterior continua disponível:
+## Rollback da dependência D1
 
-```bash
-npm run rollback:staging --workspace @yuisync/edge-api
+Quando o problema estiver apenas no banco ou no binding, prefira o rollback lógico descrito em `D1_STAGING.md`:
+
+```text
+EDGE_DATABASE_ENABLED=false
++ remover binding DB
++ publicar Worker
++ confirmar database: disabled
 ```
+
+O banco e as migrations permanecem intactos. Depois da correção, restaure binding e flag e confirme `database: ready`.
 
 ## Registro obrigatório
 
@@ -108,6 +123,7 @@ Para deploy e rollback, registre:
 - responsável e aprovador;
 - URL `workers.dev`;
 - version ID implantado ou restaurado;
+- estado das migrations D1;
 - resultado dos smoke tests;
 - confirmação visual dos Workers Logs.
 
@@ -116,17 +132,18 @@ Para deploy e rollback, registre:
 Interrompa ou reverta quando ocorrer qualquer um destes casos:
 
 - `/health` ou `/ready` fora dos critérios;
+- `checks.database` diferente de `ready` com a flag ativa;
 - logs sem correlação de requisição;
 - erro inesperado ou exposição de detalhe interno;
 - criação acidental de rota ou domínio produtivo;
-- dependência de secret, banco ou binding não declarada;
-- divergência entre tipos gerados e `wrangler.jsonc`.
+- binding apontando para banco incorreto;
+- divergência entre tipos gerados e `wrangler.jsonc`;
+- migration remota diferente do commit aprovado.
 
-## Limites desta fase
+## Limites atuais
 
-- sem D1;
-- sem Hyperdrive;
-- sem R2, KV, Queues, Workflows ou Durable Objects;
-- sem autenticação de clientes;
-- sem dados reais;
-- sem tráfego produtivo.
+- sem tráfego produtivo;
+- sem autenticação de clientes no runtime novo;
+- sem importação de dados legados;
+- sem tabelas de negócio no D1;
+- sem R2, KV, Queues, Workflows ou Durable Objects nesta fase.
