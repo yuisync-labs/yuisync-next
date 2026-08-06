@@ -1,24 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
-import { isValidReadOnlyCanary } from '../src/databaseCanary'
+import { isValidD1Canary } from '../src/databaseCanary'
 
-describe('read-only database canary', () => {
-  it('aceita somente a resposta constante em transação read-only', () => {
-    expect(isValidReadOnlyCanary({
-      transaction_read_only: 'on',
-      canary_value: 1,
-    })).toBe(true)
+describe('D1 database canary', () => {
+  it('aceita somente o valor constante esperado', () => {
+    expect(isValidD1Canary({ canary_value: 1 })).toBe(true)
+    expect(isValidD1Canary({ canary_value: '1' })).toBe(true)
   })
 
-  it('rejeita ausência, escrita habilitada ou valor canário incorreto', () => {
-    expect(isValidReadOnlyCanary(undefined)).toBe(false)
-    expect(isValidReadOnlyCanary({
-      transaction_read_only: 'off',
-      canary_value: 1,
-    })).toBe(false)
-    expect(isValidReadOnlyCanary({
-      transaction_read_only: 'on',
-      canary_value: 0,
-    })).toBe(false)
+  it('rejeita ausência ou valor canário incorreto', () => {
+    expect(isValidD1Canary(undefined)).toBe(false)
+    expect(isValidD1Canary({ canary_value: 0 })).toBe(false)
+    expect(isValidD1Canary({ canary_value: null })).toBe(false)
   })
 })
