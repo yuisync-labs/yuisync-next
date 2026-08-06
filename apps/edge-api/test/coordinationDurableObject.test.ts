@@ -94,16 +94,41 @@ describe('CoordinationDurableObject', () => {
 
     await stub.claim(claimRequest('operation-scope-a', 'idempotency-scope-a', 20_000))
 
-    await expect(stub.claim(claimRequest(
-      'operation-scope-b',
-      'idempotency-scope-b',
-      20_100,
-      {
-        tenantId: 'tenant-other',
-        resourceType: scope.resourceType,
-        resourceId: scope.resourceId,
+    const observedError = await runInDurableObject(
+      stub,
+      async (instance: CoordinationDurableObject) => {
+        try {
+          await instance.claim(claimRequest(
+            'operation-scope-b',
+            'idempotency-scope-b',
+            20_100,
+            {
+              tenantId: 'tenant-other',
+              resourceType: scope.resourceType,
+              resourceId: scope.resourceId,
+            },
+          ))
+          return null
+        } catch (error) {
+          const candidate = error as {
+            name?: unknown
+            message?: unknown
+            code?: unknown
+          }
+          return {
+            name: candidate.name,
+            message: candidate.message,
+            code: candidate.code,
+          }
+        }
       },
-    ))).rejects.toThrow('Coordination scope mismatch.')
+    )
+
+    expect(observedError).toEqual({
+      name: 'CoordinationDurableObjectError',
+      message: 'Coordination scope mismatch.',
+      code: 'COORDINATION_SCOPE_MISMATCH',
+    })
   })
 
   it('persiste somente metadados internos sanitizados no SQLite', async () => {
