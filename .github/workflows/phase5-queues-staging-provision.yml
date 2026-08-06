@@ -1,18 +1,18 @@
-name: Phase 5 Queues staging provision
+name: Phase 5 Queues staging validation
 
 on:
   pull_request:
     types: [labeled]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: phase5-queues-staging-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
-  provision:
+  validate:
     if: >-
       github.event.pull_request.number == 6 &&
       github.event.action == 'labeled' &&
@@ -34,154 +34,201 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
 
-      - name: Restore dependencies
-        run: npm ci
+      - name: Restore dependencies and validate current runtime
+        run: |
+          npm ci
+          npm run edge:check
 
       - name: Require protected Cloudflare credentials
         run: |
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
 
-      - name: Create or locate staging Queue and DLQ
-        working-directory: apps/edge-api
-        run: |
-          set -euo pipefail
-          ensure_queue() {
-            local queue_name="$1"
-            if npx wrangler queues info "$queue_name" >/dev/null 2>&1; then
-              echo "Queue ${queue_name} already exists."
-            else
-              npx wrangler queues create "$queue_name"
-            fi
-          }
-          ensure_queue "$EVENTS_QUEUE_NAME"
-          ensure_queue "$EVENTS_DLQ_NAME"
-
-      - name: Generate bindings and validate runtime
-        run: |
-          npm run types --workspace @yuisync/edge-api
-          npm run edge:check
-
-      - name: Apply D1 migrations before consumer deployment
-        working-directory: apps/edge-api
-        run: npx wrangler d1 migrations apply "$D1_DATABASE_NAME" --env staging --remote
-
-      - name: Deploy Queue producer and consumer
-        working-directory: apps/edge-api
-        run: npx wrangler deploy --env staging
-
-      - name: Resolve Queue ID through Cloudflare API
-        id: queue
+      - name: Resolve Queue and DLQ identifiers
+        id: queues
         run: |
           set -euo pipefail
           curl --fail --silent --show-error \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues?per_page=100" \
             > /tmp/queues.json
-          QUEUE_ID="$(node - <<'NODE'
+          node - <<'NODE'
           const fs = require('node:fs');
           const response = JSON.parse(fs.readFileSync('/tmp/queues.json', 'utf8'));
-          const queue = response.result?.find((item) =>
-            item.queue_name === process.env.EVENTS_QUEUE_NAME || item.name === process.env.EVENTS_QUEUE_NAME
+          if (response.success !== true) throw new Error('Queue listing failed.');
+          const find = (name) => response.result?.find((item) =>
+            item.queue_name === name || item.name === name
           );
-          process.stdout.write(queue ? String(queue.queue_id || queue.id || '') : '');
+          const main = find(process.env.EVENTS_QUEUE_NAME);
+          const dlq = find(process.env.EVENTS_DLQ_NAME);
+          if (!main || !dlq) throw new Error('Required staging queues were not found.');
+          const mainId = String(main.queue_id || main.id || '');
+          const dlqId = String(dlq.queue_id || dlq.id || '');
+          if (!mainId || !dlqId) throw new Error('Queue identifiers were not returned.');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `queue_id=${mainId}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `dlq_id=${dlqId}\n`);
           NODE
-          )"
-          test -n "$QUEUE_ID"
-          echo "queue_id=$QUEUE_ID" >> "$GITHUB_OUTPUT"
 
-      - name: Build versioned canary message
+      - name: Reset staging-only Queue backlogs
+        working-directory: apps/edge-api
+        run: |
+          set -euo pipefail
+          npx wrangler queues resume-delivery "$EVENTS_QUEUE_NAME" || true
+          npx wrangler queues purge "$EVENTS_QUEUE_NAME" --force
+          npx wrangler queues purge "$EVENTS_DLQ_NAME" --force
+
+      - name: Build duplicate, poison and rollback canaries
         run: |
           node - <<'NODE'
           const fs = require('node:fs');
           const suffix = `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`;
-          const eventId = `event-queue-canary-${suffix}`;
-          const idempotencyKey = `idempotency-queue-canary-${suffix}`;
-          const message = {
-            body: {
-              type: 'domain_event',
-              version: 1,
-              event_id: eventId,
-              event_name: 'system.async_canary.requested.v1',
-              event_version: 1,
-              tenant_id: 'tenant-staging-canary',
-              aggregate: {
-                type: 'system.async_canary',
-                id: `aggregate-queue-canary-${suffix}`,
-                version: 0,
-              },
-              occurred_at: new Date().toISOString(),
-              correlation_id: `correlation-queue-canary-${suffix}`,
-              idempotency_key: idempotencyKey,
-              payload: {
-                probe_id: `probe-queue-canary-${suffix}`,
-              },
+          const envelope = (kind) => ({
+            type: 'domain_event',
+            version: 1,
+            event_id: `event-${kind}-${suffix}`,
+            event_name: 'system.async_canary.requested.v1',
+            event_version: 1,
+            tenant_id: 'tenant-staging-canary',
+            aggregate: {
+              type: 'system.async_canary',
+              id: `aggregate-${kind}-${suffix}`,
+              version: 0,
+            },
+            occurred_at: new Date().toISOString(),
+            correlation_id: `correlation-${kind}-${suffix}`,
+            idempotency_key: `idempotency-${kind}-${suffix}`,
+            payload: {
+              probe_id: `probe-${kind}-${suffix}`,
+            },
+          });
+          const duplicate = envelope('duplicate');
+          const rollback = envelope('rollback');
+          const poison = {
+            ...envelope('poison'),
+            event_name: 'system.unsupported_canary.requested.v1',
+            aggregate: {
+              type: 'system.unsupported_canary',
+              id: `aggregate-poison-${suffix}`,
+              version: 0,
             },
           };
-          fs.writeFileSync('/tmp/queue-canary.json', JSON.stringify(message));
-          fs.appendFileSync(process.env.GITHUB_ENV, `CANARY_EVENT_ID=${eventId}\n`);
-          fs.appendFileSync(process.env.GITHUB_ENV, `CANARY_IDEMPOTENCY_KEY=${idempotencyKey}\n`);
+          fs.writeFileSync('/tmp/duplicate.json', JSON.stringify({ body: duplicate }));
+          fs.writeFileSync('/tmp/poison.json', JSON.stringify({ body: poison }));
+          fs.writeFileSync('/tmp/rollback.json', JSON.stringify({ body: rollback }));
+          fs.appendFileSync(process.env.GITHUB_ENV, `DUPLICATE_KEY=${duplicate.idempotency_key}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `POISON_KEY=${poison.idempotency_key}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `ROLLBACK_KEY=${rollback.idempotency_key}\n`);
           NODE
 
-      - name: Publish canary through Queue HTTP API
+      - name: Publish canary twice and verify idempotent completion
         env:
-          QUEUE_ID: ${{ steps.queue.outputs.queue_id }}
+          QUEUE_ID: ${{ steps.queues.outputs.queue_id }}
         run: |
+          set -euo pipefail
+          publish() {
+            curl --fail --silent --show-error \
+              -X POST \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$QUEUE_ID/messages" \
+              --data-binary @/tmp/duplicate.json >/tmp/publish.json
+            node -e "const r=require('/tmp/publish.json'); if(r.success!==true) process.exit(1)"
+          }
+          verify_once() {
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              OUTPUT="$(cd apps/edge-api && npx wrangler d1 execute "$D1_DATABASE_NAME" --env staging --remote --command "SELECT status, attempt_count FROM _yuisync_event_processing WHERE tenant_id = 'tenant-staging-canary' AND idempotency_key = '$DUPLICATE_KEY';")"
+              if grep -q '"status": "succeeded"' <<< "$OUTPUT" && grep -q '"attempt_count": 1' <<< "$OUTPUT"; then
+                return 0
+              fi
+              sleep 5
+            done
+            return 1
+          }
+          publish
+          verify_once
+          publish
+          sleep 10
+          verify_once
+          echo "Duplicate delivery preserved attempt_count=1."
+
+      - name: Publish unsupported event and verify Dead Letter Queue
+        env:
+          QUEUE_ID: ${{ steps.queues.outputs.queue_id }}
+          DLQ_ID: ${{ steps.queues.outputs.dlq_id }}
+        run: |
+          set -euo pipefail
           curl --fail --silent --show-error \
             -X POST \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             -H "Content-Type: application/json" \
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$QUEUE_ID/messages" \
-            --data-binary @/tmp/queue-canary.json \
-            > /tmp/queue-publish-response.json
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const response = JSON.parse(fs.readFileSync('/tmp/queue-publish-response.json', 'utf8'));
-          if (response.success !== true) throw new Error('Queue publish failed.');
-          NODE
+            --data-binary @/tmp/poison.json >/tmp/poison-publish.json
+          node -e "const r=require('/tmp/poison-publish.json'); if(r.success!==true) process.exit(1)"
 
-      - name: Verify canary consumption and D1 idempotency record
+          for attempt in $(seq 1 24); do
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$DLQ_ID/metrics" \
+              >/tmp/dlq-metrics.json
+            BACKLOG="$(node -e "const r=require('/tmp/dlq-metrics.json'); process.stdout.write(String(r.result?.backlog_count ?? 0))")"
+            if [ "${BACKLOG%.*}" -ge 1 ]; then
+              echo "Poison message reached the DLQ after configured retries."
+              exit 0
+            fi
+            echo "DLQ verification attempt $attempt is pending."
+            sleep 10
+          done
+          echo "Poison message did not reach the DLQ."
+          exit 1
+
+      - name: Pause delivery and verify lossless rollback
+        env:
+          QUEUE_ID: ${{ steps.queues.outputs.queue_id }}
         working-directory: apps/edge-api
         run: |
           set -euo pipefail
+          npx wrangler queues pause-delivery "$EVENTS_QUEUE_NAME"
+          curl --fail --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$QUEUE_ID/messages" \
+            --data-binary @/tmp/rollback.json >/tmp/rollback-publish.json
+          node -e "const r=require('/tmp/rollback-publish.json'); if(r.success!==true) process.exit(1)"
+          sleep 10
+          OUTPUT="$(npx wrangler d1 execute "$D1_DATABASE_NAME" --env staging --remote --command "SELECT COUNT(*) AS count FROM _yuisync_event_processing WHERE tenant_id = 'tenant-staging-canary' AND idempotency_key = '$ROLLBACK_KEY';")"
+          grep -q '"count": 0' <<< "$OUTPUT"
+          npx wrangler queues resume-delivery "$EVENTS_QUEUE_NAME"
+
           for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-            OUTPUT="$(npx wrangler d1 execute "$D1_DATABASE_NAME" --env staging --remote --command "SELECT status, attempt_count FROM _yuisync_event_processing WHERE tenant_id = 'tenant-staging-canary' AND idempotency_key = '$CANARY_IDEMPOTENCY_KEY';")"
+            OUTPUT="$(npx wrangler d1 execute "$D1_DATABASE_NAME" --env staging --remote --command "SELECT status, attempt_count FROM _yuisync_event_processing WHERE tenant_id = 'tenant-staging-canary' AND idempotency_key = '$ROLLBACK_KEY';")"
             if grep -q '"status": "succeeded"' <<< "$OUTPUT" && grep -q '"attempt_count": 1' <<< "$OUTPUT"; then
-              echo "Queue canary was consumed exactly once."
+              echo "Paused message was preserved and processed after resume."
               exit 0
             fi
-            echo "Canary verification attempt $attempt is still pending."
             sleep 5
           done
-          echo "Queue canary did not reach succeeded state."
+          echo "Rollback canary was not processed after resume."
           exit 1
 
-      - name: Commit generated Queue binding types
-        env:
-          BRANCH_NAME: ${{ github.event.pull_request.head.ref }}
+      - name: Restore clean staging queues
+        if: always()
+        working-directory: apps/edge-api
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/edge-api/worker-configuration.d.ts
-          if git diff --cached --quiet; then
-            echo "Queue binding types are already current."
-            exit 0
-          fi
-          git commit -m "infra: generate Cloudflare Queue binding types"
-          git push origin "HEAD:${BRANCH_NAME}"
+          npx wrangler queues resume-delivery "$EVENTS_QUEUE_NAME" || true
+          npx wrangler queues purge "$EVENTS_QUEUE_NAME" --force || true
+          npx wrangler queues purge "$EVENTS_DLQ_NAME" --force || true
 
       - name: Record staging validation
         run: |
-          echo "## Phase 5 Queue staging" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Queue: $EVENTS_QUEUE_NAME" >> "$GITHUB_STEP_SUMMARY"
-          echo "- DLQ: $EVENTS_DLQ_NAME" >> "$GITHUB_STEP_SUMMARY"
-          echo "- D1 migration: applied" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Canary event: $CANARY_EVENT_ID" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Consumer result: succeeded, attempt_count=1" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Phase 5 Queue validation" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Duplicate delivery: one D1 effect" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Poison event: moved to DLQ" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Pause/resume rollback: lossless" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Queue backlogs: cleaned" >> "$GITHUB_STEP_SUMMARY"
