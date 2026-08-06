@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 
 import {
-  hasHyperdriveBinding,
+  hasD1Binding,
   isEdgeDatabaseEnabled,
 } from './databaseFeature'
 import { emitEdgeLog } from './observability'
@@ -69,7 +69,7 @@ app.get('/ready', (context) => {
     .map(([name]) => name)
 
   const databaseEnabled = isEdgeDatabaseEnabled(context.env.EDGE_DATABASE_ENABLED)
-  const databaseConfigured = hasHyperdriveBinding(context.env.HYPERDRIVE)
+  const databaseConfigured = hasD1Binding(context.env.DB)
   const databaseCheck = databaseEnabled
     ? (databaseConfigured ? 'configured' : 'not_configured')
     : 'disabled'
