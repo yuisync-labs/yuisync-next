@@ -1,0 +1,27 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "yuisync-edge-api-durable-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-05",
+  "vars": {
+    "APP_ENV": "test",
+    "SERVICE_NAME": "yuisync-edge-api",
+    "RELEASE_CHANNEL": "test",
+    "EDGE_DATABASE_ENABLED": "false",
+    "EDGE_ASYNC_ENABLED": "false"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "COORDINATOR",
+        "class_name": "CoordinationDurableObject"
+      }
+    ]
+  },
+  "exports": {
+    "CoordinationDurableObject": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}
