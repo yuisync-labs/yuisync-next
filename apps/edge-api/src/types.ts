@@ -5,9 +5,7 @@ export type EdgeVariables = {
 
 export type EdgeDatabaseBindings = {
   EDGE_DATABASE_ENABLED?: string
-  HYPERDRIVE?: {
-    connectionString: string
-  }
+  DB?: D1Database
 }
 
 export type EdgeAppEnvironment = {
