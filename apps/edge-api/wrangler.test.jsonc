@@ -8,7 +8,8 @@
     "SERVICE_NAME": "yuisync-edge-api",
     "RELEASE_CHANNEL": "test",
     "EDGE_DATABASE_ENABLED": "false",
-    "EDGE_ASYNC_ENABLED": "false"
+    "EDGE_ASYNC_ENABLED": "false",
+    "EDGE_COORDINATION_ENABLED": "false"
   },
   "durable_objects": {
     "bindings": [
