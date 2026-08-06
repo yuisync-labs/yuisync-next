@@ -1,0 +1,169 @@
+name: Phase 4 D1 staging provision
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase4-d1-staging-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    if: >-
+      github.event.pull_request.number == 5 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'phase/04-data-access-foundation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_NAME: yuisync-next-staging
+      STAGING_URL: https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Restore dependencies
+        run: npm ci
+
+      - name: Validate protected Cloudflare credentials
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+
+      - name: Create or locate staging D1 database
+        id: database
+        run: |
+          set -euo pipefail
+
+          find_database_id() {
+            npx wrangler d1 list --json | node -e '
+              let input = "";
+              process.stdin.on("data", chunk => input += chunk);
+              process.stdin.on("end", () => {
+                const rows = JSON.parse(input);
+                const row = rows.find(item => item.name === process.env.D1_DATABASE_NAME);
+                process.stdout.write(row ? String(row.uuid || row.id || row.database_id || "") : "");
+              });
+            '
+          }
+
+          DATABASE_ID="$(find_database_id)"
+          if [ -z "$DATABASE_ID" ]; then
+            npx wrangler d1 create "$D1_DATABASE_NAME" --location enam
+            DATABASE_ID="$(find_database_id)"
+          fi
+
+          test -n "$DATABASE_ID"
+          echo "database_id=$DATABASE_ID" >> "$GITHUB_OUTPUT"
+          echo "D1 staging database is available."
+
+      - name: Configure staging binding and feature flag
+        env:
+          DATABASE_ID: ${{ steps.database.outputs.database_id }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path('apps/edge-api/wrangler.jsonc')
+          data = json.loads(path.read_text())
+
+          data.setdefault('vars', {})['EDGE_DATABASE_ENABLED'] = 'false'
+          for name in ('local', 'test'):
+              data['env'][name].setdefault('vars', {})['EDGE_DATABASE_ENABLED'] = 'false'
+
+          staging = data['env']['staging']
+          staging.setdefault('vars', {})['EDGE_DATABASE_ENABLED'] = 'true'
+          staging['d1_databases'] = [{
+              'binding': 'DB',
+              'database_name': os.environ['D1_DATABASE_NAME'],
+              'database_id': os.environ['DATABASE_ID'],
+              'migrations_dir': 'migrations',
+              'migrations_table': 'd1_migrations',
+          }]
+
+          path.write_text(json.dumps(data, indent=2) + '\n')
+          PY
+
+      - name: Generate bindings and validate bundle
+        run: |
+          npm run types --workspace @yuisync/edge-api
+          npm run edge:check
+
+      - name: Apply staging migrations
+        working-directory: apps/edge-api
+        run: npx wrangler d1 migrations apply "$D1_DATABASE_NAME" --env staging --remote
+
+      - name: Verify remote migration
+        working-directory: apps/edge-api
+        run: >-
+          npx wrangler d1 execute "$D1_DATABASE_NAME" --env staging --remote
+          --command "SELECT value FROM _yuisync_system_metadata WHERE key = 'schema_version';"
+
+      - name: Deploy Worker with D1 binding
+        working-directory: apps/edge-api
+        run: npx wrangler deploy --env staging
+
+      - name: Smoke D1 readiness with retry
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            BODY_FILE="$(mktemp)"
+            STATUS="$(curl --silent --show-error --output "$BODY_FILE" --write-out '%{http_code}' "$STAGING_URL/ready" || true)"
+            CONTENT_TYPE="$(curl --silent --show-error --head "$STAGING_URL/ready" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-type" {print $2}' | tail -1 || true)"
+
+            if [ "$STATUS" = "200" ] && grep -qi 'application/json' <<< "$CONTENT_TYPE"; then
+              node - "$BODY_FILE" <<'NODE'
+              const fs = require('node:fs');
+              const body = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+              if (body.status !== 'ready' || body.checks?.database !== 'ready') {
+                throw new Error('D1 readiness response is not ready.');
+              }
+              console.log(JSON.stringify({
+                status: body.status,
+                database: body.checks.database,
+                environment: body.environment,
+                database_latency_ms: body.database_latency_ms,
+              }));
+          NODE
+              rm -f "$BODY_FILE"
+              exit 0
+            fi
+
+            echo "Readiness attempt $attempt returned status=${STATUS:-unavailable} content-type=${CONTENT_TYPE:-unavailable}."
+            rm -f "$BODY_FILE"
+            sleep $((attempt * 5))
+          done
+
+          echo "D1 readiness smoke did not become healthy."
+          exit 1
+
+      - name: Commit D1 binding metadata
+        env:
+          BRANCH_NAME: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/edge-api/wrangler.jsonc apps/edge-api/worker-configuration.d.ts
+          if git diff --cached --quiet; then
+            echo "D1 binding metadata already committed."
+            exit 0
+          fi
+          git commit -m "infra: bind staging Worker to Cloudflare D1"
+          git push origin "HEAD:${BRANCH_NAME}"
