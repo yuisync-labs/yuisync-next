@@ -30,10 +30,13 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      - name: Install PostgreSQL adapter dependencies
+      - name: Generate PostgreSQL dependency metadata
         run: |
           npm install --workspace @yuisync/edge-api drizzle-orm pg@^8.16.3
           npm install --workspace @yuisync/edge-api --save-dev @types/pg
+
+      - name: Restore full workspace from generated lockfile
+        run: npm ci
 
       - name: Validate Edge and architecture gates
         run: |
