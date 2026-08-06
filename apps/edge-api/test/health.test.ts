@@ -59,14 +59,17 @@ describe('YuiSync edge foundation', () => {
     const response = await request('/ready')
     const body = await response.json<{
       status: string
-      checks: { configuration: string }
+      checks: { configuration: string; database: string }
       missing_bindings: string[]
     }>()
 
     expect(response.status).toBe(200)
     expect(body).toEqual(expect.objectContaining({
       status: 'ready',
-      checks: { configuration: 'ok' },
+      checks: {
+        configuration: 'ok',
+        database: 'disabled',
+      },
       missing_bindings: [],
     }))
   })
