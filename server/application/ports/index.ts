@@ -20,6 +20,12 @@ export { DatabaseDependencyError } from './database'
 
 export type {
   DomainEventPublisherPort,
+  EventProcessingClaimRequest,
+  EventProcessingClaimResult,
+  EventProcessingFailureRequest,
+  EventProcessingRepositoryPort,
+  EventProcessingStatus,
+  EventProcessingTransitionRequest,
   EventPublishReceipt,
 } from './messaging'
 
