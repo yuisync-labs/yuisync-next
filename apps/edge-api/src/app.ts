@@ -3,6 +3,11 @@ import { Hono } from 'hono'
 import { DatabaseDependencyError } from '../../../server/application/ports/database'
 import { D1ReadOnlyAdapter } from './adapters/d1ReadOnly'
 import {
+  CoordinationCanaryInputError,
+  isCoordinationCanaryAuthorized,
+  runCoordinationCanary,
+} from './coordination/coordinationCanary'
+import {
   hasCoordinationBinding,
   isEdgeCoordinationEnabled,
 } from './coordination/coordinationFeature'
@@ -161,6 +166,62 @@ app.get('/ready', async (context) => {
   return isReady
     ? context.json(payload, 200)
     : context.json(payload, 503)
+})
+
+app.post('/_internal/coordination/canary', async (context) => {
+  const requestId = context.get('requestId')
+  const canaryEnvironment = context.env.APP_ENV === 'staging' || context.env.APP_ENV === 'test'
+  const authorized = isCoordinationCanaryAuthorized(
+    context.env,
+    context.req.header('authorization'),
+  )
+
+  if (!canaryEnvironment || !authorized) {
+    return context.json({
+      code: 'NOT_FOUND',
+      message: 'Rota não encontrada.',
+      request_id: requestId,
+    }, 404)
+  }
+
+  let body: unknown
+  try {
+    body = await context.req.json<unknown>()
+  } catch {
+    return context.json({
+      code: 'INVALID_CANARY_REQUEST',
+      message: 'Requisição de canário inválida.',
+      request_id: requestId,
+    }, 400)
+  }
+
+  try {
+    const probeId = typeof body === 'object' && body !== null && 'probe_id' in body
+      ? (body as { probe_id?: unknown }).probe_id
+      : undefined
+    const result = await runCoordinationCanary(context.env, probeId)
+
+    emitEdgeLog('info', 'edge.coordination.canary.passed', {
+      request_id: requestId,
+      environment: context.env.APP_ENV,
+      probe_id: result.probe_id,
+      fencing_token: result.fencing_token,
+    })
+
+    return context.json({
+      ...result,
+      request_id: requestId,
+    }, 200)
+  } catch (error) {
+    if (error instanceof CoordinationCanaryInputError) {
+      return context.json({
+        code: 'INVALID_CANARY_REQUEST',
+        message: 'Requisição de canário inválida.',
+        request_id: requestId,
+      }, 400)
+    }
+    throw error
+  }
 })
 
 app.notFound((context) => context.json({

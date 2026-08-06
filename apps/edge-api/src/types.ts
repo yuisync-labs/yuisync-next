@@ -12,6 +12,7 @@ export type EdgeDatabaseBindings = {
 
 export type EdgeCoordinationBindings = {
   EDGE_COORDINATION_ENABLED?: string
+  EDGE_COORDINATION_CANARY_TOKEN?: string
   COORDINATOR?: DurableObjectNamespace<CoordinationDurableObject>
 }
 
