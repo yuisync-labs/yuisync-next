@@ -7,6 +7,12 @@ import {
 import type { SupportedAsyncEventV1 } from './asyncEvents'
 import { emitEdgeLog } from './observability'
 
+const DISABLED_RETRY_DELAY_SECONDS = 300
+
+export function isAsyncQueueEnabled(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === 'true'
+}
+
 async function handleSupportedAsyncEvent(event: SupportedAsyncEventV1): Promise<void> {
   const canary = event as AsyncCanaryEventV1
 
@@ -29,6 +35,23 @@ export async function handleAsyncQueue(
   batch: MessageBatch<unknown>,
   env: EdgeEnv,
 ): Promise<void> {
+  const asyncEnabled = isAsyncQueueEnabled(
+    (env as EdgeEnv & { EDGE_ASYNC_ENABLED?: string }).EDGE_ASYNC_ENABLED,
+  )
+
+  if (!asyncEnabled) {
+    for (const message of batch.messages) {
+      message.retry({ delaySeconds: DISABLED_RETRY_DELAY_SECONDS })
+    }
+
+    emitEdgeLog('warn', 'edge.queue.batch.disabled', {
+      queue: batch.queue,
+      message_count: batch.messages.length,
+      retry_delay_seconds: DISABLED_RETRY_DELAY_SECONDS,
+    })
+    return
+  }
+
   const repository = new D1EventProcessingRepository(env.DB)
   const summary = await processAsyncEventBatch({
     messages: batch.messages,
