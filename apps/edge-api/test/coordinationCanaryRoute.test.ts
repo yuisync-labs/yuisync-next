@@ -8,7 +8,10 @@ import { describe, expect, it } from 'vitest'
 import worker from '../src/index'
 import type { EdgeAppEnvironment } from '../src/types'
 
-type TestBindings = EdgeAppEnvironment['Bindings']
+type TestBindings = EdgeAppEnvironment['Bindings'] & Readonly<{
+  EDGE_COORDINATION_CANARY_TOKEN?: string
+}>
+
 const testBindings = env as TestBindings
 const canaryToken = 'phase06-test-token-0123456789abcdef0123456789abcdef'
 
@@ -22,17 +25,19 @@ async function postCanary(
   })
   if (authorization) headers.set('authorization', authorization)
 
+  const bindings: TestBindings = {
+    ...testBindings,
+    EDGE_COORDINATION_ENABLED: 'true',
+    EDGE_COORDINATION_CANARY_TOKEN: canaryToken,
+  }
+
   const response = await worker.fetch(
     new Request('https://edge.test/_internal/coordination/canary', {
       method: 'POST',
       headers,
       body: JSON.stringify({ probe_id: probeId }),
     }),
-    {
-      ...testBindings,
-      EDGE_COORDINATION_ENABLED: 'true',
-      EDGE_COORDINATION_CANARY_TOKEN: canaryToken,
-    },
+    bindings,
     context,
   )
   await waitOnExecutionContext(context)
