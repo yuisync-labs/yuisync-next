@@ -4,7 +4,7 @@
 
 Criar a primeira fundação persistente da nova arquitetura usando Cloudflare D1, sem migrar dados do sistema atual, sem substituir rotas do backend legado e sem expor operações de negócio.
 
-Fluxo-alvo desta fase:
+Fluxo desta fase:
 
 ```text
 Cloudflare Worker
@@ -13,17 +13,18 @@ Cloudflare Worker
   -> Cloudflare D1 de staging
 ```
 
-O código de domínio e aplicação não poderá depender de D1, Wrangler ou Drizzle. Esses detalhes ficam restritos aos adapters, schema e composição do runtime.
+O código de domínio e aplicação não depende de D1, Wrangler ou Drizzle. Esses detalhes ficam restritos aos adapters, schema e composição do runtime.
 
 ## Decisões da fase
 
 - D1 será o banco SQL principal da nova arquitetura.
-- A semântica de banco adotada será SQLite/D1, não PostgreSQL.
-- Drizzle continuará como camada de schema e consultas tipadas.
+- A semântica adotada será SQLite/D1, não PostgreSQL.
+- Drizzle será a camada de schema e consultas tipadas.
 - O binding do Worker será chamado `DB`.
-- A feature flag `EDGE_DATABASE_ENABLED` continuará desligada por padrão.
+- `EDGE_DATABASE_ENABLED` permanece desligada por padrão em local e test.
+- Staging só ativa o banco quando o binding protegido está configurado.
 - Durable Objects serão usados futuramente para coordenação concorrente sensível.
-- Supabase, Neon e Hyperdrive não fazem parte desta fase.
+- Supabase, Neon, PostgreSQL externo e Hyperdrive não fazem parte desta fase.
 
 ## Escopo
 
@@ -35,11 +36,11 @@ O código de domínio e aplicação não poderá depender de D1, Wrangler ou Dri
 - banco D1 exclusivo de staging;
 - binding D1 exclusivo do ambiente staging;
 - migrations SQL versionadas no repositório;
-- testes locais dentro do runtime Workers;
+- testes dentro do runtime Workers;
 - timeout lógico e erros sanitizados;
 - readiness separado para dependências externas;
 - consulta canário sem tabelas de negócio;
-- feature flag desligada por padrão;
+- feature flag fail-closed;
 - observabilidade sem SQL, parâmetros ou dados pessoais.
 
 ### Fora do escopo
@@ -54,41 +55,40 @@ O código de domínio e aplicação não poderá depender de D1, Wrangler ou Dri
 - Durable Objects, R2, Queues ou Workflows nesta PR;
 - substituição do backend Express.
 
-## Ordem de implementação
+## Implementação concluída
 
-1. aceitar o ADR de D1 como banco principal;
-2. preservar o port independente de provedor;
-3. remover o adapter e as dependências PostgreSQL;
-4. implementar adapter D1 testável sem binding remoto;
-5. manter `EDGE_DATABASE_ENABLED=false` em todos os ambientes;
-6. criar migration inicial mínima e imutável;
-7. configurar D1 local/test no runtime Workers;
-8. validar migrations e consultas no `workerd`;
-9. criar o banco remoto `yuisync-next-staging`;
-10. adicionar o binding `DB` somente em staging;
-11. aplicar migrations por workflow protegido;
-12. executar consulta canário ao vivo;
-13. validar timeout, indisponibilidade e logs;
-14. ensaiar rollback desligando a flag e restaurando o Worker sem dependência ativa;
-15. integrar somente após todos os gates.
+1. ADR de D1 aceito;
+2. port independente de provedor preservado;
+3. adapter e dependências PostgreSQL removidos;
+4. adapter D1 implementado e testado;
+5. migration inicial mínima e imutável criada;
+6. D1 isolado configurado nos testes do `workerd`;
+7. banco remoto `yuisync-next-staging` criado;
+8. binding `DB` adicionado somente em staging;
+9. migration aplicada por workflow protegido;
+10. consulta remota de metadata validada;
+11. canário D1 composto no `/ready` sob feature flag;
+12. rollback de flag e binding ensaiado;
+13. binding e flag restaurados e revalidados;
+14. deploy futuro tornado consciente de migrations D1.
 
 ## Regras de segurança
 
-- nenhum ID de banco precisa ser tratado como secret, mas deve ser versionado somente no ambiente correto;
+- database ID não é secret, mas só aparece no ambiente correto;
 - tokens Cloudflare permanecem no GitHub Environment;
 - nenhuma API aceita SQL vindo da requisição;
 - nenhuma consulta operacional registra SQL ou parâmetros em logs;
-- nenhuma tabela de negócio é criada nesta primeira migration;
+- nenhuma tabela de negócio foi criada nesta migration;
 - migrations aplicadas são imutáveis;
 - toda futura tabela multi-tenant terá `tenant_id` obrigatório;
 - toda consulta de coleção terá limite explícito;
 - índices serão definidos junto dos filtros de tenant e estado;
 - erros externos retornam somente código categorizado e correlation ID;
-- a feature flag permanece desligada até o teste protegido.
+- local e test permanecem com a feature flag desligada por padrão.
 
 ## Consulta canário
 
-A primeira consulta será constante:
+A consulta é constante:
 
 ```sql
 SELECT 1 AS canary_value;
@@ -105,18 +105,20 @@ Ela valida apenas:
 
 ## Estratégia de migrations
 
-As migrations serão armazenadas dentro do workspace Edge e aplicadas pelo Wrangler:
+As migrations ficam no workspace Edge:
 
 ```text
 apps/edge-api/migrations/
   0001_foundation.sql
 ```
 
-O banco de staging só receberá migrations por workflow protegido. Produção não será criada nesta fase.
+A migration inicial cria somente `_yuisync_system_metadata` e registra `schema_version = 1`.
+
+O workflow **Edge staging deploy** aplica migrations pendentes antes de publicar o Worker e interrompe quando a verificação do metadata falha. Produção não foi criada nesta fase.
 
 ## Estratégia multi-tenant
 
-A primeira versão usará um banco compartilhado. O design deverá permitir evolução posterior:
+A primeira versão usará banco compartilhado. O design permite evolução posterior:
 
 ```text
 tenant router
@@ -131,33 +133,67 @@ Nenhum caso de uso poderá depender diretamente de um único banco físico.
 
 Operações como reserva de agenda e confirmação pendente não dependerão apenas da serialização do D1. A coordenação será implementada com Durable Objects antes da ativação dessas escritas no runtime novo.
 
+## Resultado operacional de staging
+
+```text
+Database: yuisync-next-staging
+Region hint: ENAM
+Worker binding: DB
+Migration: 0001_foundation.sql
+Schema version: 1
+Feature flag de staging: true
+Readiness final: database = ready
+```
+
+O ensaio operacional comprovou:
+
+```text
+D1 ativo
+  -> /ready = ready / database = ready
+
+binding removido + flag desligada
+  -> /ready = ready / database = disabled
+
+binding restaurado + flag ligada
+  -> /ready = ready / database = ready
+```
+
+O banco e as migrations permaneceram intactos durante o rollback de aplicação.
+
 ## Gates obrigatórios
 
 - [x] decisão D1 registrada;
 - [x] port independente de provedor;
-- [x] feature flag desligada por padrão;
+- [x] feature flag fail-closed;
 - [x] adapter canário D1 criado;
-- [ ] dependências PostgreSQL removidas;
-- [ ] migration inicial criada;
-- [ ] D1 local/test configurado;
-- [ ] testes D1 no runtime Workers verdes;
-- [ ] banco D1 de staging criado;
-- [ ] binding `DB` de staging configurado;
-- [ ] migrations aplicadas em staging;
-- [ ] consulta canário ao vivo aprovada;
-- [ ] timeout e indisponibilidade ao vivo testados;
-- [ ] logs sanitizados no staging;
-- [ ] rollback da flag/binding ensaiado;
-- [ ] nenhuma regressão no legado.
+- [x] dependências PostgreSQL removidas;
+- [x] migration inicial criada;
+- [x] D1 local/test configurado;
+- [x] testes D1 no runtime Workers verdes;
+- [x] banco D1 de staging criado;
+- [x] binding `DB` de staging configurado;
+- [x] migration aplicada em staging;
+- [x] consulta canário ao vivo aprovada;
+- [x] indisponibilidade e ausência de binding testadas;
+- [x] logs sanitizados por contrato e smoke operacional;
+- [x] rollback da flag e do binding ensaiado;
+- [x] restauração do D1 revalidada;
+- [x] nenhuma regressão no legado;
+- [ ] CI final do commit documental e operacional.
 
 ## Rollback
 
-O rollback lógico consiste em manter ou restaurar `EDGE_DATABASE_ENABLED=false`.
+O rollback lógico consiste em definir `EDGE_DATABASE_ENABLED=false` e remover o binding `DB` da versão publicada do Worker.
 
-O rollback do runtime consiste em publicar uma versão do Worker que não exige o binding para readiness. Como a fase não permite escrita de negócio nem importação de dados, não existe rollback de dados do sistema atual.
+O `/ready` continua saudável com `database = disabled`, enquanto o banco e suas migrations permanecem intactos. Para restaurar, recoloca-se o binding, ativa-se a flag e confirma-se `database = ready`.
 
-O banco D1 de staging poderá ser restaurado por Time Travel se uma migration experimental causar problema, mas migrations incorretas devem ser corrigidas por nova migration, nunca alterando uma migration já aplicada.
+Uma migration aplicada não deve ser editada. Correções são feitas por nova migration. Recuperações excepcionais devem seguir o runbook e a estratégia de Time Travel do D1.
+
+## Runbooks
+
+- `docs/runbooks/EDGE_STAGING.md`;
+- `docs/runbooks/D1_STAGING.md`.
 
 ## Critério de saída
 
-A fase termina quando o Worker consegue validar, sob feature flag e em staging, uma conexão com D1 por binding nativo, com migrations, testes no `workerd`, observabilidade, timeout e rollback comprovados, sem expor rota de negócio nem alterar o comportamento do sistema atual.
+A fase termina quando a CI final estiver verde no SHA exato da PR, após comprovar binding, migration, canário, observabilidade e rollback de aplicação em staging, sem expor rota de negócio nem alterar o comportamento do sistema atual.
