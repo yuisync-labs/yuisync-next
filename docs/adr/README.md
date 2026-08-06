@@ -6,7 +6,7 @@ Este diretório registra decisões arquiteturais relevantes do YuiSync.
 
 - `0000-template.md` — modelo para novos ADRs;
 - `0001-cloudflare-first-modular-monolith.md` — adoção de Cloudflare-first com monólito modular;
-- `0002-postgresql-neon-hyperdrive.md` — PostgreSQL independente no Neon via Hyperdrive.
+- `0002-cloudflare-d1-primary-database.md` — D1 como banco principal da nova arquitetura.
 
 ## Estados
 
@@ -17,7 +17,7 @@ Este diretório registra decisões arquiteturais relevantes do YuiSync.
 
 ## Regras
 
-- ADRs aceitos não são reescritos para alterar a decisão histórica;
+- ADRs aceitos não são reescritos para alterar a decisão histórica depois do merge;
 - mudanças relevantes exigem um novo ADR que referencia o anterior;
 - SDKs e provedores não devem atravessar os limites definidos pelos ports;
 - decisões de infraestrutura precisam registrar rollback e impacto operacional.
