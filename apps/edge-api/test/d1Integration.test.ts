@@ -6,13 +6,23 @@ import { D1ReadOnlyAdapter } from '../src/adapters/d1ReadOnly'
 const testEnv = env as EdgeEnv & { DB: D1Database }
 
 describe('D1 integration in workerd', () => {
-  it('aplica a migration inicial no banco isolado de testes', async () => {
+  it('aplica todas as migrations no banco isolado de testes', async () => {
     const row = await testEnv.DB
       .prepare('SELECT value FROM _yuisync_system_metadata WHERE key = ?')
       .bind('schema_version')
       .first<{ value: string }>()
 
-    expect(row).toEqual({ value: '1' })
+    expect(row).toEqual({ value: '2' })
+
+    const table = await testEnv.DB
+      .prepare(`
+        SELECT name
+        FROM sqlite_schema
+        WHERE type = 'table' AND name = '_yuisync_event_processing'
+      `)
+      .first<{ name: string }>()
+
+    expect(table).toEqual({ name: '_yuisync_event_processing' })
   })
 
   it('executa o canário pelo binding D1 real do ambiente de teste', async () => {

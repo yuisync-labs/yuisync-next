@@ -6,7 +6,8 @@ Este diretório registra decisões arquiteturais relevantes do YuiSync.
 
 - `0000-template.md` — modelo para novos ADRs;
 - `0001-cloudflare-first-modular-monolith.md` — adoção de Cloudflare-first com monólito modular;
-- `0002-cloudflare-d1-primary-database.md` — D1 como banco principal da nova arquitetura.
+- `0002-cloudflare-d1-primary-database.md` — D1 como banco principal da nova arquitetura;
+- `0003-cloudflare-queues-idempotent-events.md` — Queues, retries, DLQ e processamento idempotente.
 
 ## Estados
 
