@@ -98,23 +98,37 @@ A primeira consulta será uma instrução constante, sem tabelas de negócio e s
 - resposta sanitizada;
 - ausência de SQL e credenciais nos logs.
 
+## Implementação validada antes da infraestrutura
+
+- `ReadOnlyDatabasePort` independente de provedor;
+- erros categorizados e sanitizados;
+- feature flag fail-closed;
+- readiness preservado com banco desabilitado;
+- Drizzle ORM `0.45.x`;
+- node-postgres `8.22.x`;
+- adapter com `BEGIN READ ONLY`, consulta constante e `ROLLBACK`;
+- timeouts de conexão, consulta e statement;
+- fechamento do cliente garantido;
+- testes determinísticos do gate e do resultado canário;
+- CI completa verde no commit `619fe434500e98e1188f1ae3658ea9d945dbd1c2`.
+
 ## Gates obrigatórios
 
 - [x] decisão PostgreSQL independente + Neon + Hyperdrive registrada;
 - [ ] inventário das dependências de banco concluído;
-- [ ] ADR do driver e estratégia de pooling aceito;
-- [ ] port e adapter sem SDK dentro do domínio;
-- [ ] Drizzle e tipos verificados na CI;
-- [ ] testes em runtime Workers verdes;
-- [ ] feature flag desligada por padrão;
+- [x] ADR do driver e estratégia de pooling aceito;
+- [x] port e adapter sem SDK dentro do domínio;
+- [x] Drizzle e tipos verificados na CI;
+- [x] testes em runtime Workers verdes;
+- [x] feature flag desligada por padrão;
 - [ ] projeto/branch Neon de staging criado;
 - [ ] role PostgreSQL somente leitura criada;
 - [ ] Hyperdrive de staging criado e vinculado;
 - [ ] consulta canário aprovada;
-- [ ] timeout e indisponibilidade testados;
-- [ ] logs sem SQL, parâmetros, PII ou secrets;
+- [ ] timeout e indisponibilidade testados ao vivo;
+- [ ] logs sem SQL, parâmetros, PII ou secrets validados no staging;
 - [ ] rollback do binding/flag ensaiado;
-- [ ] nenhuma regressão no legado.
+- [x] nenhuma regressão no legado.
 
 ## Rollback
 
