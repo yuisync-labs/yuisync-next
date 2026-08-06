@@ -2,7 +2,7 @@ import app from './app'
 import { handleAsyncQueue } from './queueHandler'
 
 export default {
-  fetch(request: Request, env: EdgeEnv, context: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: EdgeEnv, context: ExecutionContext): Promise<Response> {
     return app.fetch(request, env, context)
   },
   queue: handleAsyncQueue,
