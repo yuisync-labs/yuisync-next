@@ -13,21 +13,25 @@ Cloudflare Worker
   -> ack, retry ou DLQ
 ```
 
-## Escopo incluído
+## Escopo entregue
 
-- ADR de Queues e entrega at-least-once;
+- ADR de entrega at-least-once;
 - adapter produtor compatível com `DomainEventPublisherPort`;
-- validação do `DomainEventEnvelopeV1` antes de publicar e consumir;
-- tabela D1 de processamento idempotente;
-- claim e conclusão de eventos por chave de idempotência;
-- consumidor sem handlers de negócio ativos;
-- classificação de erros transitórios e permanentes;
-- acknowledgements individuais por mensagem;
+- validação do `DomainEventEnvelopeV1` na publicação e no consumo;
+- contrato estrito `AsyncCanaryEventV1`;
+- allowlist contendo apenas `system.async_canary.requested.v1`;
+- migration D1 `0002_event_processing.sql`;
+- repository de claim, conclusão e falha;
+- leases para recuperação de processamento interrompido;
+- processador de batch com `ack()` e `retry()` individuais;
+- consumer handler `queue()` no Worker;
+- feature gate `EDGE_ASYNC_ENABLED`;
+- producer binding `EVENTS_QUEUE`;
 - Queue e DLQ exclusivas de staging;
-- testes de publicação, redelivery, duplicidade, retry e mensagem inválida;
-- logs estruturados com event ID, tenant ID, correlation ID e resultado;
-- runbook de backlog, retry, pause, purge e DLQ;
-- rollback removendo bindings e consumer trigger.
+- testes de publicação, concorrência, redelivery, duplicidade e falha;
+- observabilidade sanitizada;
+- runbook de backlog, pause, resume, purge e DLQ;
+- ensaios ao vivo de canário, idempotência, DLQ e rollback.
 
 ## Fora do escopo
 
@@ -36,20 +40,23 @@ Cloudflare Worker
 - Workflows;
 - Durable Objects;
 - R2;
-- fila de produção;
+- filas de produção;
 - consumidor automático da DLQ;
 - replay operacional de dados reais;
 - garantias exactly-once;
 - substituição de processos do backend Express.
 
-## Filas de staging
+## Recursos de staging
 
 ```text
-yuisync-events-staging
-yuisync-events-dlq-staging
+Queue: yuisync-events-staging
+DLQ: yuisync-events-dlq-staging
+Producer binding: EVENTS_QUEUE
+D1: yuisync-next-staging
+Feature gate: EDGE_ASYNC_ENABLED
 ```
 
-Configuração inicial proposta:
+Configuração validada:
 
 ```text
 max_batch_size: 5
@@ -60,111 +67,158 @@ max_concurrency: 2
 dead_letter_queue: yuisync-events-dlq-staging
 ```
 
-Os valores serão revisados depois dos testes de staging. O objetivo inicial é previsibilidade e observabilidade, não throughput máximo.
-
 ## Idempotência no D1
 
-A migration da fase criará uma tabela interna, sem dados de negócio:
+A migration criou a tabela interna:
 
 ```text
 _yuisync_event_processing
 ```
 
-Campos mínimos:
+Identidade e estado:
 
-- `idempotency_key` como chave primária;
-- `event_id` e `event_name`;
-- `tenant_id`;
-- `status` (`processing`, `succeeded`, `failed`);
+- chave primária composta por `tenant_id` e `idempotency_key`;
+- `event_id` único;
+- `event_name` e `event_version` imutáveis para a chave;
+- estados `processing`, `succeeded` e `failed`;
 - `attempt_count`;
-- `first_seen_at`, `last_attempt_at` e `completed_at`;
+- `claim_token`;
+- `lease_expires_at_ms`;
+- timestamps técnicos;
 - `last_error_code` sanitizado.
 
-Regras:
+Regras implementadas:
 
-1. nenhum handler executa antes do claim;
-2. evento concluído é reconhecido sem repetir efeito;
-3. evento em processamento recente solicita retry;
-4. falhas não armazenam mensagem, stack ou payload;
-5. a chave de transporte da Queue não substitui `idempotency_key`.
+1. nenhum handler executa antes do claim atômico;
+2. apenas um claim concorrente vence;
+3. evento concluído recebe ack sem repetir efeito;
+4. processamento com lease ativo solicita retry;
+5. lease expirada pode ser recuperada;
+6. falha permite redelivery e incrementa a tentativa;
+7. reutilização da chave para outro evento é conflito;
+8. payload, SQL e stack não são persistidos como erro.
 
-## Consumidor inicial
+## Consumidor
 
-A primeira allowlist conterá apenas um evento interno de canário:
+A allowlist contém apenas:
 
 ```text
 system.async_canary.requested.v1
 ```
 
-O handler canário não executará integração externa. Ele validará contrato, claim, conclusão, logs e acknowledgements. Eventos desconhecidos serão classificados como permanentes e seguirão a política de retry/DLQ sem serem executados.
+O canário valida contrato, D1, logs e acknowledgements sem integração externa. Eventos desconhecidos não executam handler: recebem retry individual e seguem para a DLQ ao exceder o limite.
 
-## Ordem de implementação
+Quando `EDGE_ASYNC_ENABLED=false`, o lote não acessa D1 nem executa handler; todas as mensagens são reagendadas com atraso operacional.
 
-1. aceitar ADR-0003;
-2. criar contrato/allowlist do canário;
-3. implementar producer adapter com Queue injetável;
-4. criar migration e repository idempotente D1;
-5. implementar processador puro de mensagens;
-6. compor o handler `queue()` no Worker;
-7. testar batches, duplicidade e falhas no `workerd`;
-8. criar Queue e DLQ de staging por workflow protegido;
-9. configurar producer binding e consumer trigger;
-10. publicar canário protegido;
-11. validar ack, redelivery, retry e DLQ;
-12. ensaiar rollback retirando producer/consumer bindings;
-13. remover workflows temporários;
-14. integrar somente com CI e staging verdes.
+## Testes no runtime Workers
+
+Os testes no `workerd` cobrem:
+
+- producer binding injetável;
+- contrato e allowlist;
+- claim concorrente;
+- conclusão idempotente;
+- falha seguida de redelivery;
+- lease ativa e expirada;
+- conflito de chave;
+- batch parcialmente bem-sucedido;
+- ack de duplicata concluída;
+- retry de claim ativo;
+- erro de handler sanitizado;
+- indisponibilidade do D1;
+- feature gate desligada;
+- migration e schema version 2.
+
+## Validação ao vivo
+
+O staging foi validado em ambiente protegido:
+
+```text
+canário publicado
+  -> succeeded
+  -> attempt_count = 1
+
+mesmo envelope publicado novamente
+  -> ack de duplicata
+  -> attempt_count permanece 1
+
+evento incompatível
+  -> retries individuais
+  -> DLQ após o limite
+
+Queue pausada
+  -> mensagem preservada
+
+Queue retomada
+  -> mensagem processada
+  -> succeeded
+```
+
+Ao final, a entrega foi retomada e os backlogs de teste da Queue e da DLQ foram limpos.
 
 ## Observabilidade
 
-Eventos de log previstos:
+Eventos implementados incluem:
 
 ```text
-edge.queue.batch.started
-edge.queue.message.claimed
-edge.queue.message.duplicate
-edge.queue.message.succeeded
-edge.queue.message.retry
+edge.queue.message.acked
+edge.queue.message.duplicate_acked
+edge.queue.message.retry_scheduled
 edge.queue.message.rejected
 edge.queue.batch.completed
+edge.queue.batch.disabled
+edge.async_canary.processed
 ```
 
 Campos permitidos:
 
+- `message_id`;
 - `event_id`;
-- `event_name`;
 - `tenant_id`;
 - `correlation_id`;
-- `attempts`;
-- `result`;
-- `error_code` sanitizado;
-- `duration_ms`.
+- tentativa;
+- resultado;
+- motivo categorizado.
 
-Payload, SQL, stack trace, telefone, mensagem de cliente e conteúdo de integrações não podem ser registrados.
+Payload, SQL, stack trace, telefone, mensagem de cliente e credenciais não podem ser registrados.
+
+## Rollback
+
+O rollback operacional validado usa pause/resume da Queue:
+
+```text
+pause delivery
+  -> novas mensagens permanecem armazenadas
+  -> consumidor deixa de receber
+
+resume delivery
+  -> backlog volta a ser consumido
+  -> idempotência permanece ativa
+```
+
+Também é possível desligar `EDGE_ASYNC_ENABLED` ou republicar a versão estável do Worker. D1, Queue e DLQ permanecem para auditoria. Purge não é mecanismo de rollback.
 
 ## Gates obrigatórios
 
 - [x] branch da Fase 5 criada;
 - [x] decisão arquitetural documentada;
-- [ ] contrato de canário e allowlist;
-- [ ] producer adapter;
-- [ ] migration de idempotência;
-- [ ] repository D1 de claim/conclusão;
-- [ ] consumidor com ack/retry individual;
-- [ ] testes no `workerd`;
-- [ ] CI completa sem regressões;
-- [ ] Queue e DLQ de staging;
-- [ ] canário ao vivo;
-- [ ] redelivery idempotente ao vivo;
-- [ ] retry e DLQ validados;
-- [ ] logs sanitizados;
-- [ ] rollback ensaiado;
-- [ ] runbook operacional.
-
-## Rollback
-
-O rollback do runtime remove producer bindings e consumer triggers e republica o Worker. O D1 e a tabela interna permanecem para auditoria, sem receber novos eventos. Como nenhum fluxo real será ativado nesta fase, não haverá rollback de dados de negócio.
+- [x] contrato de canário e allowlist;
+- [x] producer adapter;
+- [x] migration de idempotência;
+- [x] repository D1 de claim/conclusão;
+- [x] consumidor com ack/retry individual;
+- [x] testes no `workerd`;
+- [x] Queue e DLQ de staging;
+- [x] canário ao vivo;
+- [x] redelivery idempotente ao vivo;
+- [x] retry e DLQ validados;
+- [x] logs sanitizados;
+- [x] rollback ensaiado;
+- [x] runbook operacional;
+- [x] workflows temporários removidos;
+- [ ] CI final no SHA exato da PR;
+- [ ] nenhuma regressão no legado.
 
 ## Critério de saída
 
-A fase termina quando um evento canário versionado puder ser publicado e consumido em staging, com idempotência comprovada sob redelivery, retries e DLQ observáveis, rollback validado e nenhuma alteração no comportamento do sistema legado.
+A fase termina quando a CI final estiver verde no SHA exato da PR, preservando o Worker e o legado, com o evento canário versionado publicado e consumido em staging, idempotência comprovada sob redelivery, DLQ observável e rollback validado.
