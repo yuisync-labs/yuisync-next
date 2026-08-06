@@ -1,5 +1,9 @@
 import { Hono } from 'hono'
 
+import {
+  hasHyperdriveBinding,
+  isEdgeDatabaseEnabled,
+} from './databaseFeature'
 import { emitEdgeLog } from './observability'
 import { resolveRequestId } from './requestContext'
 import type { EdgeAppEnvironment } from './types'
@@ -64,22 +68,30 @@ app.get('/ready', (context) => {
     .filter(([, value]) => !String(value || '').trim())
     .map(([name]) => name)
 
+  const databaseEnabled = isEdgeDatabaseEnabled(context.env.EDGE_DATABASE_ENABLED)
+  const databaseConfigured = hasHyperdriveBinding(context.env.HYPERDRIVE)
+  const databaseCheck = databaseEnabled
+    ? (databaseConfigured ? 'configured' : 'not_configured')
+    : 'disabled'
+  const isReady = missingBindings.length === 0 && (!databaseEnabled || databaseConfigured)
+
   const payload = {
     service: context.env.SERVICE_NAME,
     environment: context.env.APP_ENV,
     release_channel: context.env.RELEASE_CHANNEL,
     request_id: context.get('requestId'),
-    status: missingBindings.length ? 'not_ready' : 'ready',
+    status: isReady ? 'ready' : 'not_ready',
     checks: {
       configuration: missingBindings.length ? 'failed' : 'ok',
+      database: databaseCheck,
     },
     missing_bindings: missingBindings,
     timestamp: new Date().toISOString(),
   }
 
-  return missingBindings.length
-    ? context.json(payload, 503)
-    : context.json(payload, 200)
+  return isReady
+    ? context.json(payload, 200)
+    : context.json(payload, 503)
 })
 
 app.notFound((context) => context.json({
