@@ -13,7 +13,8 @@
   "vars": {
     "APP_ENV": "local",
     "SERVICE_NAME": "yuisync-edge-api",
-    "RELEASE_CHANNEL": "local"
+    "RELEASE_CHANNEL": "local",
+    "EDGE_DATABASE_ENABLED": "false"
   },
   "env": {
     "local": {
@@ -21,7 +22,8 @@
       "vars": {
         "APP_ENV": "local",
         "SERVICE_NAME": "yuisync-edge-api",
-        "RELEASE_CHANNEL": "local"
+        "RELEASE_CHANNEL": "local",
+        "EDGE_DATABASE_ENABLED": "false"
       }
     },
     "test": {
@@ -29,7 +31,8 @@
       "vars": {
         "APP_ENV": "test",
         "SERVICE_NAME": "yuisync-edge-api",
-        "RELEASE_CHANNEL": "test"
+        "RELEASE_CHANNEL": "test",
+        "EDGE_DATABASE_ENABLED": "false"
       }
     },
     "staging": {
@@ -37,8 +40,18 @@
       "vars": {
         "APP_ENV": "staging",
         "SERVICE_NAME": "yuisync-edge-api",
-        "RELEASE_CHANNEL": "staging"
-      }
+        "RELEASE_CHANNEL": "staging",
+        "EDGE_DATABASE_ENABLED": "true"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "yuisync-next-staging",
+          "database_id": "4abe6b77-3042-4960-88ef-1fdb43d488d1",
+          "migrations_dir": "migrations",
+          "migrations_table": "d1_migrations"
+        }
+      ]
     }
   }
 }

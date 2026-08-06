@@ -11,6 +11,14 @@ export type {
 } from './persistence'
 
 export type {
+  DatabaseCanaryRequest,
+  DatabaseCanaryResult,
+  DatabaseDependencyErrorCode,
+  ReadOnlyDatabasePort,
+} from './database'
+export { DatabaseDependencyError } from './database'
+
+export type {
   DomainEventPublisherPort,
   EventPublishReceipt,
 } from './messaging'

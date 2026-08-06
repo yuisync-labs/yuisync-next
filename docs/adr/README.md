@@ -1,55 +1,23 @@
 # Architecture Decision Records
 
-ADRs document decisions that materially affect architecture, runtime, data, security, operations or vendor coupling.
+Este diretório registra decisões arquiteturais relevantes do YuiSync.
 
-## Statuses
+## Índice
 
-- `proposed`: under review;
-- `accepted`: approved for implementation;
-- `superseded`: replaced by another ADR;
-- `rejected`: considered and not selected;
-- `deprecated`: retained for history but no longer recommended.
+- `0000-template.md` — modelo para novos ADRs;
+- `0001-cloudflare-first-modular-monolith.md` — adoção de Cloudflare-first com monólito modular;
+- `0002-cloudflare-d1-primary-database.md` — D1 como banco principal da nova arquitetura.
 
-## Numbering
+## Estados
 
-Use four digits and a short slug:
+- `proposed`: decisão em discussão;
+- `accepted`: decisão aprovada e vigente;
+- `superseded`: substituída por outro ADR;
+- `deprecated`: não deve ser usada em novas implementações.
 
-```text
-0001-cloudflare-first-modular-monolith.md
-0002-contract-validation-with-zod.md
-```
+## Regras
 
-Numbers are never reused.
-
-## ADR required for
-
-- adding or replacing a foundational library;
-- selecting a Cloudflare service for a domain responsibility;
-- changing persistence or authentication strategy;
-- introducing dual-write or event-driven behavior;
-- changing a public/internal contract incompatibly;
-- creating an exception to domain dependency rules;
-- accepting a high or critical risk.
-
-## ADR not required for
-
-- isolated bug fixes that preserve contracts;
-- test additions;
-- documentation corrections;
-- routine dependency patches without architectural impact.
-
-## Review requirements
-
-An ADR must identify:
-
-- context and problem;
-- constraints;
-- options considered;
-- decision;
-- positive and negative consequences;
-- security and tenant impact;
-- migration and rollback;
-- validation evidence;
-- related risks and PRs.
-
-Use [`0000-template.md`](./0000-template.md) as the base.
+- ADRs aceitos não são reescritos para alterar a decisão histórica depois do merge;
+- mudanças relevantes exigem um novo ADR que referencia o anterior;
+- SDKs e provedores não devem atravessar os limites definidos pelos ports;
+- decisões de infraestrutura precisam registrar rollback e impacto operacional.
