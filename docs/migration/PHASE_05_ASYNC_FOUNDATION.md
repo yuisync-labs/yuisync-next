@@ -216,9 +216,9 @@ Também é possível desligar `EDGE_ASYNC_ENABLED` ou republicar a versão está
 - [x] rollback ensaiado;
 - [x] runbook operacional;
 - [x] workflows temporários removidos;
-- [ ] CI final no SHA exato da PR;
-- [ ] nenhuma regressão no legado.
+- [x] CI final no SHA exato da PR;
+- [x] nenhuma regressão no legado.
 
 ## Critério de saída
 
-A fase termina quando a CI final estiver verde no SHA exato da PR, preservando o Worker e o legado, com o evento canário versionado publicado e consumido em staging, idempotência comprovada sob redelivery, DLQ observável e rollback validado.
+A fase está concluída com CI verde, preservando o Worker e o legado, com o evento canário versionado publicado e consumido em staging, idempotência comprovada sob redelivery, DLQ observável e rollback validado.
