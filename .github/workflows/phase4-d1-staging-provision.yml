@@ -129,24 +129,25 @@ jobs:
             CONTENT_TYPE="$(curl --silent --show-error --head "$STAGING_URL/ready" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-type" {print $2}' | tail -1 || true)"
 
             if [ "$STATUS" = "200" ] && grep -qi 'application/json' <<< "$CONTENT_TYPE"; then
-              node - "$BODY_FILE" <<'NODE'
-              const fs = require('node:fs');
-              const body = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-              if (body.status !== 'ready' || body.checks?.database !== 'ready') {
-                throw new Error('D1 readiness response is not ready.');
-              }
-              console.log(JSON.stringify({
-                status: body.status,
-                database: body.checks.database,
-                environment: body.environment,
-                database_latency_ms: body.database_latency_ms,
-              }));
+              if node - "$BODY_FILE" <<'NODE'
+          const fs = require('node:fs');
+          const body = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const valid = body.status === 'ready' && body.checks?.database === 'ready';
+          console.log(JSON.stringify({
+            status: body.status,
+            database: body.checks?.database,
+            environment: body.environment,
+            database_latency_ms: body.database_latency_ms,
+          }));
+          process.exit(valid ? 0 : 1);
           NODE
-              rm -f "$BODY_FILE"
-              exit 0
+              then
+                rm -f "$BODY_FILE"
+                exit 0
+              fi
             fi
 
-            echo "Readiness attempt $attempt returned status=${STATUS:-unavailable} content-type=${CONTENT_TYPE:-unavailable}."
+            echo "Readiness attempt $attempt has not reached D1-ready state: status=${STATUS:-unavailable} content-type=${CONTENT_TYPE:-unavailable}."
             rm -f "$BODY_FILE"
             sleep $((attempt * 5))
           done
