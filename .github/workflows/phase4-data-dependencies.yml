@@ -1,0 +1,57 @@
+name: Phase 4 data dependency bootstrap
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase4-data-dependencies-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  install:
+    if: >-
+      github.event.pull_request.number == 5 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'phase/04-data-access-foundation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install PostgreSQL adapter dependencies
+        run: |
+          npm install --workspace @yuisync/edge-api drizzle-orm pg@^8.16.3
+          npm install --workspace @yuisync/edge-api --save-dev @types/pg
+
+      - name: Validate Edge and architecture gates
+        run: |
+          npm run edge:check
+          npm run typecheck
+          npm run typecheck:contracts
+          npm run check:contract-boundaries
+
+      - name: Commit generated dependency metadata
+        env:
+          BRANCH_NAME: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/edge-api/package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "Dependency metadata already up to date."
+            exit 0
+          fi
+          git commit -m "build: add Drizzle and PostgreSQL driver"
+          git push origin "HEAD:${BRANCH_NAME}"
