@@ -25,7 +25,7 @@ export const catalogProducts = sqliteTable('catalog_products', {
     name: 'fk_catalog_products_upsell_scope',
     columns: [table.tenantId, table.moduleId, table.upsellProductId],
     foreignColumns: [table.tenantId, table.moduleId, table.id],
-  }).onUpdate('restrict').onDelete('set null'),
+  }).onUpdate('restrict').onDelete('restrict'),
   uniqueIndex('catalog_products_scope_barcode_unique').on(table.tenantId, table.moduleId, table.barcode),
   index('catalog_products_scope_status_name_idx').on(table.tenantId, table.moduleId, table.status, table.name, table.id),
 ])
