@@ -10,13 +10,22 @@
     "enabled": true,
     "head_sampling_rate": 1
   },
+  "assets": {
+    "directory": "../../dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/internal/*", "/health", "/ready"]
+  },
   "vars": {
     "APP_ENV": "local",
     "SERVICE_NAME": "yuisync-edge-api",
     "RELEASE_CHANNEL": "local",
     "EDGE_DATABASE_ENABLED": "false",
     "EDGE_ASYNC_ENABLED": "false",
-    "EDGE_COORDINATION_ENABLED": "false"
+    "EDGE_COORDINATION_ENABLED": "false",
+    "EDGE_BETTER_AUTH_ENABLED": "false",
+    "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
+    "EDGE_AUTH_MIGRATION_ENABLED": "false"
   },
   "env": {
     "local": {
@@ -27,7 +36,10 @@
         "RELEASE_CHANNEL": "local",
         "EDGE_DATABASE_ENABLED": "false",
         "EDGE_ASYNC_ENABLED": "false",
-        "EDGE_COORDINATION_ENABLED": "false"
+        "EDGE_COORDINATION_ENABLED": "false",
+        "EDGE_BETTER_AUTH_ENABLED": "false",
+        "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
+        "EDGE_AUTH_MIGRATION_ENABLED": "false"
       }
     },
     "test": {
@@ -38,7 +50,10 @@
         "RELEASE_CHANNEL": "test",
         "EDGE_DATABASE_ENABLED": "false",
         "EDGE_ASYNC_ENABLED": "false",
-        "EDGE_COORDINATION_ENABLED": "false"
+        "EDGE_COORDINATION_ENABLED": "false",
+        "EDGE_BETTER_AUTH_ENABLED": "false",
+        "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
+        "EDGE_AUTH_MIGRATION_ENABLED": "false"
       }
     },
     "staging": {
@@ -49,7 +64,10 @@
         "RELEASE_CHANNEL": "staging",
         "EDGE_DATABASE_ENABLED": "true",
         "EDGE_ASYNC_ENABLED": "true",
-        "EDGE_COORDINATION_ENABLED": "true"
+        "EDGE_COORDINATION_ENABLED": "true",
+        "EDGE_BETTER_AUTH_ENABLED": "false",
+        "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
+        "EDGE_AUTH_MIGRATION_ENABLED": "false"
       },
       "d1_databases": [
         {
