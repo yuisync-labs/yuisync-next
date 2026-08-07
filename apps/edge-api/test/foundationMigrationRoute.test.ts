@@ -89,11 +89,24 @@ function snapshot(tenantId: string, storeName = 'Quatro Patas') {
   }
 }
 
-function postSnapshot(
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+async function bodySha256(body: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(body),
+  )
+  return bytesToHex(new Uint8Array(digest))
+}
+
+async function postSnapshot(
   body: string,
   bindings: AppBindings,
   headers: HeadersInit = {},
 ) {
+  const checksum = await bodySha256(body)
   return app.request(
     `https://worker.test${FOUNDATION_MIGRATION_ROUTE}`,
     {
@@ -101,6 +114,7 @@ function postSnapshot(
       headers: {
         'content-type': 'application/json',
         'x-yuisync-migration-token': TOKEN,
+        'x-yuisync-migration-snapshot-sha256': checksum,
         ...headers,
       },
       body,
@@ -160,7 +174,48 @@ describe('foundation migration staging transport', () => {
     expect(row).toBeNull()
   })
 
+  it('exige checksum declarado do snapshot', async () => {
+    const body = JSON.stringify(snapshot('tenant-transport-no-checksum'))
+    const response = await app.request(
+      `https://worker.test${FOUNDATION_MIGRATION_ROUTE}`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-yuisync-migration-token': TOKEN,
+        },
+        body,
+      },
+      createBindings(),
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'SNAPSHOT_CHECKSUM_REQUIRED',
+    })
+  })
+
+  it('rejeita bytes diferentes do checksum declarado antes do writer', async () => {
+    const tenantId = 'tenant-transport-checksum-mismatch'
+    const body = JSON.stringify(snapshot(tenantId))
+    const response = await postSnapshot(body, createBindings(), {
+      'x-yuisync-migration-snapshot-sha256': '0'.repeat(64),
+    })
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'SNAPSHOT_CHECKSUM_MISMATCH',
+    })
+
+    const row = await testEnv.DB
+      .prepare('SELECT id FROM tenants WHERE id = ?')
+      .bind(tenantId)
+      .first<{ id: string }>()
+    expect(row).toBeNull()
+  })
+
   it('exige application/json antes de ler o snapshot', async () => {
+    const body = '{}'
     const response = await app.request(
       `https://worker.test${FOUNDATION_MIGRATION_ROUTE}`,
       {
@@ -168,8 +223,9 @@ describe('foundation migration staging transport', () => {
         headers: {
           'content-type': 'text/plain',
           'x-yuisync-migration-token': TOKEN,
+          'x-yuisync-migration-snapshot-sha256': await bodySha256(body),
         },
-        body: '{}',
+        body,
       },
       createBindings(),
     )
