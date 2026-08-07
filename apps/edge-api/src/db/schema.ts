@@ -42,5 +42,64 @@ export const eventProcessing = sqliteTable('_yuisync_event_processing', {
   ),
 ])
 
+export const tenants = sqliteTable('tenants', {
+  id: text('id').primaryKey().notNull(),
+  slug: text('slug').notNull(),
+  name: text('name').notNull(),
+  status: text('status', { enum: ['active', 'inactive'] }).notNull().default('active'),
+  createdAtMs: integer('created_at_ms').notNull(),
+  updatedAtMs: integer('updated_at_ms').notNull(),
+}, (table) => [
+  uniqueIndex('tenants_slug_unique').on(table.slug),
+  index('tenants_status_idx').on(table.status, table.id),
+])
+
+export const identityPrincipals = sqliteTable('identity_principals', {
+  id: text('id').primaryKey().notNull(),
+  provider: text('provider').notNull(),
+  subject: text('subject').notNull(),
+  displayName: text('display_name'),
+  email: text('email'),
+  status: text('status', { enum: ['active', 'inactive'] }).notNull().default('active'),
+  createdAtMs: integer('created_at_ms').notNull(),
+  updatedAtMs: integer('updated_at_ms').notNull(),
+}, (table) => [
+  uniqueIndex('identity_principals_provider_subject_unique').on(
+    table.provider,
+    table.subject,
+  ),
+  index('identity_principals_status_idx').on(table.status, table.id),
+])
+
+export const tenantMemberships = sqliteTable('tenant_memberships', {
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onUpdate: 'restrict', onDelete: 'restrict' }),
+  principalId: text('principal_id')
+    .notNull()
+    .references(() => identityPrincipals.id, { onUpdate: 'restrict', onDelete: 'restrict' }),
+  status: text('status', { enum: ['active', 'inactive'] }).notNull().default('active'),
+  createdAtMs: integer('created_at_ms').notNull(),
+  updatedAtMs: integer('updated_at_ms').notNull(),
+}, (table) => [
+  primaryKey({
+    name: 'pk_tenant_memberships',
+    columns: [table.tenantId, table.principalId],
+  }),
+  index('tenant_memberships_principal_status_idx').on(
+    table.principalId,
+    table.status,
+    table.tenantId,
+  ),
+  index('tenant_memberships_tenant_status_idx').on(
+    table.tenantId,
+    table.status,
+    table.principalId,
+  ),
+])
+
 export type SystemMetadata = typeof systemMetadata.$inferSelect
 export type EventProcessingRecord = typeof eventProcessing.$inferSelect
+export type TenantRecord = typeof tenants.$inferSelect
+export type IdentityPrincipalRecord = typeof identityPrincipals.$inferSelect
+export type TenantMembershipRecord = typeof tenantMemberships.$inferSelect
