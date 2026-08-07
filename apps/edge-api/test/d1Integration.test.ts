@@ -12,7 +12,7 @@ describe('D1 integration in workerd', () => {
       .bind('schema_version')
       .first<{ value: string }>()
 
-    expect(row).toEqual({ value: '4' })
+    expect(row).toEqual({ value: '5' })
 
     const tables = await testEnv.DB
       .prepare(`
@@ -24,7 +24,9 @@ describe('D1 integration in workerd', () => {
             'tenants',
             'identity_principals',
             'tenant_memberships',
-            'tenant_module_settings'
+            'tenant_module_settings',
+            'clients',
+            'pets'
           )
         ORDER BY name
       `)
@@ -32,7 +34,9 @@ describe('D1 integration in workerd', () => {
 
     expect(tables.results.map((table) => table.name)).toEqual([
       '_yuisync_event_processing',
+      'clients',
       'identity_principals',
+      'pets',
       'tenant_memberships',
       'tenant_module_settings',
       'tenants',

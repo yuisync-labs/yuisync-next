@@ -1,8 +1,10 @@
 import { sql } from 'drizzle-orm'
 import {
+  foreignKey,
   index,
   integer,
   primaryKey,
+  real,
   sqliteTable,
   text,
   uniqueIndex,
@@ -120,9 +122,94 @@ export const tenantModuleSettings = sqliteTable('tenant_module_settings', {
   index('tenant_module_settings_module_idx').on(table.moduleId, table.tenantId),
 ])
 
+export const clients = sqliteTable('clients', {
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onUpdate: 'restrict', onDelete: 'restrict' }),
+  moduleId: text('module_id').notNull(),
+  id: text('id').notNull(),
+  name: text('name').notNull(),
+  document: text('document'),
+  phone: text('phone'),
+  email: text('email'),
+  birthDate: text('birth_date'),
+  address: text('address'),
+  addressNumber: text('address_number'),
+  addressComplement: text('address_complement'),
+  addressReference: text('address_reference'),
+  neighborhood: text('neighborhood'),
+  city: text('city'),
+  postalCode: text('postal_code'),
+  notes: text('notes'),
+  status: text('status', { enum: ['active', 'inactive'] }).notNull().default('active'),
+  createdAtMs: integer('created_at_ms').notNull(),
+  updatedAtMs: integer('updated_at_ms').notNull(),
+}, (table) => [
+  primaryKey({
+    name: 'pk_clients',
+    columns: [table.tenantId, table.moduleId, table.id],
+  }),
+  index('clients_scope_status_name_idx').on(
+    table.tenantId,
+    table.moduleId,
+    table.status,
+    table.name,
+    table.id,
+  ),
+  index('clients_scope_phone_idx').on(table.tenantId, table.moduleId, table.phone, table.id),
+  index('clients_scope_document_idx').on(table.tenantId, table.moduleId, table.document, table.id),
+])
+
+export const pets = sqliteTable('pets', {
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onUpdate: 'restrict', onDelete: 'restrict' }),
+  moduleId: text('module_id').notNull(),
+  id: text('id').notNull(),
+  clientId: text('client_id').notNull(),
+  name: text('name').notNull().default(''),
+  species: text('species', { enum: ['dog', 'cat', 'bird', 'rabbit', 'fish', 'other'] })
+    .notNull()
+    .default('other'),
+  breed: text('breed'),
+  birthDate: text('birth_date'),
+  weightKg: real('weight_kg'),
+  color: text('color'),
+  notes: text('notes'),
+  status: text('status', { enum: ['active', 'inactive'] }).notNull().default('active'),
+  createdAtMs: integer('created_at_ms').notNull(),
+  updatedAtMs: integer('updated_at_ms').notNull(),
+}, (table) => [
+  primaryKey({
+    name: 'pk_pets',
+    columns: [table.tenantId, table.moduleId, table.id],
+  }),
+  foreignKey({
+    name: 'fk_pets_client_scope',
+    columns: [table.tenantId, table.moduleId, table.clientId],
+    foreignColumns: [clients.tenantId, clients.moduleId, clients.id],
+  }).onUpdate('restrict').onDelete('restrict'),
+  index('pets_scope_client_status_idx').on(
+    table.tenantId,
+    table.moduleId,
+    table.clientId,
+    table.status,
+    table.id,
+  ),
+  index('pets_scope_status_name_idx').on(
+    table.tenantId,
+    table.moduleId,
+    table.status,
+    table.name,
+    table.id,
+  ),
+])
+
 export type SystemMetadata = typeof systemMetadata.$inferSelect
 export type EventProcessingRecord = typeof eventProcessing.$inferSelect
 export type TenantRecord = typeof tenants.$inferSelect
 export type IdentityPrincipalRecord = typeof identityPrincipals.$inferSelect
 export type TenantMembershipRecord = typeof tenantMemberships.$inferSelect
 export type TenantModuleSettingsRecord = typeof tenantModuleSettings.$inferSelect
+export type ClientRecord = typeof clients.$inferSelect
+export type PetRecord = typeof pets.$inferSelect
