@@ -19,5 +19,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.ref }}
+      - name: Inventory frontend data surface
+        run: node scripts/inventory-frontend-data-surface.mjs
       - name: Scan frontend runtime
         run: node scripts/check-no-runtime-supabase.mjs
