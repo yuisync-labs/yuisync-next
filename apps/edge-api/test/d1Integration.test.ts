@@ -12,7 +12,7 @@ describe('D1 integration in workerd', () => {
       .bind('schema_version')
       .first<{ value: string }>()
 
-    expect(row).toEqual({ value: '5' })
+    expect(row).toEqual({ value: '6' })
 
     const tables = await testEnv.DB
       .prepare(`
@@ -20,13 +20,9 @@ describe('D1 integration in workerd', () => {
         FROM sqlite_schema
         WHERE type = 'table'
           AND name IN (
-            '_yuisync_event_processing',
-            'tenants',
-            'identity_principals',
-            'tenant_memberships',
-            'tenant_module_settings',
-            'clients',
-            'pets'
+            '_yuisync_event_processing', 'tenants', 'identity_principals',
+            'tenant_memberships', 'tenant_module_settings', 'clients', 'pets',
+            'catalog_products', 'services'
           )
         ORDER BY name
       `)
@@ -34,9 +30,11 @@ describe('D1 integration in workerd', () => {
 
     expect(tables.results.map((table) => table.name)).toEqual([
       '_yuisync_event_processing',
+      'catalog_products',
       'clients',
       'identity_principals',
       'pets',
+      'services',
       'tenant_memberships',
       'tenant_module_settings',
       'tenants',
@@ -49,9 +47,6 @@ describe('D1 integration in workerd', () => {
     await expect(adapter.checkCanary({
       requestId: 'request-d1-workerd',
       timeoutMs: 1_000,
-    })).resolves.toMatchObject({
-      status: 'ready',
-      readOnly: true,
-    })
+    })).resolves.toMatchObject({ status: 'ready', readOnly: true })
   })
 })
