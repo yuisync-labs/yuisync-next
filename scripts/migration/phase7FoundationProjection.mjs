@@ -127,11 +127,14 @@ function destinationIdentityRecord(principal) {
   }
 }
 
-function sourceMembershipRecord(scope, profile, membership = null, derivedGlobalAdmin = false) {
+function sourceMembershipRecord(scope, profile, membership = null) {
   const subject = text(profile?.id)
   if (!subject) throw new FoundationProjectionError('SOURCE_PROFILE_ID_MISSING')
 
-  const status = derivedGlobalAdmin
+  // Legacy global admins are authorized independently of profile_tenants.
+  // The new model has no hidden bypass, so materialize that access as an
+  // explicit projected membership whenever the admin profile itself is active.
+  const status = profile?.role === 'admin'
     ? activeStatus(profile.active)
     : (membership?.active === false ? 'inactive' : activeStatus(profile.active))
 
@@ -219,12 +222,10 @@ export function projectSupabaseFoundation({
     if (!profile) throw new FoundationProjectionError('SOURCE_MEMBERSHIP_PROFILE_NOT_FOUND')
 
     identityRecords.push(sourceIdentityRecord(profile))
-    const explicitMembership = membershipByProfileId.get(profileId)
     membershipRecords.push(sourceMembershipRecord(
       scope,
       profile,
-      explicitMembership,
-      profile.role === 'admin' && !explicitMembership,
+      membershipByProfileId.get(profileId),
     ))
   }
 
