@@ -11,4 +11,5 @@ apps/*/.wrangler/
 apps/*/dist/
 supabase/.temp/
 backups/
+.migration/
 __pycache__/
