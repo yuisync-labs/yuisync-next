@@ -31,9 +31,9 @@ export async function applyAuthMigration({authDatabase,database,snapshot}:{authD
     if(!principal||principal.status!=='active')throw new AuthMigrationError('PRINCIPAL_MISSING')
     principalByUser.set(user.id,principal.id)
 
-    const existing=await authDatabase.prepare('SELECT id,name,email,emailVerified,createdAt,updatedAt FROM user WHERE id=?1').bind(user.id).first<Record<string,unknown>>()
+    const existing=await authDatabase.prepare('SELECT id,name,email,emailVerified FROM user WHERE id=?1').bind(user.id).first<Record<string,unknown>>()
     if(existing && (existing.name!==user.name||String(existing.email).toLowerCase()!==user.email||Number(existing.emailVerified)!==(user.email_verified?1:0)))throw new AuthMigrationError('AUTH_DIVERGED')
-    const account=user.password_hash?await authDatabase.prepare("SELECT userId,accountId,providerId,password FROM account WHERE providerId='credential' AND accountId=?1 LIMIT 1").bind(user.id).first<Record<string,unknown>>():null
+    const account=user.password_hash?await authDatabase.prepare("SELECT userId,accountId,password FROM account WHERE providerId='credential' AND accountId=?1 LIMIT 1").bind(user.id).first<Record<string,unknown>>():null
     if(account&&(account.userId!==user.id||account.password!==user.password_hash))throw new AuthMigrationError('AUTH_DIVERGED')
   }
 
@@ -53,12 +53,13 @@ export async function applyAuthMigration({authDatabase,database,snapshot}:{authD
     if(!result.success||result.meta.changes!==1)throw new AuthMigrationError('WRITE_FAILED')
   }
 
-  const transition=D1Database.prototype
-  void transition
   for(const user of users){
     const principalId=principalByUser.get(user.id)!
-    try{await database.prepare("UPDATE identity_principals SET provider='better-auth',display_name=?1,email=?2,updated_at_ms=?3 WHERE id=?4 AND provider IN ('supabase','better-auth') AND subject=?5")
-      .bind(user.name,user.email,Date.now(),principalId,user.id).run()}catch{throw new AuthMigrationError('WRITE_FAILED')}
+    try{
+      const result=await database.prepare("UPDATE identity_principals SET provider='better-auth',display_name=?1,email=?2,updated_at_ms=?3 WHERE id=?4 AND provider IN ('supabase','better-auth') AND subject=?5")
+        .bind(user.name,user.email,Date.now(),principalId,user.id).run()
+      if(!result.success||result.meta.changes!==1)throw new Error('transition failed')
+    }catch{throw new AuthMigrationError('WRITE_FAILED')}
   }
   return Object.freeze({status:'migrated',userCount:users.length,membershipCount:memberships.length,sessionsMigrated:0})
 }
