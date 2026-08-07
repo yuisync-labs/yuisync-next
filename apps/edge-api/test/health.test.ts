@@ -10,6 +10,7 @@ import type { EdgeAppEnvironment } from '../src/types'
 
 type TestBindings = EdgeAppEnvironment['Bindings']
 const testBindings = env as TestBindings
+const MIGRATION_TOKEN = 'foundation-migration-token-fixture-1234567890'
 
 async function request(
   path: string,
@@ -63,7 +64,7 @@ describe('YuiSync edge foundation', () => {
     expect(requestId).toMatch(/^[0-9a-f-]{36}$/)
   })
 
-  it('mantém banco, coordenação e canário de identidade desligados por padrão', async () => {
+  it('mantém banco, coordenação, identidade e migração desligados por padrão', async () => {
     const response = await request('/ready')
     const body = await response.json<{
       status: string
@@ -72,6 +73,7 @@ describe('YuiSync edge foundation', () => {
         database: string
         coordination: string
         identity_canary: string
+        foundation_migration: string
       }
       database_latency_ms: number | null
       missing_bindings: string[]
@@ -85,6 +87,7 @@ describe('YuiSync edge foundation', () => {
         database: 'disabled',
         coordination: 'disabled',
         identity_canary: 'disabled',
+        foundation_migration: 'disabled',
       },
       database_latency_ms: null,
       missing_bindings: [],
@@ -158,6 +161,47 @@ describe('YuiSync edge foundation', () => {
     expect(body).toMatchObject({
       status: 'not_ready',
       checks: { coordination: 'not_configured' },
+    })
+  })
+
+  it('marca migração como wrong_environment se ativada fora de staging', async () => {
+    const response = await request('/ready', undefined, {
+      ...testBindings,
+      EDGE_DATABASE_ENABLED: 'true',
+      EDGE_FOUNDATION_MIGRATION_ENABLED: 'true',
+      FOUNDATION_MIGRATION_TOKEN: MIGRATION_TOKEN,
+    })
+    const body = await response.json<{
+      status: string
+      checks: { foundation_migration: string }
+    }>()
+
+    expect(response.status).toBe(503)
+    expect(body).toMatchObject({
+      status: 'not_ready',
+      checks: { foundation_migration: 'wrong_environment' },
+    })
+  })
+
+  it('marca migração como configurada somente em staging com secret + D1', async () => {
+    const response = await request('/ready', undefined, {
+      ...testBindings,
+      APP_ENV: 'staging',
+      EDGE_DATABASE_ENABLED: 'true',
+      EDGE_FOUNDATION_MIGRATION_ENABLED: 'true',
+      FOUNDATION_MIGRATION_TOKEN: MIGRATION_TOKEN,
+    })
+    const body = await response.json<{
+      status: string
+      checks: { foundation_migration: string }
+      missing_bindings: string[]
+    }>()
+
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({
+      status: 'ready',
+      checks: { foundation_migration: 'configured' },
+      missing_bindings: [],
     })
   })
 

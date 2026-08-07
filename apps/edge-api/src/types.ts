@@ -21,10 +21,16 @@ export type EdgeIdentityBindings = {
   SUPABASE_PUBLISHABLE_KEY?: string
 }
 
+export type EdgeFoundationMigrationBindings = {
+  EDGE_FOUNDATION_MIGRATION_ENABLED?: string
+  FOUNDATION_MIGRATION_TOKEN?: string
+}
+
 export type EdgeAppEnvironment = {
   Bindings: EdgeEnv
     & EdgeDatabaseBindings
     & EdgeCoordinationBindings
     & EdgeIdentityBindings
+    & EdgeFoundationMigrationBindings
   Variables: EdgeVariables
 }

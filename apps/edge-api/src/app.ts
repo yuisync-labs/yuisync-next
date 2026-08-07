@@ -24,11 +24,26 @@ import {
   hasD1Binding,
   isEdgeDatabaseEnabled,
 } from './databaseFeature'
+import {
+  FoundationWriterError,
+  applyFoundationSnapshotToD1,
+} from './migration/d1FoundationWriter'
+import {
+  FOUNDATION_MIGRATION_ROUTE,
+  getFoundationMigrationConfiguration,
+  isFoundationMigrationEnabled,
+  verifyFoundationMigrationToken,
+} from './migration/foundationMigrationFeature'
+import {
+  FoundationMigrationRequestError,
+  readFoundationMigrationSnapshot,
+} from './migration/foundationMigrationHttp'
 import { emitEdgeLog } from './observability'
 import { resolveRequestId } from './requestContext'
 import type { EdgeAppEnvironment } from './types'
 
 const app = new Hono<EdgeAppEnvironment>()
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/
 
 function databaseCheckFromError(error: unknown): string {
   if (!(error instanceof DatabaseDependencyError)) return 'unavailable'
@@ -191,15 +206,42 @@ app.get('/ready', async (context) => {
     }
   }
 
+  const foundationMigrationEnabled = isFoundationMigrationEnabled(
+    context.env.EDGE_FOUNDATION_MIGRATION_ENABLED,
+  )
+  let foundationMigrationCheck = 'disabled'
+  let foundationMigrationReady = true
+  let foundationMigrationMissing: readonly string[] = []
+
+  if (foundationMigrationEnabled) {
+    const migrationConfiguration = getFoundationMigrationConfiguration(context.env)
+    foundationMigrationReady = migrationConfiguration.ready
+    foundationMigrationMissing = migrationConfiguration.missing
+    foundationMigrationCheck = migrationConfiguration.wrongEnvironment
+      ? 'wrong_environment'
+      : migrationConfiguration.ready ? 'configured' : 'not_configured'
+
+    if (!foundationMigrationReady) {
+      emitEdgeLog('warn', 'edge.foundation_migration.not_ready', {
+        request_id: requestId,
+        environment: context.env.APP_ENV,
+        wrong_environment: migrationConfiguration.wrongEnvironment,
+        missing_count: foundationMigrationMissing.length,
+      })
+    }
+  }
+
   const allMissingBindings = Array.from(new Set([
     ...missingBindings,
     ...identityCanaryMissing,
+    ...foundationMigrationMissing,
   ]))
 
   const isReady = missingBindings.length === 0
     && databaseReady
     && coordinationReady
     && identityCanaryReady
+    && foundationMigrationReady
 
   const payload = {
     service: context.env.SERVICE_NAME,
@@ -212,6 +254,7 @@ app.get('/ready', async (context) => {
       database: databaseCheck,
       coordination: coordinationCheck,
       identity_canary: identityCanaryCheck,
+      foundation_migration: foundationMigrationCheck,
     },
     database_latency_ms: databaseLatencyMs,
     missing_bindings: allMissingBindings,
@@ -325,6 +368,130 @@ app.get('/internal/canary/tenant-context', async (context) => {
       message: 'Canário de identidade indisponível.',
       request_id: requestId,
     }, 503)
+  }
+})
+
+app.post(FOUNDATION_MIGRATION_ROUTE, async (context) => {
+  const requestId = context.get('requestId')
+  const enabled = isFoundationMigrationEnabled(
+    context.env.EDGE_FOUNDATION_MIGRATION_ENABLED,
+  )
+  const isStaging = String(context.env.APP_ENV || '').trim().toLowerCase() === 'staging'
+
+  if (!enabled || !isStaging) {
+    return context.json(notFoundPayload(requestId), 404)
+  }
+
+  const configuration = getFoundationMigrationConfiguration(context.env)
+  if (!configuration.ready) {
+    emitEdgeLog('warn', 'edge.foundation_migration.not_configured', {
+      request_id: requestId,
+      environment: context.env.APP_ENV,
+      missing_count: configuration.missing.length,
+    })
+    return context.json({
+      code: 'FOUNDATION_MIGRATION_UNAVAILABLE',
+      message: 'Migração de foundation indisponível.',
+      request_id: requestId,
+    }, 503)
+  }
+
+  const tokenAccepted = await verifyFoundationMigrationToken(
+    context.req.header('x-yuisync-migration-token'),
+    context.env.FOUNDATION_MIGRATION_TOKEN,
+  )
+  if (!tokenAccepted) {
+    emitEdgeLog('warn', 'edge.foundation_migration.unauthorized', {
+      request_id: requestId,
+      environment: context.env.APP_ENV,
+    })
+    return context.json({
+      code: 'UNAUTHORIZED',
+      message: 'Autorização de migração inválida.',
+      request_id: requestId,
+    }, 401)
+  }
+
+  const declaredSnapshotSha256 = String(
+    context.req.header('x-yuisync-migration-snapshot-sha256') || '',
+  ).trim().toLowerCase()
+  if (!SHA256_HEX_PATTERN.test(declaredSnapshotSha256)) {
+    return context.json({
+      code: 'SNAPSHOT_CHECKSUM_REQUIRED',
+      message: 'Checksum do snapshot é obrigatório.',
+      request_id: requestId,
+    }, 400)
+  }
+
+  let snapshot: unknown
+  try {
+    const requestBody = await readFoundationMigrationSnapshot(context.req.raw)
+    if (requestBody.sha256 !== declaredSnapshotSha256) {
+      return context.json({
+        code: 'SNAPSHOT_CHECKSUM_MISMATCH',
+        message: 'Checksum do snapshot não confere.',
+        request_id: requestId,
+      }, 409)
+    }
+    snapshot = requestBody.snapshot
+  } catch (error) {
+    if (error instanceof FoundationMigrationRequestError) {
+      return context.json({
+        code: error.code,
+        message: 'Requisição de migração inválida.',
+        request_id: requestId,
+      }, error.status)
+    }
+    throw error
+  }
+
+  try {
+    const result = await applyFoundationSnapshotToD1({
+      database: context.env.DB,
+      snapshot,
+      nowMs: Date.now(),
+    })
+
+    emitEdgeLog('info', 'edge.foundation_migration.applied', {
+      request_id: requestId,
+      environment: context.env.APP_ENV,
+      identity_count: result.identityCount,
+      membership_count: result.membershipCount,
+      settings_present: result.settingsPresent,
+      statement_count: result.statementCount,
+    })
+
+    return context.json({
+      status: result.status,
+      request_id: requestId,
+      identity_count: result.identityCount,
+      membership_count: result.membershipCount,
+      settings_present: result.settingsPresent,
+      statement_count: result.statementCount,
+    }, 200)
+  } catch (error) {
+    if (error instanceof FoundationWriterError) {
+      const status: 400 | 409 | 413 | 503 = error.code === 'INVALID_SNAPSHOT'
+        ? 400
+        : error.code === 'SNAPSHOT_TOO_LARGE'
+          ? 413
+          : error.code === 'FOUNDATION_WRITE_REJECTED'
+            ? 409
+            : 503
+
+      emitEdgeLog('warn', 'edge.foundation_migration.rejected', {
+        request_id: requestId,
+        environment: context.env.APP_ENV,
+        code: error.code,
+      })
+
+      return context.json({
+        code: error.code,
+        message: 'Migração de foundation rejeitada.',
+        request_id: requestId,
+      }, status)
+    }
+    throw error
   }
 })
 
