@@ -1,3 +1,4 @@
+import type { AuthDatabaseBindings } from './auth/authDatabaseFeature'
 import type { CoordinationDurableObject } from './coordination/coordinationDurableObject'
 
 export type EdgeVariables = {
@@ -32,5 +33,6 @@ export type EdgeAppEnvironment = {
     & EdgeCoordinationBindings
     & EdgeIdentityBindings
     & EdgeFoundationMigrationBindings
+    & AuthDatabaseBindings
   Variables: EdgeVariables
 }
