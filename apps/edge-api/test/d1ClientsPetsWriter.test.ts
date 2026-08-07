@@ -78,6 +78,60 @@ function snapshot(tenantId: string, options: {
   }
 }
 
+async function insertExactClient(data: ReturnType<typeof clientData>, timestamp: number) {
+  await testEnv.DB.prepare(`
+    INSERT INTO clients (
+      tenant_id, module_id, id, name, document, phone, email, birth_date, address,
+      address_number, address_complement, address_reference, neighborhood, city,
+      postal_code, notes, status, created_at_ms, updated_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    data.tenant_id,
+    data.module_id,
+    data.id,
+    data.name,
+    data.document,
+    data.phone,
+    data.email,
+    data.birth_date,
+    data.address,
+    data.address_number,
+    data.address_complement,
+    data.address_reference,
+    data.neighborhood,
+    data.city,
+    data.postal_code,
+    data.notes,
+    data.status,
+    timestamp,
+    timestamp,
+  ).run()
+}
+
+async function insertExactPet(data: ReturnType<typeof petData>, timestamp: number) {
+  await testEnv.DB.prepare(`
+    INSERT INTO pets (
+      tenant_id, module_id, id, client_id, name, species, breed, birth_date,
+      weight_kg, color, notes, status, created_at_ms, updated_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    data.tenant_id,
+    data.module_id,
+    data.id,
+    data.client_id,
+    data.name,
+    data.species,
+    data.breed,
+    data.birth_date,
+    data.weight_kg,
+    data.color,
+    data.notes,
+    data.status,
+    timestamp,
+    timestamp,
+  ).run()
+}
+
 describe('D1 clients/pets migration writer', () => {
   it('insere tutor e pet preservando o vínculo normalizado', async () => {
     const tenantId = 'tenant-writer-happy'
@@ -149,36 +203,37 @@ describe('D1 clients/pets migration writer', () => {
     expect(row?.phone).toBe('32999990000')
   })
 
-  it('faz rollback do tutor quando um pet do mesmo grupo conflita', async () => {
+  it('faz rollback do novo tutor quando um pet conflita tardiamente no mesmo batch', async () => {
     const tenantId = 'tenant-writer-group-rollback'
     await seedTenant(tenantId)
 
-    const now = Date.now()
-    await testEnv.DB.prepare(`
-      INSERT INTO clients (
-        tenant_id, module_id, id, name, status, created_at_ms, updated_at_ms
-      ) VALUES (?, 'petshop', 'existing-client', 'Existing', 'active', ?, ?)
-    `).bind(tenantId, now, now).run()
-    await testEnv.DB.prepare(`
-      INSERT INTO pets (
-        tenant_id, module_id, id, client_id, name, species, status, created_at_ms, updated_at_ms
-      ) VALUES (?, 'petshop', 'pet-conflict', 'existing-client', 'Existing pet', 'dog', 'active', ?, ?)
-    `).bind(tenantId, now, now).run()
-
+    const existingClient = clientData(tenantId, 'existing-client')
     const newClient = clientData(tenantId, 'new-client')
-    const conflictingPet = petData(tenantId, 'pet-conflict', 'new-client')
+    const destinationPet = petData(tenantId, 'pet-conflict', 'existing-client')
+    const sourcePet = petData(tenantId, 'pet-conflict', 'new-client')
+    await insertExactClient(existingClient, 4100)
+    await insertExactPet(destinationPet, 4100)
 
     await expect(writeClientsPetsSnapshot({
       database: testEnv.DB,
-      snapshot: snapshot(tenantId, { clients: [newClient], pets: [conflictingPet] }),
+      snapshot: snapshot(tenantId, {
+        clients: [existingClient, newClient],
+        pets: [sourcePet],
+      }),
       nowMs: 5000,
-    })).rejects.toBeInstanceOf(ClientsPetsWriterError)
+    })).rejects.toMatchObject({ code: 'CLIENTS_PETS_WRITE_REJECTED' })
 
     const inserted = await testEnv.DB.prepare(`
       SELECT id FROM clients
       WHERE tenant_id = ? AND module_id = 'petshop' AND id = 'new-client'
     `).bind(tenantId).first()
     expect(inserted).toBeNull()
+
+    const originalPet = await testEnv.DB.prepare(`
+      SELECT client_id, created_at_ms FROM pets
+      WHERE tenant_id = ? AND module_id = 'petshop' AND id = 'pet-conflict'
+    `).bind(tenantId).first<{ client_id: string; created_at_ms: number }>()
+    expect(originalPet).toEqual({ client_id: 'existing-client', created_at_ms: 4100 })
   })
 
   it('rejeita registros extras já existentes no escopo', async () => {
