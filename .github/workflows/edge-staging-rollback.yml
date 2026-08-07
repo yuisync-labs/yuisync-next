@@ -15,8 +15,6 @@ on:
         description: Type ROLLBACK to confirm immediate traffic replacement
         required: true
         type: string
-  pull_request:
-    types: [synchronize]
 
 permissions:
   contents: read
@@ -24,6 +22,7 @@ permissions:
 
 concurrency:
   group: edge-staging-deployment
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -36,35 +35,19 @@ jobs:
       staging_url: ${{ steps.request.outputs.staging_url }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Resolve protected rollback request
         id: request
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
           INPUT_VERSION_ID: ${{ inputs.version_id }}
           INPUT_STAGING_URL: ${{ inputs.staging_url }}
           INPUT_CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -euo pipefail
+          test "$INPUT_CONFIRMATION" = "ROLLBACK"
 
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            test "$INPUT_CONFIRMATION" = "ROLLBACK"
-            VERSION_ID="$INPUT_VERSION_ID"
-            STAGING_URL="$INPUT_STAGING_URL"
-          else
-            COMMIT_SUBJECT="$(git log -1 --pretty=%s)"
-            if [[ "$PR_NUMBER" != "4" || "$HEAD_REF" != "phase/03-cloudflare-foundation" || "$COMMIT_SUBJECT" != "ops: exercise staging rollback" ]]; then
-              echo "authorized=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            VERSION_ID="357d5aed-6ea6-49ae-bde0-f48dba74ed60"
-            STAGING_URL="https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev"
-          fi
+          VERSION_ID="$INPUT_VERSION_ID"
+          STAGING_URL="$INPUT_STAGING_URL"
 
           [[ "$VERSION_ID" =~ ^[0-9a-fA-F-]{20,64}$ ]]
           [[ "$STAGING_URL" =~ ^https://[a-zA-Z0-9.-]+(/.*)?$ ]]
@@ -84,8 +67,6 @@ jobs:
       url: ${{ needs.prepare.outputs.staging_url }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-node@v6
         with:
@@ -115,7 +96,7 @@ jobs:
           command: >-
             rollback ${{ needs.prepare.outputs.version_id }}
             --env staging
-            --message "Rollback exercise from GitHub Actions run ${{ github.run_id }}"
+            --message "Rollback requested from GitHub Actions run ${{ github.run_id }}"
 
       - name: Smoke test restored Worker
         env:

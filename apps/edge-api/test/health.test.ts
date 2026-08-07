@@ -63,11 +63,11 @@ describe('YuiSync edge foundation', () => {
     expect(requestId).toMatch(/^[0-9a-f-]{36}$/)
   })
 
-  it('mantém o banco desligado por padrão', async () => {
+  it('mantém banco e coordenação desligados por padrão', async () => {
     const response = await request('/ready')
     const body = await response.json<{
       status: string
-      checks: { configuration: string; database: string }
+      checks: { configuration: string; database: string; coordination: string }
       database_latency_ms: number | null
       missing_bindings: string[]
     }>()
@@ -78,6 +78,7 @@ describe('YuiSync edge foundation', () => {
       checks: {
         configuration: 'ok',
         database: 'disabled',
+        coordination: 'disabled',
       },
       database_latency_ms: null,
       missing_bindings: [],
@@ -118,6 +119,39 @@ describe('YuiSync edge foundation', () => {
       status: 'not_ready',
       checks: { database: 'not_configured' },
       database_latency_ms: null,
+    })
+  })
+
+  it('valida o binding de coordenação quando a feature flag é habilitada', async () => {
+    const response = await request('/ready', undefined, {
+      ...testBindings,
+      EDGE_COORDINATION_ENABLED: 'true',
+    })
+    const body = await response.json<{
+      status: string
+      checks: { coordination: string }
+    }>()
+
+    expect(response.status).toBe(200)
+    expect(body.status).toBe('ready')
+    expect(body.checks.coordination).toBe('ready')
+  })
+
+  it('falha fechado quando a coordenação está ativa sem binding', async () => {
+    const response = await request('/ready', undefined, {
+      ...testBindings,
+      EDGE_COORDINATION_ENABLED: 'true',
+      COORDINATOR: undefined,
+    })
+    const body = await response.json<{
+      status: string
+      checks: { coordination: string }
+    }>()
+
+    expect(response.status).toBe(503)
+    expect(body).toMatchObject({
+      status: 'not_ready',
+      checks: { coordination: 'not_configured' },
     })
   })
 

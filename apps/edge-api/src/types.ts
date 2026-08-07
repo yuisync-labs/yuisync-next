@@ -1,3 +1,5 @@
+import type { CoordinationDurableObject } from './coordination/coordinationDurableObject'
+
 export type EdgeVariables = {
   requestId: string
   startedAt: number
@@ -8,7 +10,12 @@ export type EdgeDatabaseBindings = {
   DB?: D1Database
 }
 
+export type EdgeCoordinationBindings = {
+  EDGE_COORDINATION_ENABLED?: string
+  COORDINATOR?: DurableObjectNamespace<CoordinationDurableObject>
+}
+
 export type EdgeAppEnvironment = {
-  Bindings: EdgeEnv & EdgeDatabaseBindings
+  Bindings: EdgeEnv & EdgeDatabaseBindings & EdgeCoordinationBindings
   Variables: EdgeVariables
 }

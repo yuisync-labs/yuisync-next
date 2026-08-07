@@ -12,8 +12,7 @@ export default defineConfig({
   plugins: [
     cloudflareTest(async () => ({
       wrangler: {
-        configPath: './wrangler.jsonc',
-        environment: 'test',
+        configPath: './wrangler.test.jsonc',
       },
       miniflare: {
         d1Databases: ['DB'],

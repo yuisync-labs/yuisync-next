@@ -11,6 +11,7 @@ permissions:
 
 concurrency:
   group: edge-staging-deployment
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -84,7 +85,7 @@ jobs:
           EDGE_STAGING_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: npm run edge:smoke -- "$EDGE_STAGING_URL"
 
-      - name: Confirm D1 readiness
+      - name: Confirm D1 and coordination readiness
         env:
           EDGE_STAGING_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: |
@@ -95,12 +96,17 @@ jobs:
           node - "$BODY_FILE" <<'NODE'
           const fs = require('node:fs');
           const body = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          if (body.status !== 'ready' || body.checks?.database !== 'ready') {
-            throw new Error('D1 readiness is not healthy after deployment.');
+          if (
+            body.status !== 'ready' ||
+            body.checks?.database !== 'ready' ||
+            body.checks?.coordination !== 'ready'
+          ) {
+            throw new Error('Staging readiness is not healthy after deployment.');
           }
           console.log(JSON.stringify({
             status: body.status,
             database: body.checks.database,
+            coordination: body.checks.coordination,
             environment: body.environment,
             database_latency_ms: body.database_latency_ms,
           }));
@@ -112,9 +118,10 @@ jobs:
           EDGE_STAGING_URL: ${{ steps.deploy.outputs.deployment-url }}
           DEPLOYED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          echo "## Edge + D1 staging deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Edge staging deployment" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: \`${DEPLOYED_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: ${EDGE_STAGING_URL}" >> "$GITHUB_STEP_SUMMARY"
           echo "- D1 migrations: applied" >> "$GITHUB_STEP_SUMMARY"
           echo "- D1 readiness: passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Durable Object binding readiness: passed" >> "$GITHUB_STEP_SUMMARY"
           echo "- Health and sanitized 404: passed" >> "$GITHUB_STEP_SUMMARY"
