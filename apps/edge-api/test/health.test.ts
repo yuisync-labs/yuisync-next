@@ -63,11 +63,16 @@ describe('YuiSync edge foundation', () => {
     expect(requestId).toMatch(/^[0-9a-f-]{36}$/)
   })
 
-  it('mantém banco e coordenação desligados por padrão', async () => {
+  it('mantém banco, coordenação e canário de identidade desligados por padrão', async () => {
     const response = await request('/ready')
     const body = await response.json<{
       status: string
-      checks: { configuration: string; database: string; coordination: string }
+      checks: {
+        configuration: string
+        database: string
+        coordination: string
+        identity_canary: string
+      }
       database_latency_ms: number | null
       missing_bindings: string[]
     }>()
@@ -79,6 +84,7 @@ describe('YuiSync edge foundation', () => {
         configuration: 'ok',
         database: 'disabled',
         coordination: 'disabled',
+        identity_canary: 'disabled',
       },
       database_latency_ms: null,
       missing_bindings: [],

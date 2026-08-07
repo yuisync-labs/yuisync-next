@@ -1,7 +1,21 @@
 import { Hono } from 'hono'
 
 import { DatabaseDependencyError } from '../../../server/application/ports/database'
+import { resolveTenantPrincipal } from '../../../server/application/services/resolveTenantPrincipal'
+import {
+  D1TenantAuthorizationAdapter,
+  TenantAuthorizationError,
+} from './adapters/d1TenantAuthorization'
 import { D1ReadOnlyAdapter } from './adapters/d1ReadOnly'
+import {
+  SupabaseIdentityVerifier,
+  SupabaseIdentityVerifierError,
+} from './adapters/supabaseIdentityVerifier'
+import { parseBearerToken } from './auth/bearerToken'
+import {
+  getIdentityCanaryConfiguration,
+  isIdentityCanaryEnabled,
+} from './auth/identityCanaryFeature'
 import {
   hasCoordinationBinding,
   isEdgeCoordinationEnabled,
@@ -21,6 +35,20 @@ function databaseCheckFromError(error: unknown): string {
   if (error.code === 'DATABASE_TIMEOUT') return 'timeout'
   if (error.code === 'DATABASE_NOT_CONFIGURED') return 'not_configured'
   return 'unavailable'
+}
+
+function identityDependencyCode(error: unknown): string {
+  if (error instanceof SupabaseIdentityVerifierError) return error.code
+  if (error instanceof TenantAuthorizationError) return error.code
+  return 'IDENTITY_CANARY_UNAVAILABLE'
+}
+
+function notFoundPayload(requestId: string) {
+  return {
+    code: 'NOT_FOUND',
+    message: 'Rota não encontrada.',
+    request_id: requestId,
+  } as const
 }
 
 app.use('*', async (context, next) => {
@@ -141,7 +169,38 @@ app.get('/ready', async (context) => {
     }
   }
 
-  const isReady = missingBindings.length === 0 && databaseReady && coordinationReady
+  const identityCanaryEnabled = isIdentityCanaryEnabled(
+    context.env.EDGE_IDENTITY_CANARY_ENABLED,
+  )
+  let identityCanaryCheck = 'disabled'
+  let identityCanaryReady = true
+  let identityCanaryMissing: readonly string[] = []
+
+  if (identityCanaryEnabled) {
+    const identityConfiguration = getIdentityCanaryConfiguration(context.env)
+    identityCanaryReady = identityConfiguration.ready
+    identityCanaryMissing = identityConfiguration.missing
+    identityCanaryCheck = identityCanaryReady ? 'configured' : 'not_configured'
+
+    if (!identityCanaryReady) {
+      emitEdgeLog('warn', 'edge.identity_canary.not_ready', {
+        request_id: requestId,
+        environment: context.env.APP_ENV,
+        missing_count: identityCanaryMissing.length,
+      })
+    }
+  }
+
+  const allMissingBindings = Array.from(new Set([
+    ...missingBindings,
+    ...identityCanaryMissing,
+  ]))
+
+  const isReady = missingBindings.length === 0
+    && databaseReady
+    && coordinationReady
+    && identityCanaryReady
+
   const payload = {
     service: context.env.SERVICE_NAME,
     environment: context.env.APP_ENV,
@@ -152,9 +211,10 @@ app.get('/ready', async (context) => {
       configuration: missingBindings.length ? 'failed' : 'ok',
       database: databaseCheck,
       coordination: coordinationCheck,
+      identity_canary: identityCanaryCheck,
     },
     database_latency_ms: databaseLatencyMs,
-    missing_bindings: missingBindings,
+    missing_bindings: allMissingBindings,
     timestamp: new Date().toISOString(),
   }
 
@@ -163,11 +223,115 @@ app.get('/ready', async (context) => {
     : context.json(payload, 503)
 })
 
-app.notFound((context) => context.json({
-  code: 'NOT_FOUND',
-  message: 'Rota não encontrada.',
-  request_id: context.get('requestId'),
-}, 404))
+app.get('/internal/canary/tenant-context', async (context) => {
+  const requestId = context.get('requestId')
+
+  if (!isIdentityCanaryEnabled(context.env.EDGE_IDENTITY_CANARY_ENABLED)) {
+    return context.json(notFoundPayload(requestId), 404)
+  }
+
+  const identityConfiguration = getIdentityCanaryConfiguration(context.env)
+  if (!identityConfiguration.ready) {
+    emitEdgeLog('warn', 'edge.identity_canary.not_configured', {
+      request_id: requestId,
+      environment: context.env.APP_ENV,
+      missing_count: identityConfiguration.missing.length,
+    })
+
+    return context.json({
+      code: 'IDENTITY_CANARY_UNAVAILABLE',
+      message: 'Canário de identidade indisponível.',
+      request_id: requestId,
+    }, 503)
+  }
+
+  const bearer = parseBearerToken(context.req.header('authorization'))
+  if (bearer.kind !== 'token') {
+    return context.json({
+      code: 'UNAUTHENTICATED',
+      message: 'Autenticação necessária.',
+      request_id: requestId,
+    }, 401)
+  }
+
+  const tenantId = String(context.req.header('x-tenant-id') || '').trim()
+  if (!tenantId) {
+    return context.json({
+      code: 'TENANT_REQUIRED',
+      message: 'Tenant necessário.',
+      request_id: requestId,
+    }, 400)
+  }
+
+  try {
+    const resolution = await resolveTenantPrincipal(
+      bearer.token,
+      tenantId,
+      {
+        identityVerification: new SupabaseIdentityVerifier({
+          supabaseUrl: context.env.SUPABASE_URL || '',
+          publishableKey: context.env.SUPABASE_PUBLISHABLE_KEY || '',
+        }),
+        tenantAuthorization: new D1TenantAuthorizationAdapter(context.env.DB),
+      },
+    )
+
+    if (resolution.kind === 'unauthenticated') {
+      return context.json({
+        code: 'UNAUTHENTICATED',
+        message: 'Autenticação necessária.',
+        request_id: requestId,
+      }, 401)
+    }
+
+    if (resolution.kind === 'forbidden') {
+      return context.json({
+        code: 'FORBIDDEN',
+        message: 'Acesso ao tenant negado.',
+        request_id: requestId,
+      }, 403)
+    }
+
+    emitEdgeLog('info', 'edge.identity_canary.resolved', {
+      request_id: requestId,
+      environment: context.env.APP_ENV,
+      identity_provider: resolution.context.identity.provider,
+    })
+
+    return context.json({
+      status: 'ok',
+      request_id: requestId,
+      tenant_id: resolution.context.tenantId,
+      principal_id: resolution.context.principalId,
+      identity_provider: resolution.context.identity.provider,
+    }, 200)
+  } catch (error) {
+    if (error instanceof TenantAuthorizationError && error.code === 'INVALID_ARGUMENT') {
+      return context.json({
+        code: 'INVALID_TENANT',
+        message: 'Tenant inválido.',
+        request_id: requestId,
+      }, 400)
+    }
+
+    emitEdgeLog('warn', 'edge.identity_canary.unavailable', {
+      request_id: requestId,
+      environment: context.env.APP_ENV,
+      code: identityDependencyCode(error),
+    })
+
+    return context.json({
+      code: 'IDENTITY_CANARY_UNAVAILABLE',
+      message: 'Canário de identidade indisponível.',
+      request_id: requestId,
+    }, 503)
+  }
+})
+
+app.notFound((context) => context.json(
+  notFoundPayload(context.get('requestId')),
+  404,
+))
 
 app.onError((error, context) => {
   emitEdgeLog('error', 'edge.request.failed', {
