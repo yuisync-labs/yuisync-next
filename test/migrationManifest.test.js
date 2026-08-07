@@ -9,6 +9,10 @@ import {
 
 function snapshot(overrides = {}) {
   return {
+    projection: {
+      name: 'phase7-foundation',
+      version: 1,
+    },
     source: {
       system: 'supabase',
       snapshot_id: 'fixture-001',
@@ -69,6 +73,7 @@ describe('migration manifest foundation', () => {
     expect(serialized).not.toContain('tenant-fixture:petshop')
     expect(serialized).not.toContain('Fixture Store')
     expect(serialized).not.toContain('Muriaé')
+    expect(manifest.projection).toEqual({ name: 'phase7-foundation', version: 1 })
     expect(manifest.collections[0].records[0]).toEqual({
       key_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
       checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -118,6 +123,10 @@ describe('migration manifest foundation', () => {
 
     expect(reconcileMigrationManifests(source, destination)).toMatchObject({
       in_sync: true,
+      projection: {
+        name: 'phase7-foundation',
+        version: 1,
+      },
       scope: {
         tenant_id: 'tenant-fixture',
         module_id: 'petshop',
@@ -178,6 +187,18 @@ describe('migration manifest foundation', () => {
     )
   })
 
+  it('bloqueia reconciliação entre projeções diferentes', () => {
+    const source = buildMigrationManifest(snapshot())
+    const destination = buildMigrationManifest(snapshot({
+      source: { system: 'd1', snapshot_id: 'fixture-destination-4' },
+      projection: { name: 'phase7-foundation', version: 2 },
+    }))
+
+    expect(() => reconcileMigrationManifests(source, destination)).toThrowError(
+      expect.objectContaining({ code: 'PROJECTION_MISMATCH' }),
+    )
+  })
+
   it('detecta manifest alterado depois da geração', () => {
     const source = buildMigrationManifest(snapshot())
     const destination = structuredClone(source)
@@ -190,5 +211,8 @@ describe('migration manifest foundation', () => {
 
   it('usa erro tipado para valores incompatíveis com JSON', () => {
     expect(() => canonicalJson({ amount: Number.NaN })).toThrowError(MigrationManifestError)
+    expect(() => canonicalJson({ when: new Date() })).toThrowError(
+      expect.objectContaining({ code: 'NON_JSON_OBJECT' }),
+    )
   })
 })
