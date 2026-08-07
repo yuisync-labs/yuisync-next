@@ -15,7 +15,16 @@ export type EdgeCoordinationBindings = {
   COORDINATOR?: DurableObjectNamespace<CoordinationDurableObject>
 }
 
+export type EdgeIdentityBindings = {
+  EDGE_IDENTITY_CANARY_ENABLED?: string
+  SUPABASE_URL?: string
+  SUPABASE_PUBLISHABLE_KEY?: string
+}
+
 export type EdgeAppEnvironment = {
-  Bindings: EdgeEnv & EdgeDatabaseBindings & EdgeCoordinationBindings
+  Bindings: EdgeEnv
+    & EdgeDatabaseBindings
+    & EdgeCoordinationBindings
+    & EdgeIdentityBindings
   Variables: EdgeVariables
 }
