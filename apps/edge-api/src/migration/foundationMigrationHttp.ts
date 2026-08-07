@@ -17,6 +17,11 @@ export class FoundationMigrationRequestError extends Error {
   }
 }
 
+export type FoundationMigrationRequestBody = Readonly<{
+  snapshot: unknown
+  sha256: string
+}>
+
 function contentLength(request: Request): number | null {
   const raw = request.headers.get('content-length')
   if (!raw) return null
@@ -30,7 +35,13 @@ function contentLength(request: Request): number | null {
   return parsed
 }
 
-export async function readFoundationMigrationSnapshot(request: Request): Promise<unknown> {
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+export async function readFoundationMigrationSnapshot(
+  request: Request,
+): Promise<FoundationMigrationRequestBody> {
   const contentType = String(request.headers.get('content-type') || '')
     .split(';', 1)[0]
     .trim()
@@ -60,5 +71,9 @@ export async function readFoundationMigrationSnapshot(request: Request): Promise
     throw new FoundationMigrationRequestError('BODY_INVALID', 400)
   }
 
-  return parsed
+  const digest = await crypto.subtle.digest('SHA-256', body)
+  return {
+    snapshot: parsed,
+    sha256: bytesToHex(new Uint8Array(digest)),
+  }
 }
