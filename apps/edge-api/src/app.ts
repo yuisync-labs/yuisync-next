@@ -43,6 +43,7 @@ import { resolveRequestId } from './requestContext'
 import type { EdgeAppEnvironment } from './types'
 
 const app = new Hono<EdgeAppEnvironment>()
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/
 
 function databaseCheckFromError(error: unknown): string {
   if (!(error instanceof DatabaseDependencyError)) return 'unavailable'
@@ -377,8 +378,6 @@ app.post(FOUNDATION_MIGRATION_ROUTE, async (context) => {
   )
   const isStaging = String(context.env.APP_ENV || '').trim().toLowerCase() === 'staging'
 
-  // The route stays indistinguishable from a missing route unless both the
-  // feature flag and the staging environment guard are true.
   if (!enabled || !isStaging) {
     return context.json(notFoundPayload(requestId), 404)
   }
@@ -413,9 +412,28 @@ app.post(FOUNDATION_MIGRATION_ROUTE, async (context) => {
     }, 401)
   }
 
+  const declaredSnapshotSha256 = String(
+    context.req.header('x-yuisync-migration-snapshot-sha256') || '',
+  ).trim().toLowerCase()
+  if (!SHA256_HEX_PATTERN.test(declaredSnapshotSha256)) {
+    return context.json({
+      code: 'SNAPSHOT_CHECKSUM_REQUIRED',
+      message: 'Checksum do snapshot é obrigatório.',
+      request_id: requestId,
+    }, 400)
+  }
+
   let snapshot: unknown
   try {
-    snapshot = await readFoundationMigrationSnapshot(context.req.raw)
+    const requestBody = await readFoundationMigrationSnapshot(context.req.raw)
+    if (requestBody.sha256 !== declaredSnapshotSha256) {
+      return context.json({
+        code: 'SNAPSHOT_CHECKSUM_MISMATCH',
+        message: 'Checksum do snapshot não confere.',
+        request_id: requestId,
+      }, 409)
+    }
+    snapshot = requestBody.snapshot
   } catch (error) {
     if (error instanceof FoundationMigrationRequestError) {
       return context.json({
@@ -453,7 +471,7 @@ app.post(FOUNDATION_MIGRATION_ROUTE, async (context) => {
     }, 200)
   } catch (error) {
     if (error instanceof FoundationWriterError) {
-      const status = error.code === 'INVALID_SNAPSHOT'
+      const status: 400 | 409 | 413 | 503 = error.code === 'INVALID_SNAPSHOT'
         ? 400
         : error.code === 'SNAPSHOT_TOO_LARGE'
           ? 413
