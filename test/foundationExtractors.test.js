@@ -14,7 +14,7 @@ import {
 } from '../scripts/migration/foundationExtractors.mjs'
 
 const scope = { tenant_id: 'tenant-extractor', module_id: 'petshop' }
-const serviceRoleKey = 'service-role-test-key'
+const legacyServiceRoleKey = 'legacy-service-role-test-jwt'
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -141,11 +141,11 @@ function d1Runner(calls) {
 }
 
 describe('foundation read-only extractors', () => {
-  it('extrai Supabase somente por GET e produz a projection esperada', async () => {
+  it('extrai Supabase somente por GET com legacy service-role JWT', async () => {
     const calls = []
     const snapshot = await extractSupabaseFoundationSnapshot({
       supabaseUrl: 'https://project-ref.supabase.co',
-      serviceRoleKey,
+      adminApiKey: legacyServiceRoleKey,
       snapshotId: 'supabase-extraction-fixture',
       scope,
       fetcher: sourceFetcher(calls),
@@ -165,15 +165,34 @@ describe('foundation read-only extractors', () => {
       expect(call.init.method).toBe('GET')
       expect(call.init.body).toBeUndefined()
       expect(call.init.redirect).toBe('error')
-      expect(call.init.headers.apikey).toBe(serviceRoleKey)
-      expect(call.init.headers.authorization).toBe(`Bearer ${serviceRoleKey}`)
+      expect(call.init.headers.apikey).toBe(legacyServiceRoleKey)
+      expect(call.init.headers.authorization).toBe(`Bearer ${legacyServiceRoleKey}`)
     }
 
     expect(calls.find((call) => call.url.pathname.endsWith('/settings'))?.url.searchParams.get('tenant_id'))
       .toBe(`eq.${scope.tenant_id}`)
     expect(calls.find((call) => call.url.pathname.endsWith('/settings'))?.url.searchParams.get('module_id'))
       .toBe('eq.petshop')
-    expect(JSON.stringify(snapshot)).not.toContain(serviceRoleKey)
+    expect(JSON.stringify(snapshot)).not.toContain(legacyServiceRoleKey)
+  })
+
+  it('usa sb_secret apenas no apikey e nunca como Bearer', async () => {
+    const calls = []
+    const secretKey = 'sb_secret_fixture_key_123'
+
+    await extractSupabaseFoundationSnapshot({
+      supabaseUrl: 'https://project-ref.supabase.co',
+      adminApiKey: secretKey,
+      snapshotId: 'supabase-secret-key-fixture',
+      scope,
+      fetcher: sourceFetcher(calls),
+    })
+
+    expect(calls).toHaveLength(4)
+    for (const call of calls) {
+      expect(call.init.headers.apikey).toBe(secretKey)
+      expect(call.init.headers.authorization).toBeUndefined()
+    }
   })
 
   it('extrai D1 por quatro SELECTs fixos e reconcilia com o Supabase', async () => {
@@ -182,7 +201,7 @@ describe('foundation read-only extractors', () => {
 
     const source = await extractSupabaseFoundationSnapshot({
       supabaseUrl: 'https://project-ref.supabase.co',
-      serviceRoleKey,
+      adminApiKey: legacyServiceRoleKey,
       snapshotId: 'source-fixture',
       scope,
       fetcher: sourceFetcher(sourceCalls),
@@ -279,16 +298,16 @@ describe('foundation read-only extractors', () => {
     )
   })
 
-  it('não vaza service role em erros de rede ou HTTP', async () => {
+  it('não vaza chave administrativa em erros de rede ou HTTP', async () => {
     const failingNetwork = async () => {
-      throw new Error(`secret=${serviceRoleKey}`)
+      throw new Error(`secret=${legacyServiceRoleKey}`)
     }
 
     let networkError
     try {
       await extractSupabaseFoundationSnapshot({
         supabaseUrl: 'https://project-ref.supabase.co',
-        serviceRoleKey,
+        adminApiKey: legacyServiceRoleKey,
         snapshotId: 'network-error',
         scope,
         fetcher: failingNetwork,
@@ -299,12 +318,12 @@ describe('foundation read-only extractors', () => {
 
     expect(networkError).toBeInstanceOf(FoundationExtractorError)
     expect(networkError).toMatchObject({ code: 'SUPABASE_UNAVAILABLE' })
-    expect(String(networkError.message)).not.toContain(serviceRoleKey)
+    expect(String(networkError.message)).not.toContain(legacyServiceRoleKey)
 
     const failingHttp = async () => new Response('sensitive provider body', { status: 500 })
     await expect(extractSupabaseFoundationSnapshot({
       supabaseUrl: 'https://project-ref.supabase.co',
-      serviceRoleKey,
+      adminApiKey: legacyServiceRoleKey,
       snapshotId: 'http-error',
       scope,
       fetcher: failingHttp,
