@@ -16,16 +16,18 @@ type IdentityFixture = Readonly<{
   status?: 'active' | 'inactive'
 }>
 
+function defaultIdentity(tenantId: string): IdentityFixture {
+  return {
+    subject: `auth-${tenantId}`,
+    displayName: 'Operador',
+    email: `${tenantId}@example.com`,
+  }
+}
+
 function foundationSnapshot({
   tenantId,
   tenantName = 'Quatro Patas',
-  identities = [
-    {
-      subject: 'auth-user-1',
-      displayName: 'Operador',
-      email: 'operador@example.com',
-    },
-  ],
+  identities,
   storeName = 'Quatro Patas',
   includeSettings = true,
 }: Readonly<{
@@ -35,6 +37,8 @@ function foundationSnapshot({
   storeName?: string
   includeSettings?: boolean
 }>) {
+  const resolvedIdentities = identities ?? [defaultIdentity(tenantId)]
+
   return {
     projection: { name: 'phase7-foundation', version: 1 },
     source: { system: 'supabase', snapshot_id: `source-${tenantId}` },
@@ -51,7 +55,7 @@ function foundationSnapshot({
           },
         },
       ],
-      identity_principals: identities.map((identity) => ({
+      identity_principals: resolvedIdentities.map((identity) => ({
         key: `identity:supabase:${identity.subject}`,
         data: {
           provider: 'supabase',
@@ -61,7 +65,7 @@ function foundationSnapshot({
           status: identity.status ?? 'active',
         },
       })),
-      tenant_memberships: identities.map((identity) => ({
+      tenant_memberships: resolvedIdentities.map((identity) => ({
         key: `membership:${tenantId}:supabase:${identity.subject}`,
         data: {
           tenant_id: tenantId,
@@ -107,6 +111,7 @@ async function countRows(table: string, tenantId: string): Promise<number> {
 describe('D1 foundation writer', () => {
   it('insere a foundation em um único batch e usa principal id determinístico', async () => {
     const tenantId = 'tenant-writer-create'
+    const identity = defaultIdentity(tenantId)
     const snapshot = foundationSnapshot({ tenantId })
 
     const result = await applyFoundationSnapshotToD1({
@@ -127,22 +132,23 @@ describe('D1 foundation writer', () => {
 
     const expectedPrincipalId = await deterministicFoundationPrincipalId(
       'supabase',
-      'auth-user-1',
+      identity.subject,
     )
     const principal = await testEnv.DB
       .prepare(`
         SELECT id, provider, subject, display_name, email, status, created_at_ms, updated_at_ms
         FROM identity_principals
-        WHERE provider = 'supabase' AND subject = 'auth-user-1'
+        WHERE provider = 'supabase' AND subject = ?
       `)
+      .bind(identity.subject)
       .first<Record<string, unknown>>()
 
     expect(principal).toMatchObject({
       id: expectedPrincipalId,
       provider: 'supabase',
-      subject: 'auth-user-1',
-      display_name: 'Operador',
-      email: 'operador@example.com',
+      subject: identity.subject,
+      display_name: identity.displayName,
+      email: identity.email,
       status: 'active',
       created_at_ms: NOW_MS,
       updated_at_ms: NOW_MS,
@@ -194,14 +200,26 @@ describe('D1 foundation writer', () => {
 
   it('reusa principal existente com ID físico diferente quando a semântica coincide', async () => {
     const tenantId = 'tenant-writer-existing-principal'
-    const snapshot = foundationSnapshot({ tenantId })
+    const identity: IdentityFixture = {
+      subject: 'auth-existing-principal-fixture',
+      displayName: 'Operador Existente',
+      email: 'existing-principal@example.com',
+    }
+    const snapshot = foundationSnapshot({ tenantId, identities: [identity] })
 
     await testEnv.DB.batch([
       testEnv.DB.prepare(`
         INSERT INTO identity_principals (
           id, provider, subject, display_name, email, status, created_at_ms, updated_at_ms
-        ) VALUES (?, 'supabase', 'auth-user-1', 'Operador', 'operador@example.com', 'active', ?, ?)
-      `).bind('principal-preexisting-custom-id', NOW_MS - 10, NOW_MS - 10),
+        ) VALUES (?, 'supabase', ?, ?, ?, 'active', ?, ?)
+      `).bind(
+        'principal-preexisting-custom-id',
+        identity.subject,
+        identity.displayName,
+        identity.email,
+        NOW_MS - 10,
+        NOW_MS - 10,
+      ),
     ])
 
     await applyFoundationSnapshotToD1({
@@ -224,6 +242,7 @@ describe('D1 foundation writer', () => {
 
   it('rollbacka inserts anteriores quando settings existentes divergem', async () => {
     const tenantId = 'tenant-writer-settings-conflict'
+    const initialIdentity = defaultIdentity(tenantId)
     const initial = foundationSnapshot({ tenantId })
     await applyFoundationSnapshotToD1({
       database: testEnv.DB,
@@ -231,21 +250,15 @@ describe('D1 foundation writer', () => {
       nowMs: NOW_MS,
     })
 
+    const newIdentity: IdentityFixture = {
+      subject: 'auth-settings-conflict-new',
+      displayName: 'Novo Operador',
+      email: 'settings-conflict-new@example.com',
+    }
     const changed = foundationSnapshot({
       tenantId,
       storeName: 'Nome divergente',
-      identities: [
-        {
-          subject: 'auth-user-1',
-          displayName: 'Operador',
-          email: 'operador@example.com',
-        },
-        {
-          subject: 'auth-user-2',
-          displayName: 'Novo Operador',
-          email: 'novo@example.com',
-        },
-      ],
+      identities: [initialIdentity, newIdentity],
     })
 
     await expect(applyFoundationSnapshotToD1({
@@ -260,8 +273,9 @@ describe('D1 foundation writer', () => {
     const newPrincipal = await testEnv.DB
       .prepare(`
         SELECT id FROM identity_principals
-        WHERE provider = 'supabase' AND subject = 'auth-user-2'
+        WHERE provider = 'supabase' AND subject = ?
       `)
+      .bind(newIdentity.subject)
       .first<{ id: string }>()
 
     expect(newPrincipal).toBeNull()
@@ -279,20 +293,19 @@ describe('D1 foundation writer', () => {
 
   it('rejeita destination com membership extra em vez de apagá-la', async () => {
     const tenantId = 'tenant-writer-extra-membership'
+    const identityOne: IdentityFixture = {
+      subject: 'auth-extra-membership-1',
+      displayName: 'Operador 1',
+      email: 'extra-membership-1@example.com',
+    }
+    const identityTwo: IdentityFixture = {
+      subject: 'auth-extra-membership-2',
+      displayName: 'Operador 2',
+      email: 'extra-membership-2@example.com',
+    }
     const both = foundationSnapshot({
       tenantId,
-      identities: [
-        {
-          subject: 'auth-user-1',
-          displayName: 'Operador 1',
-          email: 'operador1@example.com',
-        },
-        {
-          subject: 'auth-user-2',
-          displayName: 'Operador 2',
-          email: 'operador2@example.com',
-        },
-      ],
+      identities: [identityOne, identityTwo],
     })
     await applyFoundationSnapshotToD1({
       database: testEnv.DB,
@@ -302,13 +315,7 @@ describe('D1 foundation writer', () => {
 
     const onlyOne = foundationSnapshot({
       tenantId,
-      identities: [
-        {
-          subject: 'auth-user-1',
-          displayName: 'Operador 1',
-          email: 'operador1@example.com',
-        },
-      ],
+      identities: [identityOne],
     })
 
     await expect(applyFoundationSnapshotToD1({
