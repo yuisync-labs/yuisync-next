@@ -25,13 +25,13 @@ caso de uso
 - rejeição de holders obsoletos;
 - classe Durable Object com SQLite;
 - RPC interno;
-- binding local/test e configuração de staging protegida;
+- binding local/test e configuração permanente de staging;
 - testes no `workerd`;
 - teste de eviction e recuperação do estado persistido;
 - adapter compatível com `CoordinationPort`;
 - feature flag fail-closed;
-- canário técnico temporário e autenticado para staging;
-- rollback lógico e restauração do staging;
+- readiness de coordenação;
+- validação ao vivo de concorrência, rollback e restauração;
 - hardening de concorrência dos workflows de CI/deploy.
 
 ## Fora do escopo
@@ -117,7 +117,7 @@ lease expirada
 
 ## Observabilidade
 
-Eventos previstos:
+Eventos previstos para a integração de casos de uso:
 
 ```text
 edge.coordination.claimed
@@ -142,17 +142,34 @@ Campos permitidos:
 
 Não registrar nomes de clientes, telefones, mensagens, dados do pet, payload integral ou stack trace.
 
-## Estado operacional — 2026-08-07
+## Validação de staging — 2026-08-07
 
-O incidente do GitHub Actions de 6–7 de agosto foi resolvido, mas o GitHub informou que alguns eventos de `push` e `pull_request` perdidos durante o incidente não seriam reprocessados automaticamente. Este commit documental atualiza o plano e gera um novo `synchronize` da PR para obter CI no head atual sem alterar runtime, staging ou produção.
+A validação protegida comprovou a coordenação em staging sem ativar nenhum fluxo real do petshop.
 
-O hardening aplicado durante o incidente permanece:
+Resultados comprovados:
+
+- a classe `CoordinationDurableObject` com armazenamento SQLite foi provisionada em staging;
+- duas claims concorrentes no mesmo escopo produziram exatamente uma `claimed` e uma `busy`;
+- a operação vencedora foi concluída com fencing token válido;
+- a repetição da mesma chave idempotente retornou estado concluído sem criar nova operação;
+- o rollback lógico desligou a coordenação e removeu o binding do Worker;
+- `/ready` confirmou `coordination: disabled` durante o rollback;
+- a configuração padrão foi restaurada e `/ready` voltou a confirmar `coordination: ready`;
+- o segredo efêmero do canário foi removido;
+- a rota temporária permaneceu oculta sem autenticação;
+- D1 e Queues permaneceram preservados durante o ensaio;
+- produção não participou da validação.
+
+A primeira tentativa de deploy encontrou um `503 Service Unavailable` transitório ao reconciliar o consumer da Queue depois de o Durable Object já ter sido criado. A restauração automática do staging passou. O workflow foi endurecido para retry somente em falhas transitórias conhecidas e para usar Worker Secret em vez de variável comum. A segunda execução concluiu integralmente com sucesso.
+
+## Hardening de CI/deploy
 
 - `Quality` usa actions v6 e timeouts explícitos;
 - reruns não cancelam uma tentativa de recuperação em andamento;
 - o rollback legado não dispara mais em todo `pull_request synchronize`;
 - rollback permanece manual/protegido;
-- deploy, canário e rollback de staging são serializados e enfileirados no grupo `edge-staging-deployment`.
+- deploy, canário e rollback de staging são serializados e enfileirados no grupo `edge-staging-deployment`;
+- operações de deploy fazem retry somente para falhas transitórias identificadas, sem mascarar erros de configuração.
 
 ## Gates
 
@@ -170,18 +187,19 @@ O hardening aplicado durante o incidente permanece:
 - [x] configuração de staging preparada;
 - [x] tipos Wrangler regenerados;
 - [x] hardening de CI/deploy;
-- [ ] CI completa do head atual;
-- [ ] namespace de staging provisionado;
-- [ ] canário concorrente ao vivo;
-- [ ] rollback ensaiado;
-- [ ] staging restaurado;
-- [ ] artefatos temporários removidos;
-- [ ] nenhuma regressão no legado no SHA final.
+- [x] CI completa antes da validação ao vivo;
+- [x] Durable Object de staging provisionado;
+- [x] canário concorrente ao vivo;
+- [x] rollback lógico ensaiado;
+- [x] staging restaurado;
+- [x] segredo efêmero removido;
+- [x] artefatos temporários removidos do código final;
+- [ ] CI final do SHA limpo sem regressões.
 
-## Rollback
+## Rollback permanente
 
-Antes da ativação de staging, o rollback é a remoção do código/binding ou o desligamento da feature flag. Durante o ensaio protegido, o workflow desativa a coordenação, remove o binding do Worker, confirma readiness sem coordenação e restaura a configuração padrão de staging. O namespace pode permanecer inativo para auditoria; produção não participa desta fase.
+A feature flag `EDGE_COORDINATION_ENABLED` permanece como corte fail-closed. Um rollback da coordenação pode desligar a flag e remover o binding do Worker sem alterar D1 ou Queues. O namespace pode permanecer inativo para auditoria. Produção continua fora desta fase.
 
 ## Critério de saída
 
-A fase termina quando duas operações concorrentes contra o mesmo escopo forem serializadas em staging, somente uma puder prosseguir, holders antigos forem rejeitados por fencing token, o estado sobreviver a eviction, o rollback/restauração forem comprovados e nenhum fluxo real do petshop tiver sido alterado.
+A fase termina quando a CI do SHA limpo confirmar que a implementação permanente mantém todos os testes e o legado sem regressões. A serialização concorrente, fencing token, idempotência, rollback e restauração de staging já foram comprovados ao vivo.
