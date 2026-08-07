@@ -98,8 +98,31 @@ export const tenantMemberships = sqliteTable('tenant_memberships', {
   ),
 ])
 
+export const tenantModuleSettings = sqliteTable('tenant_module_settings', {
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onUpdate: 'restrict', onDelete: 'restrict' }),
+  moduleId: text('module_id').notNull(),
+  storeName: text('store_name').notNull().default(''),
+  storePhone: text('store_phone').notNull().default(''),
+  storeAddress: text('store_address').notNull().default(''),
+  storeNeighborhood: text('store_neighborhood').notNull().default(''),
+  storeCity: text('store_city').notNull().default(''),
+  botPrompt: text('bot_prompt').notNull().default(''),
+  version: integer('version').notNull().default(1),
+  createdAtMs: integer('created_at_ms').notNull(),
+  updatedAtMs: integer('updated_at_ms').notNull(),
+}, (table) => [
+  primaryKey({
+    name: 'pk_tenant_module_settings',
+    columns: [table.tenantId, table.moduleId],
+  }),
+  index('tenant_module_settings_module_idx').on(table.moduleId, table.tenantId),
+])
+
 export type SystemMetadata = typeof systemMetadata.$inferSelect
 export type EventProcessingRecord = typeof eventProcessing.$inferSelect
 export type TenantRecord = typeof tenants.$inferSelect
 export type IdentityPrincipalRecord = typeof identityPrincipals.$inferSelect
 export type TenantMembershipRecord = typeof tenantMemberships.$inferSelect
+export type TenantModuleSettingsRecord = typeof tenantModuleSettings.$inferSelect
