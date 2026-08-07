@@ -1,5 +1,7 @@
 import { execFile as execFileCallback } from 'node:child_process'
+import { resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { fileURLToPath } from 'node:url'
 
 import {
   projectD1Foundation,
@@ -7,6 +9,7 @@ import {
 } from './phase7FoundationProjection.mjs'
 
 const execFileAsync = promisify(execFileCallback)
+const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const SUPABASE_PAGE_SIZE = 500
 const MAX_SUPABASE_PAGES = 100
 const MAX_WRANGLER_OUTPUT_BYTES = 16 * 1024 * 1024
@@ -299,6 +302,8 @@ export function createWranglerD1ReadOnlyRunner({
     throw new FoundationExtractorError('D1_BINDING_NOT_ALLOWED')
   }
 
+  const resolvedConfigPath = resolve(REPO_ROOT, configPath)
+
   return async function runSelect(sql) {
     if (typeof sql !== 'string' || !/^\s*SELECT\b/i.test(sql) || /;/.test(sql)) {
       throw new FoundationExtractorError('D1_NON_SELECT_REJECTED')
@@ -317,11 +322,11 @@ export function createWranglerD1ReadOnlyRunner({
         binding,
         '--remote',
         '--env', environment,
-        '--config', configPath,
+        '--config', resolvedConfigPath,
         '--command', sql,
         '--json',
       ], {
-        cwd: process.cwd(),
+        cwd: REPO_ROOT,
         encoding: 'utf8',
         maxBuffer: MAX_WRANGLER_OUTPUT_BYTES,
         windowsHide: true,
