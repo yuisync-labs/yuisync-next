@@ -67,10 +67,10 @@ function normalizeSupabaseUrl(value) {
   return url
 }
 
-function normalizeServiceRoleKey(value) {
+function normalizeAdminApiKey(value) {
   const key = text(value)
   if (!key || key.length > 8192 || /\s/.test(key)) {
-    throw new FoundationExtractorError('INVALID_SUPABASE_SERVICE_ROLE_KEY')
+    throw new FoundationExtractorError('INVALID_SUPABASE_ADMIN_KEY')
   }
   return key
 }
@@ -117,9 +117,10 @@ function embeddedProfile(value) {
   throw new FoundationExtractorError('SUPABASE_PROFILE_RELATION_INVALID')
 }
 
-function createSupabaseReader({ supabaseUrl, serviceRoleKey, fetcher = fetch }) {
+function createSupabaseReader({ supabaseUrl, adminApiKey, fetcher = fetch }) {
   const baseUrl = normalizeSupabaseUrl(supabaseUrl)
-  const key = normalizeServiceRoleKey(serviceRoleKey)
+  const key = normalizeAdminApiKey(adminApiKey)
+  const opaqueSecretKey = key.startsWith('sb_secret_')
 
   async function getRows(path, params, { paginate = false } = {}) {
     const rows = []
@@ -134,8 +135,11 @@ function createSupabaseReader({ supabaseUrl, serviceRoleKey, fetcher = fetch }) 
       const headers = {
         accept: 'application/json',
         apikey: key,
-        authorization: `Bearer ${key}`,
       }
+      // Legacy service_role keys are JWTs and use Authorization to establish
+      // the service_role Postgres role. New sb_secret_ keys are opaque and the
+      // Supabase gateway authorizes them through the apikey header instead.
+      if (!opaqueSecretKey) headers.authorization = `Bearer ${key}`
       if (paginate) headers.range = `${offset}-${offset + SUPABASE_PAGE_SIZE - 1}`
 
       let response
@@ -174,14 +178,14 @@ function createSupabaseReader({ supabaseUrl, serviceRoleKey, fetcher = fetch }) 
 
 export async function extractSupabaseFoundationSnapshot({
   supabaseUrl,
-  serviceRoleKey,
+  adminApiKey,
   snapshotId,
   scope: rawScope,
   fetcher = fetch,
 } = {}) {
   const scope = normalizeScope(rawScope)
   const sourceSnapshotId = normalizeSnapshotId(snapshotId)
-  const reader = createSupabaseReader({ supabaseUrl, serviceRoleKey, fetcher })
+  const reader = createSupabaseReader({ supabaseUrl, adminApiKey, fetcher })
 
   const [tenantRows, membershipRows, globalAdminRows, settingsRows] = await Promise.all([
     reader.getRows('tenants', {
