@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS catalog_products (
   PRIMARY KEY (tenant_id, module_id, id),
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (tenant_id, module_id, upsell_product_id)
-    REFERENCES catalog_products(tenant_id, module_id, id) ON UPDATE RESTRICT ON DELETE SET NULL,
+    REFERENCES catalog_products(tenant_id, module_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   CHECK (length(trim(module_id)) BETWEEN 1 AND 64 AND module_id = lower(module_id)),
   CHECK (length(trim(id)) BETWEEN 1 AND 160),
   CHECK (length(trim(name)) BETWEEN 1 AND 300),
