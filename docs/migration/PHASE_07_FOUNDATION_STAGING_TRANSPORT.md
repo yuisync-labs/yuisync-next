@@ -9,6 +9,7 @@ O código passa a suportar conceitualmente:
 ```text
 snapshot Supabase já extraído/projetado
   -> POST interno protegido
+  -> valida bytes + checksum declarado
   -> D1FoundationWriter
   -> D1 staging
 ```
@@ -68,6 +69,37 @@ O header/token nunca é registrado nos logs e nunca é devolvido na resposta.
 
 Esta autorização é específica para tooling operacional de migração e não substitui autenticação de usuários/tenants.
 
+## Bind do request ao snapshot planejado
+
+Além do token, o caller precisa declarar o SHA-256 dos **bytes exatos** enviados no body:
+
+```text
+x-yuisync-migration-snapshot-sha256: <64 hex chars>
+```
+
+O Worker:
+
+1. lê o body limitado;
+2. calcula SHA-256 sobre os bytes recebidos;
+3. compara com o header declarado;
+4. só então entrega o JSON ao writer.
+
+Isso não é uma segunda autenticação. O objetivo é impedir erro operacional do tipo:
+
+```text
+manifest/checksum planejado para arquivo A
+mas POST acidentalmente enviado com arquivo B
+```
+
+O orquestrador futuro deve calcular esse digest diretamente do arquivo local que será enviado.
+
+Respostas específicas:
+
+- header ausente/malformado -> `400 SNAPSHOT_CHECKSUM_REQUIRED`;
+- bytes diferentes -> `409 SNAPSHOT_CHECKSUM_MISMATCH`.
+
+O digest não precisa ser logado nem devolvido pelo Worker; ele é evidência local do runbook.
+
 ## Limite do request
 
 O transport aceita somente:
@@ -125,11 +157,11 @@ Resposta inclui somente:
 - presença de settings;
 - quantidade de statements.
 
-Não inclui snapshot, email, tenant ID, subject externo ou token.
+Não inclui snapshot, email, tenant ID, subject externo, token ou payload bruto.
 
 ### 400
 
-JSON/snapshot inválido.
+JSON/snapshot inválido ou checksum obrigatório ausente/malformado.
 
 ### 401
 
@@ -137,7 +169,7 @@ Token de migração inválido.
 
 ### 409
 
-Destination existente diverge da source projection. O writer não sobrescreve.
+Destination existente diverge da source projection **ou** os bytes recebidos não correspondem ao checksum declarado. Nenhum overwrite silencioso é feito.
 
 ### 413
 
@@ -174,6 +206,7 @@ Não incluem:
 
 - token;
 - snapshot;
+- snapshot checksum;
 - tenant ID;
 - principal ID;
 - subject;
@@ -208,6 +241,8 @@ A suíte prova:
 - flag ligada fora de staging -> 404;
 - feature staging sem secret -> 503;
 - token incorreto -> 401 e zero escrita;
+- checksum ausente -> 400;
+- checksum divergente -> 409 e zero escrita;
 - Content-Type incorreto -> 415;
 - body acima de 256 KiB -> 413;
 - snapshot válido -> 200 + escrita D1 real de teste;
@@ -270,13 +305,14 @@ Ele deverá:
 
 1. receber somente snapshot em `.migration/`;
 2. gerar/verificar source manifest;
-3. capturar Time Travel bookmark antes do POST;
-4. exigir confirmação explícita do operador para o tenant/projection;
-5. chamar somente a rota staging acima;
-6. executar o extractor D1 após a escrita;
-7. gerar destination manifest;
-8. executar reconciliation;
-9. encerrar com sucesso apenas em `in_sync=true`;
-10. se houver divergência, bloquear avanço e apresentar o bookmark + comando de restore, sem executar restore automaticamente.
+3. calcular SHA-256 dos bytes exatos do snapshot;
+4. capturar Time Travel bookmark antes do POST;
+5. exigir confirmação explícita do operador para tenant/projection;
+6. enviar o mesmo arquivo com token + snapshot SHA-256;
+7. executar o extractor D1 após a escrita;
+8. gerar destination manifest;
+9. executar reconciliation;
+10. encerrar com sucesso apenas em `in_sync=true`;
+11. se houver divergência, bloquear avanço e apresentar o bookmark + comando de restore, sem executar restore automaticamente.
 
 Somente depois do orquestrador e do runbook estarem verdes devemos configurar temporariamente a feature em staging para a primeira prova real.
