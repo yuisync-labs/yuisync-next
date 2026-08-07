@@ -12,6 +12,7 @@ import {
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const MIGRATION_DIR = resolve(REPO_ROOT, '.migration')
+const ALLOWED_OPTIONS = new Set(['tenant', 'module', 'snapshot-id', 'output'])
 
 function usage() {
   return [
@@ -19,11 +20,12 @@ function usage() {
     '',
     'Supabase source:',
     '  node scripts/migration/foundation-extract-cli.mjs supabase --tenant <id> --module petshop --snapshot-id <id> --output .migration/source.snapshot.json',
-    '  Credentials are read only from SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.',
+    '  Credentials are read only from SUPABASE_URL plus SUPABASE_SECRET_KEY (preferred) or SUPABASE_SERVICE_ROLE_KEY (legacy).',
     '',
     'D1 staging destination:',
     '  node scripts/migration/foundation-extract-cli.mjs d1-staging --tenant <id> --module petshop --snapshot-id <id> --output .migration/d1.snapshot.json',
     '',
+    'Credential/API-key options are intentionally unsupported.',
     'The command never has an apply/write mode. Raw snapshots may contain PII and must stay under .migration/.',
   ].join('\n')
 }
@@ -39,6 +41,10 @@ function parseArgs(argv) {
     }
 
     const name = token.slice(2)
+    if (!ALLOWED_OPTIONS.has(name)) {
+      throw new FoundationExtractorError('CLI_OPTION_NOT_ALLOWED', `Option --${name} is not allowed.`)
+    }
+
     const value = tokens[index + 1]
     if (!value || value.startsWith('--')) {
       throw new FoundationExtractorError('INVALID_CLI_ARGUMENT', `Missing value for --${name}.`)
@@ -108,7 +114,7 @@ async function main() {
   if (command === 'supabase') {
     snapshot = await extractSupabaseFoundationSnapshot({
       supabaseUrl: process.env.SUPABASE_URL,
-      serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      adminApiKey: process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY,
       snapshotId,
       scope,
     })
