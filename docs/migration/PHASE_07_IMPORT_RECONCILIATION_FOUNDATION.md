@@ -21,6 +21,7 @@ D1 extraído
   -> manifest
 
 source manifest + destination manifest
+  -> valida scope + projection version
   -> reconciliation report
   -> in_sync | missing | extra | mismatched
 ```
@@ -47,6 +48,10 @@ O input da foundation é JSON local com este formato:
 
 ```json
 {
+  "projection": {
+    "name": "phase7-foundation",
+    "version": 1
+  },
   "source": {
     "system": "supabase",
     "snapshot_id": "export-2026-08-07T160000Z"
@@ -72,15 +77,45 @@ O input da foundation é JSON local com este formato:
 
 ### Regras do snapshot
 
+- `projection.name` e `projection.version` são obrigatórios;
 - `tenant_id` e `module_id` são obrigatórios;
 - cada coleção possui registros `{ key, data }`;
 - `key` deve ser uma chave lógica estável e não sensível;
 - **não usar telefone, CPF/CNPJ, email, token ou segredo como `key`**;
-- `data` precisa ser JSON determinístico: sem `undefined`, `NaN`, `Infinity`, funções ou BigInt;
+- `data` precisa ser JSON determinístico: sem `undefined`, `NaN`, `Infinity`, funções, BigInt ou objetos de runtime como `Date`;
 - campos com nomes que sugerem segredo são rejeitados antes do hash;
 - snapshots brutos devem ficar em `.migration/`, que está no `.gitignore`.
 
 O hash da chave protege o identificador de exposição casual, mas SHA-256 **não é criptografia de dados pessoais de baixa entropia**. Portanto a regra continua sendo não usar PII como chave lógica.
+
+## Projection contract
+
+`schema_version` do manifest diz como o arquivo de manifest é estruturado. Ele **não** diz quais campos de negócio foram extraídos.
+
+Por isso cada snapshot carrega também:
+
+```json
+{
+  "projection": {
+    "name": "phase7-foundation",
+    "version": 1
+  }
+}
+```
+
+Uma projection define o shape normalizado que origem e destino precisam produzir. Por exemplo:
+
+```text
+phase7-foundation/v1
+  -> tenants
+  -> identity_principals
+  -> tenant_memberships
+  -> tenant_module_settings
+```
+
+Se um extractor adicionar/remover/alterar semanticamente campos, a versão da projection deve mudar.
+
+A reconciliação recusa source/destination com projection diferente usando `PROJECTION_MISMATCH`. Isso evita comparar, por exemplo, uma exportação v1 com um extractor D1 v2 e interpretar diferenças de contrato como corrupção de dados.
 
 ## Manifest
 
@@ -94,7 +129,8 @@ node scripts/migration/manifest-cli.mjs build \
 
 O manifest contém somente:
 
-- versão do schema;
+- versão do schema de manifest;
+- nome/versão da projection;
 - identificação não sensível da fonte/snapshot;
 - scope tenant/module;
 - nome das coleções;
@@ -124,6 +160,8 @@ A ordem dos registros dentro de uma coleção também não altera o manifest: os
 
 Arrays permanecem ordenados semanticamente conforme o input. Se a ordem de um array não fizer parte do domínio, o extractor daquele domínio deve normalizá-la antes de construir o snapshot.
 
+Somente valores representáveis como JSON puro são aceitos. Isso evita que objetos de runtime tenham serialização implícita diferente entre ferramentas.
+
 ## Proteção contra segredos
 
 A foundation rejeita nomes de campos semelhantes a:
@@ -150,6 +188,16 @@ node scripts/migration/manifest-cli.mjs reconcile \
   --output .migration/reconciliation.json
 ```
 
+Antes de comparar registros, o reconciliador exige:
+
+1. schema de manifest suportado;
+2. checksum global válido;
+3. checksums das coleções válidos;
+4. `row_count` coerente com os registros do manifest;
+5. hashes de registro válidos/únicos;
+6. mesmo `tenant_id` + `module_id`;
+7. mesma projection + version.
+
 Resultado por coleção:
 
 - `source_row_count`;
@@ -171,9 +219,9 @@ Isso permite usar o reconciliador como gate em CI ou runbook sem confundir “da
 
 ## Integridade do manifest
 
-Antes de reconciliar, o checksum global de cada manifest é recalculado.
+Antes de reconciliar, o checksum global e o checksum de cada coleção são recalculados.
 
-Alterar manualmente contagem, checksum de registro, coleção, scope ou metadata torna o manifest inválido.
+Alterar manualmente projection, contagem, checksum de registro, coleção, scope ou metadata torna o manifest inválido.
 
 O manifest não é uma assinatura criptográfica e não prova quem o produziu. Ele prova consistência do conteúdo contra alterações acidentais e fornece um identificador determinístico para a execução. Assinatura/atestado pode ser adicionada mais tarde se houver requisito operacional.
 
@@ -225,8 +273,10 @@ A foundation cobre:
 - reconciliação idêntica;
 - classificação separada de missing/extra/mismatched;
 - bloqueio de scope divergente;
+- bloqueio de projection/version divergente;
 - detecção de manifest alterado;
-- rejeição de valores não JSON;
+- validação interna de collections/records;
+- rejeição de valores e objetos não JSON;
 - CLI offline;
 - exit code `0` para sync e `2` para divergência.
 
@@ -239,6 +289,6 @@ Com esta foundation integrada, o próximo passo deve ser **extração tipada, ai
 3. `tenant_memberships`;
 4. `tenant_module_settings`.
 
-O extractor de origem poderá ler o Supabase e produzir o snapshot local. O extractor de destino poderá ler D1 e produzir o mesmo shape. Ambos alimentam exatamente o mesmo manifest/reconciliador.
+Os extractors de origem e destino devem implementar a mesma projection versionada e alimentar exatamente o mesmo manifest/reconciliador.
 
 Somente depois de provar extração + reconciliação com fixtures e ambiente de teste deve surgir uma ferramenta de `apply`, em PR separada, com confirmação explícita, idempotência e rollback documentado.
