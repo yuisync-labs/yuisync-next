@@ -12,17 +12,29 @@ describe('D1 integration in workerd', () => {
       .bind('schema_version')
       .first<{ value: string }>()
 
-    expect(row).toEqual({ value: '2' })
+    expect(row).toEqual({ value: '3' })
 
-    const table = await testEnv.DB
+    const tables = await testEnv.DB
       .prepare(`
         SELECT name
         FROM sqlite_schema
-        WHERE type = 'table' AND name = '_yuisync_event_processing'
+        WHERE type = 'table'
+          AND name IN (
+            '_yuisync_event_processing',
+            'tenants',
+            'identity_principals',
+            'tenant_memberships'
+          )
+        ORDER BY name
       `)
-      .first<{ name: string }>()
+      .all<{ name: string }>()
 
-    expect(table).toEqual({ name: '_yuisync_event_processing' })
+    expect(tables.results.map((table) => table.name)).toEqual([
+      '_yuisync_event_processing',
+      'identity_principals',
+      'tenant_memberships',
+      'tenants',
+    ])
   })
 
   it('executa o canário pelo binding D1 real do ambiente de teste', async () => {
