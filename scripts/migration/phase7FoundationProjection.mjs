@@ -30,8 +30,15 @@ function normalizeScope(scope = {}) {
   return { tenant_id: tenantId, module_id: moduleId }
 }
 
-function activeStatus(value) {
-  return value === false || value === 'inactive' ? 'inactive' : 'active'
+function legacyActiveStatus(value, code) {
+  if (value === true) return 'active'
+  if (value === false) return 'inactive'
+  throw new FoundationProjectionError(code)
+}
+
+function d1Status(value, code) {
+  if (value === 'active' || value === 'inactive') return value
+  throw new FoundationProjectionError(code)
 }
 
 function identityKey(provider, subject) {
@@ -65,13 +72,17 @@ function sourceTenantRecord(tenant, scope) {
     throw new FoundationProjectionError('SOURCE_TENANT_NOT_FOUND')
   }
 
+  const slug = text(tenant.slug).toLowerCase()
+  const name = text(tenant.name)
+  if (!slug || !name) throw new FoundationProjectionError('SOURCE_TENANT_INVALID')
+
   return {
     key: `tenant:${scope.tenant_id}`,
     data: {
       id: scope.tenant_id,
-      slug: text(tenant.slug).toLowerCase(),
-      name: text(tenant.name),
-      status: activeStatus(tenant.active),
+      slug,
+      name,
+      status: legacyActiveStatus(tenant.active, 'SOURCE_TENANT_STATUS_INVALID'),
     },
   }
 }
@@ -81,13 +92,17 @@ function destinationTenantRecord(tenant, scope) {
     throw new FoundationProjectionError('DESTINATION_TENANT_NOT_FOUND')
   }
 
+  const slug = text(tenant.slug).toLowerCase()
+  const name = text(tenant.name)
+  if (!slug || !name) throw new FoundationProjectionError('DESTINATION_TENANT_INVALID')
+
   return {
     key: `tenant:${scope.tenant_id}`,
     data: {
       id: scope.tenant_id,
-      slug: text(tenant.slug).toLowerCase(),
-      name: text(tenant.name),
-      status: activeStatus(tenant.status),
+      slug,
+      name,
+      status: d1Status(tenant.status, 'DESTINATION_TENANT_STATUS_INVALID'),
     },
   }
 }
@@ -103,7 +118,7 @@ function sourceIdentityRecord(profile) {
       subject,
       display_name: nullableText(profile.full_name),
       email: nullableText(profile.email)?.toLowerCase() || null,
-      status: activeStatus(profile.active),
+      status: legacyActiveStatus(profile.active, 'SOURCE_PROFILE_STATUS_INVALID'),
     },
   }
 }
@@ -122,7 +137,7 @@ function destinationIdentityRecord(principal) {
       subject,
       display_name: nullableText(principal.display_name),
       email: nullableText(principal.email)?.toLowerCase() || null,
-      status: activeStatus(principal.status),
+      status: d1Status(principal.status, 'DESTINATION_IDENTITY_STATUS_INVALID'),
     },
   }
 }
@@ -131,12 +146,24 @@ function sourceMembershipRecord(scope, profile, membership = null) {
   const subject = text(profile?.id)
   if (!subject) throw new FoundationProjectionError('SOURCE_PROFILE_ID_MISSING')
 
+  const profileStatus = legacyActiveStatus(profile.active, 'SOURCE_PROFILE_STATUS_INVALID')
+
   // Legacy global admins are authorized independently of profile_tenants.
   // The new model has no hidden bypass, so materialize that access as an
   // explicit projected membership whenever the admin profile itself is active.
-  const status = profile?.role === 'admin'
-    ? activeStatus(profile.active)
-    : (membership?.active === false ? 'inactive' : activeStatus(profile.active))
+  let status
+  if (profile?.role === 'admin') {
+    status = profileStatus
+  } else {
+    if (!membership) throw new FoundationProjectionError('SOURCE_MEMBERSHIP_REQUIRED')
+    const membershipStatus = legacyActiveStatus(
+      membership.active,
+      'SOURCE_MEMBERSHIP_STATUS_INVALID',
+    )
+    status = profileStatus === 'active' && membershipStatus === 'active'
+      ? 'active'
+      : 'inactive'
+  }
 
   return {
     key: membershipKey(scope.tenant_id, 'supabase', subject),
@@ -162,7 +189,7 @@ function destinationMembershipRecord(scope, principal, membership) {
       tenant_id: scope.tenant_id,
       provider,
       subject,
-      status: activeStatus(membership?.status),
+      status: d1Status(membership?.status, 'DESTINATION_MEMBERSHIP_STATUS_INVALID'),
     },
   }
 }
@@ -174,6 +201,17 @@ function uniqueByKey(records, code) {
     seen.add(record.key)
   }
   return records.sort((left, right) => left.key.localeCompare(right.key, 'en'))
+}
+
+function mapUniqueById(rows, idField, duplicateCode) {
+  const map = new Map()
+  for (const row of rows) {
+    const id = text(row?.[idField])
+    if (!id) continue
+    if (map.has(id)) throw new FoundationProjectionError(duplicateCode)
+    map.set(id, row)
+  }
+  return map
 }
 
 export function projectSupabaseFoundation({
@@ -188,11 +226,7 @@ export function projectSupabaseFoundation({
   const sourceId = text(snapshotId)
   if (!sourceId) throw new FoundationProjectionError('SNAPSHOT_ID_REQUIRED')
 
-  const profilesById = new Map(
-    profiles
-      .filter((profile) => text(profile?.id))
-      .map((profile) => [text(profile.id), profile]),
-  )
+  const profilesById = mapUniqueById(profiles, 'id', 'SOURCE_PROFILE_DUPLICATE')
 
   const scopedMemberships = profileTenants.filter(
     (membership) => text(membership?.tenant_id) === scope.tenant_id,
@@ -265,10 +299,10 @@ export function projectD1Foundation({
   const sourceId = text(snapshotId)
   if (!sourceId) throw new FoundationProjectionError('SNAPSHOT_ID_REQUIRED')
 
-  const principalsById = new Map(
-    identityPrincipals
-      .filter((principal) => text(principal?.id))
-      .map((principal) => [text(principal.id), principal]),
+  const principalsById = mapUniqueById(
+    identityPrincipals,
+    'id',
+    'DESTINATION_PRINCIPAL_ID_DUPLICATE',
   )
 
   const scopedMemberships = tenantMemberships.filter(
