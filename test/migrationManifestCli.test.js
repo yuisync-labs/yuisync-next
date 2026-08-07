@@ -15,6 +15,7 @@ function writeJson(dir, name, value) {
 
 function fixture(system, storeName = 'Fixture Store') {
   return {
+    projection: { name: 'phase7-foundation', version: 1 },
     source: { system, snapshot_id: `${system}-fixture` },
     scope: { tenant_id: 'tenant-cli', module_id: 'petshop' },
     collections: {
@@ -45,6 +46,7 @@ describe('migration manifest CLI', () => {
     expect(result.stderr).toBe('')
     const manifest = JSON.parse(result.stdout)
     expect(manifest.checksum).toMatch(/^[a-f0-9]{64}$/)
+    expect(manifest.projection).toEqual({ name: 'phase7-foundation', version: 1 })
     expect(result.stdout).not.toContain('Fixture Store')
     expect(result.stdout).not.toContain('tenant-cli:petshop')
   })
@@ -74,7 +76,10 @@ describe('migration manifest CLI', () => {
     ], { encoding: 'utf8' })
 
     expect(result.status).toBe(0)
-    expect(JSON.parse(result.stdout)).toMatchObject({ in_sync: true })
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      in_sync: true,
+      projection: { name: 'phase7-foundation', version: 1 },
+    })
   })
 
   it('reconcile retorna exit code 2 quando há divergência', () => {
