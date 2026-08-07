@@ -9,12 +9,13 @@ describe('D1 integration in workerd', () => {
   it('aplica todas as migrations no banco isolado de testes', async () => {
     const row = await testEnv.DB.prepare('SELECT value FROM _yuisync_system_metadata WHERE key = ?')
       .bind('schema_version').first<{ value: string }>()
-    expect(row).toEqual({ value: '12' })
+    expect(row).toEqual({ value: '15' })
 
     const required = [
-      'tenants','clients','pets','catalog_products','services','inventory_balances','inventory_movements',
-      'module_operational_settings','booking_hours','payment_method_settings','appointments','appointment_services',
-      'transport_options','appointment_transport','sales','sale_items','payments','payment_splits','financial_effects',
+      'clients','pets','catalog_products','services','inventory_balances','inventory_movements',
+      'module_operational_settings','appointments','appointment_services','transport_options','appointment_transport',
+      'sales','sale_items','payments','payment_splits','financial_effects','chat_threads','chat_messages',
+      'operation_checkpoints','operation_effects','fiscal_documents','effect_outbox',
     ]
     const tables = await testEnv.DB.prepare(`SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name`)
       .all<{ name: string }>()
