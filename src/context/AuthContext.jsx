@@ -1,49 +1,15 @@
-import { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+
+import { createAppTenant, getAppSettings } from '../lib/api'
 import { useAuth } from '../shared/hooks/useAuth'
-import { buildTenantSlug, isTenantSchemaError, runWithTenantFallback } from '../lib/tenant'
 import { normalizeOperationalStaff } from '../../shared/petshopOperations'
 
 export const AuthContext = createContext(null)
 
 const ACTIVE_TENANT_KEY = '@yui_active_tenant'
-const LOCAL_TENANTS_KEY = '@yui_local_tenants'
 const SUPPORTED_BUSINESS_MODULES = ['petshop']
 const OPERATIONAL_STAFF_TEMPLATE_KEY = '__petshop_operational_staff'
-
-const DEFAULT_LOCAL_TENANTS = [
-  { id: 'cliente-1', name: 'Cliente 1', slug: 'cliente-1' },
-  { id: 'cliente-2', name: 'Cliente 2', slug: 'cliente-2' },
-]
-
-function readLocalTenants() {
-  try {
-    const raw = localStorage.getItem(LOCAL_TENANTS_KEY)
-    if (!raw) return DEFAULT_LOCAL_TENANTS
-
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_LOCAL_TENANTS
-
-    return parsed
-      .map((tenant) => ({
-        id: tenant?.id || '',
-        name: tenant?.name || '',
-        slug: tenant?.slug || buildTenantSlug(tenant?.name || ''),
-      }))
-      .filter((tenant) => tenant.id && tenant.name)
-  } catch {
-    return DEFAULT_LOCAL_TENANTS
-  }
-}
-
-function writeLocalTenants(tenants) {
-  try {
-    localStorage.setItem(LOCAL_TENANTS_KEY, JSON.stringify(tenants))
-  } catch {
-    // ignore localStorage errors
-  }
-}
 
 function readStoredActiveTenant() {
   try {
@@ -58,49 +24,26 @@ function writeStoredActiveTenant(tenantId) {
     if (tenantId) localStorage.setItem(ACTIVE_TENANT_KEY, tenantId)
     else localStorage.removeItem(ACTIVE_TENANT_KEY)
   } catch {
-    // ignore localStorage errors
+    // Browser storage is only a UI preference. Authorization is server-side.
   }
 }
 
-function pickActiveTenantId(tenants, profileTenantId = null) {
+function pickActiveTenantId(tenants) {
   if (!Array.isArray(tenants) || tenants.length === 0) return null
   const validIds = new Set(tenants.map((tenant) => tenant.id))
-  const storedId = readStoredActiveTenant()
-  const candidate = [profileTenantId, storedId, tenants[0]?.id].find((id) => id && validIds.has(id))
-  return candidate || tenants[0]?.id || null
+  const stored = readStoredActiveTenant()
+  return stored && validIds.has(stored) ? stored : tenants[0].id
 }
 
-function makeLocalTenant(name) {
-  const base = buildTenantSlug(name) || `cliente-${Date.now()}`
-  const uid = (typeof crypto !== 'undefined' && crypto.randomUUID)
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.round(Math.random() * 1e6)}`
-
-  return {
-    id: `local-${uid}`,
-    name,
-    slug: base,
-  }
-}
-
-function fallbackTenantModules(profile) {
-  if (profile?.role === 'admin') {
-    return ['petshop']
-  }
-  const allowed = Array.isArray(profile?.allowed_modules) ? profile.allowed_modules : []
-  const cleaned = allowed.filter((moduleId) => (
-    moduleId
-    && moduleId !== 'system'
-    && SUPPORTED_BUSINESS_MODULES.includes(moduleId)
-  ))
-  if (cleaned.length > 0) return [...new Set(cleaned)]
-  return ['petshop']
+function modulesForTenant(tenant) {
+  const modules = Array.isArray(tenant?.enabled_modules) ? tenant.enabled_modules : []
+  const filtered = modules.filter((moduleId) => SUPPORTED_BUSINESS_MODULES.includes(moduleId))
+  return filtered.length ? [...new Set(filtered)] : ['petshop']
 }
 
 export function AuthProvider({ children }) {
   const auth = useAuth()
   const location = useLocation()
-  const authUserId = auth.session?.user?.id || null
   const [storeSettings, setStoreSettings] = useState({
     store_name: '',
     store_address: '',
@@ -110,6 +53,11 @@ export function AuthProvider({ children }) {
     printer_width: '80',
     module_id: null,
   })
+  const [tenants, setTenants] = useState([])
+  const [activeTenantId, setActiveTenantId] = useState(null)
+  const [tenantLoading, setTenantLoading] = useState(false)
+  const [tenantError, setTenantError] = useState('')
+  const [tenantEnabledModules, setTenantEnabledModules] = useState(['petshop'])
 
   const updateStoreSettings = useCallback((patch) => {
     setStoreSettings((current) => {
@@ -118,312 +66,131 @@ export function AuthProvider({ children }) {
     })
   }, [])
 
-  const [tenants, setTenants] = useState([])
-  const [activeTenantId, setActiveTenantId] = useState(null)
-  const [tenantLoading, setTenantLoading] = useState(false)
-  const [tenantMode, setTenantMode] = useState('database')
-  const [tenantError, setTenantError] = useState('')
-  const [tenantEnabledModules, setTenantEnabledModules] = useState(['petshop'])
-
   const loadTenantScope = useCallback(async () => {
-    if (!authUserId || !auth.profile?.id) {
+    if (!auth.session?.user?.id) {
       setTenants([])
       setActiveTenantId(null)
-      setTenantMode('database')
+      setTenantEnabledModules(['petshop'])
       setTenantError('')
       return
     }
 
     setTenantLoading(true)
     setTenantError('')
-
     try {
-      const { data, error } = await supabase
-        .from('profile_tenants')
-        .select('tenant_id, active, tenants(id, name, slug, active)')
-        .eq('profile_id', auth.profile.id)
-        .eq('active', true)
-
-      if (error) {
-        if (!isTenantSchemaError(error)) {
-          throw error
-        }
-
-        const localTenants = readLocalTenants()
-        setTenantMode('local')
-        setTenants(localTenants)
-        const fallbackTenant = pickActiveTenantId(localTenants, auth.profile?.active_tenant_id)
-        setActiveTenantId(fallbackTenant)
-        writeStoredActiveTenant(fallbackTenant)
-        return
-      }
-
-      const mappedTenants = (data || [])
-        .map((entry) => ({
-          id: entry?.tenants?.id || entry?.tenant_id,
-          name: entry?.tenants?.name || 'Cliente sem nome',
-          slug: entry?.tenants?.slug || buildTenantSlug(entry?.tenants?.name || ''),
-        }))
-        .filter((tenant) => tenant.id)
-
-      if (mappedTenants.length === 0) {
-        const localTenants = readLocalTenants()
-        setTenantMode('local')
-        setTenants(localTenants)
-        const fallbackTenant = pickActiveTenantId(localTenants, auth.profile?.active_tenant_id)
-        setActiveTenantId(fallbackTenant)
-        writeStoredActiveTenant(fallbackTenant)
-        return
-      }
-
-      setTenantMode('database')
-      setTenants(mappedTenants)
-      const chosenTenantId = pickActiveTenantId(mappedTenants, auth.profile?.active_tenant_id)
-      setActiveTenantId(chosenTenantId)
-      writeStoredActiveTenant(chosenTenantId)
+      const latest = await auth.refreshAuth()
+      const nextTenants = Array.isArray(latest?.tenants) ? latest.tenants : []
+      setTenants(nextTenants)
+      setActiveTenantId((current) => {
+        const validIds = new Set(nextTenants.map((tenant) => tenant.id))
+        const next = current && validIds.has(current) ? current : pickActiveTenantId(nextTenants)
+        writeStoredActiveTenant(next)
+        return next
+      })
     } catch (error) {
-      const localTenants = readLocalTenants()
-      setTenantMode('local')
-      setTenants(localTenants)
-      const fallbackTenant = pickActiveTenantId(localTenants, auth.profile?.active_tenant_id)
-      setActiveTenantId(fallbackTenant)
-      writeStoredActiveTenant(fallbackTenant)
+      setTenants([])
+      setActiveTenantId(null)
       setTenantError(error instanceof Error ? error.message : 'Nao foi possivel carregar as instancias.')
     } finally {
       setTenantLoading(false)
     }
-  }, [authUserId, auth.profile?.id, auth.profile?.active_tenant_id])
+  }, [auth.session?.user?.id, auth.refreshAuth])
 
   useEffect(() => {
-    loadTenantScope()
-  }, [loadTenantScope])
+    const bootstrapTenants = Array.isArray(auth.bootstrap?.tenants) ? auth.bootstrap.tenants : []
+    setTenants(bootstrapTenants)
+    setActiveTenantId((current) => {
+      const validIds = new Set(bootstrapTenants.map((tenant) => tenant.id))
+      const next = current && validIds.has(current) ? current : pickActiveTenantId(bootstrapTenants)
+      writeStoredActiveTenant(next)
+      return next
+    })
+  }, [auth.bootstrap])
 
   const switchTenant = useCallback(async (tenantId) => {
-    if (!tenantId) return
-
+    const allowed = tenants.some((tenant) => tenant.id === tenantId)
+    if (!allowed) throw new Error('Acesso a esta instancia nao foi autorizado.')
     setActiveTenantId(tenantId)
     writeStoredActiveTenant(tenantId)
-
-    if (tenantMode !== 'database' || !auth.profile?.id) return
-
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        active_tenant_id: tenantId,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', auth.profile.id)
-
-    if (error && !isTenantSchemaError(error)) {
-      throw error
-    }
-  }, [auth.profile?.id, tenantMode])
+  }, [tenants])
 
   const createTenant = useCallback(async (name) => {
-    const cleanName = (name || '').toString().trim()
-    if (!cleanName) {
-      throw new Error('Informe um nome para a instancia.')
-    }
+    const cleanName = String(name || '').trim()
+    if (!cleanName) throw new Error('Informe um nome para a instancia.')
+    const created = await createAppTenant(cleanName)
+    const latest = await auth.refreshAuth()
+    const nextTenants = Array.isArray(latest?.tenants) ? latest.tenants : []
+    setTenants(nextTenants)
+    const selected = nextTenants.find((tenant) => tenant.id === created.id)?.id || created.id
+    setActiveTenantId(selected)
+    writeStoredActiveTenant(selected)
+    return created
+  }, [auth.refreshAuth])
 
-    if (tenantMode === 'database' && auth.profile?.id) {
-      const baseSlug = buildTenantSlug(cleanName) || `cliente-${Date.now()}`
-      let slug = baseSlug
-      let createdTenant = null
+  const activeTenant = useMemo(
+    () => tenants.find((tenant) => tenant.id === activeTenantId) || null,
+    [tenants, activeTenantId],
+  )
 
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        const { data, error } = await supabase
-          .from('tenants')
-          .insert({
-            name: cleanName,
-            slug,
-            active: true,
-          })
-          .select('id, name, slug')
-          .single()
-
-        if (!error) {
-          createdTenant = data
-          break
-        }
-
-        if (isTenantSchemaError(error)) {
-          break
-        }
-
-        const msg = String(error.message || '').toLowerCase()
-        if (msg.includes('duplicate') || msg.includes('unique')) {
-          slug = `${baseSlug}-${Math.floor(Math.random() * 9999)}`
-          continue
-        }
-
-        throw error
-      }
-
-      if (createdTenant) {
-        const { error: linkError } = await supabase
-          .from('profile_tenants')
-          .upsert({
-            profile_id: auth.profile.id,
-            tenant_id: createdTenant.id,
-            role: 'owner',
-            active: true,
-          }, { onConflict: 'profile_id,tenant_id' })
-
-        if (linkError && !isTenantSchemaError(linkError)) {
-          throw linkError
-        }
-
-        await loadTenantScope()
-        await switchTenant(createdTenant.id)
-        return createdTenant
-      }
-    }
-
-    const localTenants = readLocalTenants()
-    const nextTenant = makeLocalTenant(cleanName)
-    const updatedTenants = [nextTenant, ...localTenants]
-    writeLocalTenants(updatedTenants)
-    setTenantMode('local')
-    setTenants(updatedTenants)
-    await switchTenant(nextTenant.id)
-    return nextTenant
-  }, [tenantMode, auth.profile?.id, loadTenantScope, switchTenant])
-
-  const loadTenantEnabledModules = useCallback(async () => {
-    if (!authUserId || !auth.profile) {
-      setTenantEnabledModules(['petshop'])
-      return
-    }
-
-    if (!activeTenantId || tenantMode !== 'database') {
-      setTenantEnabledModules(fallbackTenantModules(auth.profile))
-      return
-    }
-
-    try {
-      const moduleSet = new Set()
-
-      const settingsResponse = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
-        let query = supabase
-          .from('settings')
-          .select('module_id')
-
-        if (includeTenant && activeTenantId) {
-          query = query.eq('tenant_id', activeTenantId)
-        }
-
-        return query
-      })
-
-      if (settingsResponse.error && !isTenantSchemaError(settingsResponse.error)) {
-        throw settingsResponse.error
-      }
-
-      for (const row of settingsResponse.data || []) {
-        const moduleId = String(row?.module_id || '')
-        if (SUPPORTED_BUSINESS_MODULES.includes(moduleId)) moduleSet.add(moduleId)
-      }
-
-      const membersResponse = await supabase
-        .from('profile_tenants')
-        .select('profile_id, profiles(role, module_permissions)')
-        .eq('tenant_id', activeTenantId)
-        .eq('active', true)
-
-      if (membersResponse.error && !isTenantSchemaError(membersResponse.error)) {
-        throw membersResponse.error
-      }
-
-      for (const membership of membersResponse.data || []) {
-        const memberProfile = membership?.profiles
-        if (!memberProfile || memberProfile.role === 'admin') continue
-        const permissions = memberProfile.module_permissions || {}
-        for (const moduleId of Object.keys(permissions)) {
-          if (SUPPORTED_BUSINESS_MODULES.includes(moduleId)) moduleSet.add(moduleId)
-        }
-      }
-
-      if (moduleSet.size === 0) {
-        fallbackTenantModules(auth.profile).forEach((moduleId) => moduleSet.add(moduleId))
-      }
-
-      setTenantEnabledModules(Array.from(moduleSet))
-    } catch (error) {
-      console.warn('Falha ao carregar modulos habilitados por instancia, usando fallback:', error)
-      setTenantEnabledModules(fallbackTenantModules(auth.profile))
-    }
-  }, [authUserId, auth.profile, activeTenantId, tenantMode])
+  const loadTenantEnabledModules = useCallback(() => {
+    setTenantEnabledModules(modulesForTenant(activeTenant))
+  }, [activeTenant])
 
   useEffect(() => {
     loadTenantEnabledModules()
   }, [loadTenantEnabledModules])
 
-  useEffect(() => {
-    if (authUserId && auth.profile && activeTenantId) {
-      const parts = location.pathname.split('/').filter(Boolean)
-      const routeModuleId = parts[0] || null
-
-      const isAdmin = auth.profile.role === 'admin'
-      const allowed = auth.profile.allowed_modules || []
-      const hasPerm = isAdmin || allowed.includes(routeModuleId)
-
-      if (routeModuleId && hasPerm) {
-        loadSettings(routeModuleId)
-      } else {
-        setStoreSettings({ store_name: 'Carregando...', module_id: null })
-      }
-    } else if (!authUserId || !auth.profile) {
-      setStoreSettings({ store_name: '', module_id: null })
-    } else {
-      setStoreSettings({ store_name: 'Carregando...', module_id: null })
-    }
-  }, [authUserId, auth.profile, location.pathname, activeTenantId])
-
-  async function loadSettings(moduleId) {
-    if (!moduleId && !auth.session) return
-
+  const loadSettings = useCallback(async (moduleId) => {
+    if (!moduleId || !activeTenantId || !auth.session?.user?.id) return
     try {
-      const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
-        let query = supabase.from('settings').select('*')
-
-        if (moduleId) query = query.eq('module_id', moduleId)
-        else query = query.limit(1)
-
-        if (includeTenant && activeTenantId) {
-          query = query.eq('tenant_id', activeTenantId)
-        }
-
-        return query
+      const response = await getAppSettings({ tenantId: activeTenantId, moduleId })
+      const row = response?.settings || {}
+      setStoreSettings({
+        ...row,
+        module_id: moduleId,
+        printer_width: row.printer_width || '80',
+        petshop_operational_staff: normalizeOperationalStaff(
+          row.petshop_operational_staff ?? row.message_templates?.[OPERATIONAL_STAFF_TEMPLATE_KEY],
+        ),
       })
-
-      if (response.error) throw response.error
-
-      const data = response.data || []
-      if (data.length > 0) {
-        const row = data[0]
-        setStoreSettings({
-          ...row,
-          petshop_operational_staff: normalizeOperationalStaff(
-            row.petshop_operational_staff ?? row.message_templates?.[OPERATIONAL_STAFF_TEMPLATE_KEY],
-          ),
-        })
-      } else {
-        const moduleFallbackName = {
-          petshop: 'PetShop CRM',
-        }
-        setStoreSettings({
-          store_name: moduleFallbackName[moduleId] || 'YUI Sync',
-          module_id: moduleId,
-          printer_width: '80',
-        })
-      }
     } catch (error) {
-      console.log('Using default module settings')
+      if (error?.status === 404) {
+        setStoreSettings({ store_name: activeTenant?.name || 'YUI Sync', module_id: moduleId, printer_width: '80' })
+        return
+      }
+      console.error('Falha ao carregar configuracoes:', error)
+      setStoreSettings({ store_name: '', module_id: null, printer_width: '80' })
     }
-  }
+  }, [activeTenantId, activeTenant?.name, auth.session?.user?.id])
+
+  useEffect(() => {
+    if (!auth.session?.user?.id || !activeTenantId) {
+      setStoreSettings({ store_name: '', module_id: null, printer_width: '80' })
+      return
+    }
+    const parts = location.pathname.split('/').filter(Boolean)
+    const routeModuleId = parts[0] || null
+    if (routeModuleId && tenantEnabledModules.includes(routeModuleId)) {
+      loadSettings(routeModuleId)
+    } else {
+      setStoreSettings({ store_name: activeTenant?.name || 'YUI Sync', module_id: null, printer_width: '80' })
+    }
+  }, [auth.session?.user?.id, activeTenantId, activeTenant?.name, location.pathname, tenantEnabledModules, loadSettings])
+
+  const effectiveProfile = useMemo(() => {
+    if (!auth.profile) return null
+    return {
+      ...auth.profile,
+      role: activeTenant?.role || 'member',
+      active_tenant_id: activeTenantId,
+      allowed_modules: modulesForTenant(activeTenant),
+      module_permissions: Object.fromEntries(modulesForTenant(activeTenant).map((moduleId) => [moduleId, true])),
+    }
+  }, [auth.profile, activeTenant, activeTenantId])
 
   const value = useMemo(() => ({
     ...auth,
+    profile: effectiveProfile,
     storeSettings,
     updateStoreSettings,
     refreshSettings: loadSettings,
@@ -431,26 +198,20 @@ export function AuthProvider({ children }) {
     tenants,
     activeTenantId,
     tenantLoading,
-    tenantMode,
+    tenantMode: 'edge',
     tenantError,
     switchTenant,
     createTenant,
     refreshTenants: loadTenantScope,
     tenantEnabledModules,
     refreshTenantModules: loadTenantEnabledModules,
-  }), [auth, storeSettings, updateStoreSettings, tenants, activeTenantId, tenantLoading, tenantMode, tenantError, switchTenant, createTenant, loadTenantScope, tenantEnabledModules, loadTenantEnabledModules])
+  }), [auth, effectiveProfile, storeSettings, updateStoreSettings, loadSettings, tenants, activeTenantId, tenantLoading, tenantError, switchTenant, createTenant, loadTenantScope, tenantEnabledModules, loadTenantEnabledModules])
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  )
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
 export const useAuthCtx = () => {
   const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error('useAuthCtx must be used within an AuthProvider')
-  }
+  if (context === undefined || context === null) throw new Error('useAuthCtx must be used within an AuthProvider')
   return context
 }
