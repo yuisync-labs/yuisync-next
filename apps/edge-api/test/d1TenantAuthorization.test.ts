@@ -1,10 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 
-import {
-  D1TenantAuthorizationAdapter,
-  TenantAuthorizationError,
-} from '../src/adapters/d1TenantAuthorization'
+import { D1TenantAuthorizationAdapter } from '../src/adapters/d1TenantAuthorization'
 
 const testEnv = env as EdgeEnv & { DB: D1Database }
 
@@ -228,7 +225,7 @@ describe('D1TenantAuthorizationAdapter', () => {
       adapter,
       'tenant-any',
       'subject-any',
-    )).rejects.toMatchObject<TenantAuthorizationError>({
+    )).rejects.toMatchObject({
       name: 'TenantAuthorizationError',
       code: 'DATABASE_NOT_CONFIGURED',
     })
