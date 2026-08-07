@@ -1,5 +1,6 @@
 import type { AuthDatabaseBindings } from './auth/authDatabaseFeature'
 import type { CoordinationDurableObject } from './coordination/coordinationDurableObject'
+import type { AuthMigrationBindings } from './migration/authMigrationHttp'
 import type { OperationalMigrationBindings } from './migration/operationalMigrationHttp'
 
 export type EdgeVariables = {
@@ -39,6 +40,7 @@ export type EdgeAppEnvironment = {
     & EdgeIdentityBindings
     & EdgeFoundationMigrationBindings
     & AuthDatabaseBindings
+    & AuthMigrationBindings
     & OperationalMigrationBindings
     & EdgeFinalAuthBindings
   Variables: EdgeVariables
