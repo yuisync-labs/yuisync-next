@@ -1,6 +1,7 @@
 import app from './app'
 import { handleAppApiRequest } from './appApi'
 import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
+import { handleOperationalMigrationRequest } from './migration/operationalMigrationHttp'
 import { handleAsyncQueue } from './queueHandler'
 import type { EdgeAppEnvironment } from './types'
 
@@ -9,6 +10,9 @@ export { CoordinationDurableObject } from './coordination/coordinationDurableObj
 export default {
   async fetch(request: Request, env: EdgeEnv, context: ExecutionContext): Promise<Response> {
     const bindings = env as EdgeAppEnvironment['Bindings']
+
+    const operationalMigrationResponse = await handleOperationalMigrationRequest(request, bindings)
+    if (operationalMigrationResponse) return operationalMigrationResponse
 
     const authResponse = await handleBetterAuthRequest(request, bindings)
     if (authResponse) return authResponse
