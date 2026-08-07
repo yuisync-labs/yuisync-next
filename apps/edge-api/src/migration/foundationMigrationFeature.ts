@@ -23,7 +23,7 @@ type FoundationMigrationEnvironment = EdgeFoundationMigrationBindings & Readonly
   DB?: D1Database
 }>
 
-function validMigrationToken(value: string | undefined): boolean {
+function validMigrationToken(value: string | undefined): value is string {
   if (typeof value !== 'string') return false
   const length = value.length
   return length >= MIN_MIGRATION_TOKEN_LENGTH
