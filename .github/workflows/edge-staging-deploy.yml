@@ -67,14 +67,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler d1 migrations apply AUTH_DB --env staging --remote
 
-      - name: Verify D1 schema version 16
+      - name: Verify D1 schema version 19
         working-directory: apps/edge-api
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           RESULT="$(npx wrangler d1 execute DB --env staging --remote --json --command "SELECT value FROM _yuisync_system_metadata WHERE key = 'schema_version';")"
-          node -e "const r=JSON.parse(process.argv[1]);const rows=r?.[0]?.results||r?.results||[];if(String(rows[0]?.value)!=='16')throw new Error('Staging D1 schema is not version 16');" "$RESULT"
+          node -e "const r=JSON.parse(process.argv[1]);const rows=r?.[0]?.results||r?.results||[];if(String(rows[0]?.value)!=='19')throw new Error('Staging D1 schema is not version 19');" "$RESULT"
 
       - name: Verify Better Auth core schema
         working-directory: apps/edge-api
@@ -138,7 +138,7 @@ jobs:
           echo "## Edge staging deployment" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: \`${DEPLOYED_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: ${EDGE_STAGING_URL}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Main D1 schema: v16" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Main D1 schema: v19" >> "$GITHUB_STEP_SUMMARY"
           echo "- Better Auth D1: migrated" >> "$GITHUB_STEP_SUMMARY"
           echo "- SPA assets: served by Worker" >> "$GITHUB_STEP_SUMMARY"
           echo "- Durable Object binding readiness: passed" >> "$GITHUB_STEP_SUMMARY"
