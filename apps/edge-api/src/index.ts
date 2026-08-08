@@ -4,6 +4,7 @@ import { handleAppApiRequest } from './appApi'
 import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
 import { handleCompatApiRequest } from './compatApi'
 import { handleFinalReadiness } from './finalReadiness'
+import { handleAiLabMigrationRequest } from './migration/aiLabMigrationHttp'
 import { handleAuthMigrationRequest } from './migration/authMigrationHttp'
 import { handleClientsPetsMigrationRequest } from './migration/clientsPetsMigrationHttp'
 import { handleOperationalMigrationRequest } from './migration/operationalMigrationHttp'
@@ -24,6 +25,9 @@ export default {
 
     const clientsPetsMigrationResponse = await handleClientsPetsMigrationRequest(request, bindings)
     if (clientsPetsMigrationResponse) return clientsPetsMigrationResponse
+
+    const aiLabMigrationResponse = await handleAiLabMigrationRequest(request, bindings)
+    if (aiLabMigrationResponse) return aiLabMigrationResponse
 
     const operationalMigrationResponse = await handleOperationalMigrationRequest(request, bindings)
     if (operationalMigrationResponse) return operationalMigrationResponse
