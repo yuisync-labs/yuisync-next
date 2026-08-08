@@ -92,8 +92,16 @@ if (health.status !== 'ok' || health.environment !== 'staging') {
 }
 
 const readiness = await fetchJson('/ready', 200)
-if (readiness.status !== 'ready' || readiness.checks?.configuration !== 'ok') {
-  throw new Error('/ready: Worker não está pronto')
+if (
+  readiness.status !== 'ready'
+  || readiness.checks?.database !== 'ready'
+  || readiness.checks?.schema_version !== '21'
+  || readiness.checks?.auth_database !== 'configured'
+  || readiness.checks?.coordination !== 'ready'
+  || readiness.checks?.better_auth !== 'enabled'
+  || readiness.checks?.migration_capabilities !== 'closed'
+) {
+  throw new Error('/ready: Worker não está pronto para staging v21')
 }
 
 const missing = await fetchJson('/smoke-route-must-not-exist', 404)
@@ -105,5 +113,5 @@ console.log(JSON.stringify({
   event: 'edge.staging.smoke.passed',
   base_url: baseUrl.origin,
   request_id: requestId,
-  checks: ['health', 'ready', 'not_found'],
+  checks: ['health', 'ready_v21', 'auth_db', 'coordination', 'not_found'],
 }))
