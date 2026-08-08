@@ -10,7 +10,33 @@ import type { EdgeAppEnvironment } from '../src/types'
 
 type TestBindings = EdgeAppEnvironment['Bindings']
 const testBindings = env as TestBindings
-const MIGRATION_TOKEN = 'foundation-migration-token-fixture-1234567890'
+const BETTER_AUTH_SECRET = 'better-auth-secret-fixture-12345678901234567890'
+
+const authDb = {
+  prepare: () => ({
+    all: async () => ({
+      results: [
+        { name: 'account' },
+        { name: 'session' },
+        { name: 'user' },
+        { name: 'verification' },
+      ],
+    }),
+  }),
+} as unknown as D1Database
+
+function readyBindings(overrides: Partial<TestBindings> = {}): TestBindings {
+  return {
+    ...testBindings,
+    EDGE_DATABASE_ENABLED: 'true',
+    EDGE_BETTER_AUTH_ENABLED: 'true',
+    AUTH_DB: authDb,
+    BETTER_AUTH_SECRET,
+    EDGE_OPERATIONAL_MIGRATION_ENABLED: 'false',
+    EDGE_AUTH_MIGRATION_ENABLED: 'false',
+    ...overrides,
+  }
+}
 
 async function request(
   path: string,
@@ -64,78 +90,66 @@ describe('YuiSync edge foundation', () => {
     expect(requestId).toMatch(/^[0-9a-f-]{36}$/)
   })
 
-  it('mantém banco, coordenação, identidade e migração desligados por padrão', async () => {
+  it('mantém o cutover indisponível enquanto banco e Better Auth estão desligados', async () => {
     const response = await request('/ready')
     const body = await response.json<{
       status: string
-      checks: {
-        configuration: string
-        database: string
-        coordination: string
-        identity_canary: string
-        foundation_migration: string
-      }
-      database_latency_ms: number | null
-      missing_bindings: string[]
+      checks: Record<string, string | null>
     }>()
 
-    expect(response.status).toBe(200)
+    expect(response.status).toBe(503)
     expect(body).toEqual(expect.objectContaining({
-      status: 'ready',
-      checks: {
-        configuration: 'ok',
-        database: 'disabled',
+      status: 'not_ready',
+      checks: expect.objectContaining({
+        database: 'ready',
+        schema_version: '20',
+        auth_database: 'not_configured',
         coordination: 'disabled',
-        identity_canary: 'disabled',
-        foundation_migration: 'disabled',
-      },
-      database_latency_ms: null,
-      missing_bindings: [],
+        better_auth: 'disabled',
+        migration_capabilities: 'closed',
+      }),
     }))
   })
 
-  it('valida D1 no readiness quando a feature flag é habilitada', async () => {
-    const response = await request('/ready', undefined, {
-      ...testBindings,
-      EDGE_DATABASE_ENABLED: 'true',
-    })
+  it('fica ready somente com D1 v20, AUTH_DB e Better Auth configurados', async () => {
+    const response = await request('/ready', undefined, readyBindings())
     const body = await response.json<{
       status: string
-      checks: { database: string }
-      database_latency_ms: number | null
+      checks: Record<string, string | null>
     }>()
 
     expect(response.status).toBe(200)
-    expect(body.status).toBe('ready')
-    expect(body.checks.database).toBe('ready')
-    expect(body.database_latency_ms).toEqual(expect.any(Number))
+    expect(body).toMatchObject({
+      status: 'ready',
+      checks: {
+        database: 'ready',
+        schema_version: '20',
+        auth_database: 'configured',
+        coordination: 'disabled',
+        better_auth: 'enabled',
+        migration_capabilities: 'closed',
+      },
+    })
   })
 
-  it('falha fechado quando a flag está ativa sem binding D1', async () => {
-    const response = await request('/ready', undefined, {
-      ...testBindings,
-      EDGE_DATABASE_ENABLED: 'true',
-      DB: undefined,
-    })
+  it('falha fechado quando a flag de banco está ativa sem binding D1', async () => {
+    const response = await request('/ready', undefined, readyBindings({ DB: undefined }))
     const body = await response.json<{
       status: string
-      checks: { database: string }
-      database_latency_ms: number | null
+      checks: { database: string; schema_version: string | null }
     }>()
 
     expect(response.status).toBe(503)
     expect(body).toMatchObject({
       status: 'not_ready',
-      checks: { database: 'not_configured' },
-      database_latency_ms: null,
+      checks: { database: 'not_configured', schema_version: null },
     })
   })
 
   it('valida o binding de coordenação quando a feature flag é habilitada', async () => {
-    const response = await request('/ready', undefined, {
-      ...testBindings,
+    const response = await request('/ready', undefined, readyBindings({
       EDGE_COORDINATION_ENABLED: 'true',
-    })
+    }))
     const body = await response.json<{
       status: string
       checks: { coordination: string }
@@ -147,11 +161,10 @@ describe('YuiSync edge foundation', () => {
   })
 
   it('falha fechado quando a coordenação está ativa sem binding', async () => {
-    const response = await request('/ready', undefined, {
-      ...testBindings,
+    const response = await request('/ready', undefined, readyBindings({
       EDGE_COORDINATION_ENABLED: 'true',
       COORDINATOR: undefined,
-    })
+    }))
     const body = await response.json<{
       status: string
       checks: { coordination: string }
@@ -164,44 +177,33 @@ describe('YuiSync edge foundation', () => {
     })
   })
 
-  it('marca migração como wrong_environment se ativada fora de staging', async () => {
-    const response = await request('/ready', undefined, {
-      ...testBindings,
-      EDGE_DATABASE_ENABLED: 'true',
-      EDGE_FOUNDATION_MIGRATION_ENABLED: 'true',
-      FOUNDATION_MIGRATION_TOKEN: MIGRATION_TOKEN,
-    })
+  it('falha fechado quando Better Auth está ativo sem AUTH_DB configurado', async () => {
+    const response = await request('/ready', undefined, readyBindings({ AUTH_DB: undefined }))
     const body = await response.json<{
       status: string
-      checks: { foundation_migration: string }
+      checks: { auth_database: string; better_auth: string }
     }>()
 
     expect(response.status).toBe(503)
     expect(body).toMatchObject({
       status: 'not_ready',
-      checks: { foundation_migration: 'wrong_environment' },
+      checks: { auth_database: 'not_configured', better_auth: 'enabled' },
     })
   })
 
-  it('marca migração como configurada somente em staging com secret + D1', async () => {
-    const response = await request('/ready', undefined, {
-      ...testBindings,
-      APP_ENV: 'staging',
-      EDGE_DATABASE_ENABLED: 'true',
-      EDGE_FOUNDATION_MIGRATION_ENABLED: 'true',
-      FOUNDATION_MIGRATION_TOKEN: MIGRATION_TOKEN,
-    })
+  it('bloqueia readiness enquanto capacidades de migração permanecem abertas', async () => {
+    const response = await request('/ready', undefined, readyBindings({
+      EDGE_OPERATIONAL_MIGRATION_ENABLED: 'true',
+    }))
     const body = await response.json<{
       status: string
-      checks: { foundation_migration: string }
-      missing_bindings: string[]
+      checks: { migration_capabilities: string }
     }>()
 
-    expect(response.status).toBe(200)
+    expect(response.status).toBe(503)
     expect(body).toMatchObject({
-      status: 'ready',
-      checks: { foundation_migration: 'configured' },
-      missing_bindings: [],
+      status: 'not_ready',
+      checks: { migration_capabilities: 'open' },
     })
   })
 
