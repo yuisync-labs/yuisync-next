@@ -3,7 +3,7 @@ name: Quality
 on:
   pull_request:
   push:
-    branches: [main, architecture/cloudflare-foundation]
+    branches: [main, architecture/cloudflare-foundation, "phase/**"]
   workflow_dispatch:
   schedule:
     - cron: '17 3 * * *'
