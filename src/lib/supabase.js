@@ -1,6 +1,8 @@
 import { getAuthSession, signInWithPassword, signOutSession } from './authApi'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
+const ACTIVE_TENANT_KEY = '@yui_active_tenant'
+const ACTIVE_MODULE_KEY = '@app_module'
 
 function asError(payload, status) {
   const error = new Error(payload?.message || payload?.error?.message || payload?.error || payload?.code || 'Falha na operacao de dados.')
@@ -11,11 +13,54 @@ function asError(payload, status) {
   return error
 }
 
+function safeStorageGet(key) {
+  try { return globalThis?.localStorage?.getItem(key) || null } catch { return null }
+}
+
+function activeModuleFromLocation() {
+  try {
+    const first = globalThis?.location?.pathname?.split('/').filter(Boolean)?.[0]
+    return first || null
+  } catch {
+    return null
+  }
+}
+
+function eqFilterValue(body, column) {
+  const filters = Array.isArray(body?.filters) ? body.filters : []
+  const match = filters.find((filter) => filter?.op === 'eq' && filter?.column === column)
+  return match?.value == null ? null : String(match.value).trim()
+}
+
+function payloadScopeValue(body, column) {
+  const payload = body?.payload
+  const row = Array.isArray(payload) ? payload[0] : payload
+  return row && typeof row === 'object' && row[column] != null ? String(row[column]).trim() : null
+}
+
+function compatibilityScopeHeaders(body) {
+  if (!body || typeof body !== 'object') return {}
+  const tenantId = eqFilterValue(body, 'tenant_id') || payloadScopeValue(body, 'tenant_id') || safeStorageGet(ACTIVE_TENANT_KEY)
+  const moduleId = eqFilterValue(body, 'module_id') || payloadScopeValue(body, 'module_id') || safeStorageGet(ACTIVE_MODULE_KEY) || activeModuleFromLocation()
+  const headers = {}
+  if (tenantId) headers['x-tenant-id'] = tenantId
+  if (moduleId) headers['x-module-id'] = moduleId
+  return headers
+}
+
 async function request(path, options = {}) {
+  let parsedBody = null
+  if (typeof options.body === 'string') {
+    try { parsedBody = JSON.parse(options.body) } catch { parsedBody = null }
+  }
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...compatibilityScopeHeaders(parsedBody),
+      ...(options.headers || {}),
+    },
   })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) return { data: null, error: asError(payload, response.status), count: payload?.count ?? null }
