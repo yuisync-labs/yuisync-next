@@ -47,7 +47,9 @@
     "calculate_commissions",
     "book_petshop_appointment_transaction",
     "update_petshop_appointment_transaction",
-    "checkout_petshop_appointment_transaction"
+    "checkout_petshop_appointment_transaction",
+    "checkout_petshop_subscription_transaction",
+    "reconcile_petshop_completed_appointment_package"
   ],
   "deferredTables": [
     "fiscal_policy_versions",
@@ -63,11 +65,9 @@
     "tenants"
   ],
   "deferredRpcs": [
-    "checkout_petshop_subscription_transaction",
     "create_petshop_booking_request",
     "get_petshop_portal_snapshot",
     "queue_fiscal_document_for_sale",
-    "reconcile_petshop_completed_appointment_package",
     "sync_all_tenant_fiscal_profiles",
     "yui_refresh_governance_alerts"
   ]
