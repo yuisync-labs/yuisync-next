@@ -45,6 +45,7 @@
     "test:contracts": "vitest run --config vitest.contracts.config.ts",
     "check:contract-boundaries": "node scripts/check-contract-boundaries.mjs",
     "check:no-runtime-supabase": "node scripts/check-no-runtime-supabase.mjs",
+    "check:edge-compat-surface": "node scripts/check-edge-compat-surface.mjs",
     "edge:types": "npm run types --workspace @yuisync/edge-api",
     "edge:types:check": "npm run types:check --workspace @yuisync/edge-api",
     "edge:typecheck": "npm run typecheck --workspace @yuisync/edge-api",
