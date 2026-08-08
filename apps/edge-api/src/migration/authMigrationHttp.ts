@@ -7,7 +7,7 @@ export type AuthMigrationBindings={
 }
 const ROUTE='/internal/migration/auth'
 const MAX_BODY=2*1024*1024
-async function sha(value:Uint8Array|string){const bytes=typeof value==='string'?new TextEncoder().encode(value):value;return new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))}
+async function sha(value:Uint8Array|string){const bytes=typeof value==='string'?new TextEncoder().encode(value):new Uint8Array(value);const buffer=bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength) as ArrayBuffer;return new Uint8Array(await crypto.subtle.digest('SHA-256',buffer))}
 async function equal(a:string,b:string){const [x,y]=await Promise.all([sha(a),sha(b)]);let d=0;for(let i=0;i<x.length;i+=1)d|=x[i]^y[i];return d===0}
 function hex(bytes:Uint8Array){return Array.from(bytes).map((v)=>v.toString(16).padStart(2,'0')).join('')}
 
