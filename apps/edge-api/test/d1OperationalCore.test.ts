@@ -18,7 +18,7 @@ async function seed(tenantId: string) {
 }
 
 async function appointment(tenantId: string) {
-  return db.prepare(`INSERT INTO appointments(tenant_id,module_id,id,client_id,pet_id,scheduled_at_ms,duration_minutes,status,source,subtotal_cents,transport_fee_cents,version,created_at_ms,updated_at_ms) VALUES(?,'petshop','appt','client','pet',100000,60,'scheduled','manual',5500,0,1,?,?)`)
+  return db.prepare(`INSERT INTO appointments(tenant_id,module_id,id,client_id,pet_id,scheduled_at_ms,duration_min,status,source,subtotal_cents,transport_fee_cents,version,created_at_ms,updated_at_ms) VALUES(?,'petshop','appt','client','pet',100000,60,'scheduled','manual',5500,0,1,?,?)`)
     .bind(tenantId, now, now).run()
 }
 
@@ -50,7 +50,7 @@ describe('operational core invariants', () => {
 
   it('appointment service snapshots are tied to the same scoped service', async () => {
     const t = 'tenant-agenda'; await seed(t); await appointment(t)
-    await expect(db.prepare(`INSERT INTO appointment_services(tenant_id,module_id,appointment_id,position,service_id,service_code,service_name,service_group,unit_price_cents,duration_minutes,benefit_used) VALUES(?,'petshop','appt',0,'service','banho','Banho','banho_tosa',5500,60,0)`).bind(t).run()).resolves.toMatchObject({ success: true })
+    await expect(db.prepare(`INSERT INTO appointment_services(tenant_id,module_id,appointment_id,position,service_id,service_code,service_name,service_group,unit_price_cents,duration_min,benefit_used) VALUES(?,'petshop','appt',0,'service','banho','Banho','banho_tosa',5500,60,0)`).bind(t).run()).resolves.toMatchObject({ success: true })
   })
 
   it('motodog transport is attached to one real appointment', async () => {
