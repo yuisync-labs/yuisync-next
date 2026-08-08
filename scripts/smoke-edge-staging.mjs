@@ -104,7 +104,10 @@ if (
   throw new Error('/ready: Worker não está pronto para staging v21')
 }
 
-const missing = await fetchJson('/smoke-route-must-not-exist', 404)
+// Root-level misses are intentionally handled by Cloudflare's SPA fallback and
+// return index.html. Probe an /api/* miss instead, because API paths are always
+// routed through the Worker and must retain the sanitized JSON 404 contract.
+const missing = await fetchJson('/api/smoke-route-must-not-exist', 404)
 if (missing.code !== 'NOT_FOUND') {
   throw new Error('404: resposta não está sanitizada')
 }
@@ -113,5 +116,5 @@ console.log(JSON.stringify({
   event: 'edge.staging.smoke.passed',
   base_url: baseUrl.origin,
   request_id: requestId,
-  checks: ['health', 'ready_v21', 'auth_db', 'coordination', 'not_found'],
+  checks: ['health', 'ready_v21', 'auth_db', 'coordination', 'api_not_found'],
 }))
