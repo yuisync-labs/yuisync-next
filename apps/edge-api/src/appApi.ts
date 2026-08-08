@@ -18,6 +18,11 @@ type MembershipRow = {
   tenant_status: string
 }
 
+type AuthSession = Awaited<ReturnType<typeof getBetterAuthSession>>
+type PrincipalResolution =
+  | { ok: true; session: NonNullable<AuthSession>; principal: PrincipalRow }
+  | { ok: false; error: Response }
+
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
   return Response.json(body, {
     status,
@@ -40,11 +45,11 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 96)
 }
 
-async function resolvePrincipal(request: Request, bindings: AppApiBindings) {
-  if (!bindings.DB) return { error: json({ code: 'DATABASE_NOT_CONFIGURED' }, 503) } as const
+async function resolvePrincipal(request: Request, bindings: AppApiBindings): Promise<PrincipalResolution> {
+  if (!bindings.DB) return { ok: false, error: json({ code: 'DATABASE_NOT_CONFIGURED' }, 503) }
   const session = await getBetterAuthSession(request, bindings)
   const userId = validId(session?.user?.id, 255)
-  if (!userId) return { error: json({ code: 'UNAUTHENTICATED' }, 401) } as const
+  if (!session || !userId) return { ok: false, error: json({ code: 'UNAUTHENTICATED' }, 401) }
 
   const principal = await bindings.DB.prepare(`
     SELECT id, display_name, email, status
@@ -54,9 +59,9 @@ async function resolvePrincipal(request: Request, bindings: AppApiBindings) {
   `).bind(userId).first<PrincipalRow>()
 
   if (!principal || principal.status !== 'active') {
-    return { error: json({ code: 'FORBIDDEN' }, 403) } as const
+    return { ok: false, error: json({ code: 'FORBIDDEN' }, 403) }
   }
-  return { session, principal } as const
+  return { ok: true, session, principal }
 }
 
 async function memberships(database: D1Database, principalId: string): Promise<MembershipRow[]> {
@@ -86,7 +91,7 @@ function modulesFor(row: MembershipRow): string[] {
 
 async function bootstrap(request: Request, bindings: AppApiBindings): Promise<Response> {
   const resolved = await resolvePrincipal(request, bindings)
-  if ('error' in resolved) return resolved.error
+  if (!resolved.ok) return resolved.error
   const rows = await memberships(bindings.DB!, resolved.principal.id)
   return json({
     session: resolved.session,
@@ -109,7 +114,7 @@ async function bootstrap(request: Request, bindings: AppApiBindings): Promise<Re
 
 async function settings(request: Request, bindings: AppApiBindings): Promise<Response> {
   const resolved = await resolvePrincipal(request, bindings)
-  if ('error' in resolved) return resolved.error
+  if (!resolved.ok) return resolved.error
   const url = new URL(request.url)
   const tenantId = validId(url.searchParams.get('tenant_id'))
   const moduleId = validModule(url.searchParams.get('module_id'))
@@ -132,7 +137,7 @@ async function settings(request: Request, bindings: AppApiBindings): Promise<Res
 
 async function createTenant(request: Request, bindings: AppApiBindings): Promise<Response> {
   const resolved = await resolvePrincipal(request, bindings)
-  if ('error' in resolved) return resolved.error
+  if (!resolved.ok) return resolved.error
   let body: { name?: unknown } = {}
   try { body = await request.json() as { name?: unknown } } catch { return json({ code: 'INVALID_JSON' }, 400) }
   const name = String(body.name ?? '').trim()
