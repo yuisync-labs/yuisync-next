@@ -1,589 +1,279 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import {
-  AlertCircle, Bot, CheckCircle2, FileText, FlaskConical, RefreshCw, Save, Send, Sparkles, UploadCloud,
-} from 'lucide-react'
+import { AlertCircle, Bot, CheckCircle2, FileText, RefreshCw, Save, Send, Sparkles, UploadCloud } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuthCtx } from '../../context/AuthContext'
 import { useModuleCtx } from '../../context/ModuleContext'
 
-function isAiCoreSchemaError(error) {
-  const message = String(error?.message || '').toLowerCase()
-  if (!message) return false
-  return (
-    (message.includes('companies')
-      || message.includes('niches')
-      || message.includes('prompt_versions'))
-    && (message.includes('does not exist')
-      || message.includes('schema cache')
-      || message.includes('relation'))
-  )
-}
-
-function isAiTrainingSchemaError(error) {
-  const message = String(error?.message || '').toLowerCase()
-  if (!message) return false
-  return (
-    (message.includes('ai_training_documents')
-      || message.includes('ai_playground_runs')
-      || message.includes('storage'))
-    && (message.includes('does not exist')
-      || message.includes('schema cache')
-      || message.includes('relation')
-      || message.includes('bucket'))
-  )
+function parseTags(raw) {
+  return String(raw || '').split(',').map((tag) => tag.trim()).filter(Boolean)
 }
 
 function toDateTime(value) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '-'
-  return date.toLocaleString('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
+  return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function moduleKey(activeModule) {
+  return activeModule?.id || activeModule?.key || activeModule?.module_id || 'petshop'
+}
+
+async function runEdgePlayground({ tenantId, moduleId, companyId, customerPhone, message }) {
+  const response = await fetch('/api/ai-lab/playground', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-tenant-id': tenantId,
+      'x-module-id': moduleId,
+    },
+    body: JSON.stringify({ company_id: companyId, customer_phone: customerPhone, message }),
   })
-}
-
-function normalizeFilename(name) {
-  return String(name || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-}
-
-function parseTags(raw) {
-  return String(raw || '')
-    .split(',')
-    .map((tag) => tag.trim())
-    .filter(Boolean)
-}
-
-async function invokeChatFromUi(payload) {
-  const firstTry = await supabase.functions.invoke('chat', { body: payload })
-  if (!firstTry.error) {
-    return { data: firstTry.data, error: null }
-  }
-
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-  if (!supabaseUrl || !anonKey) {
-    return firstTry
-  }
-
-  try {
-    const response = await fetch(`${supabaseUrl}/functions/v1/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${anonKey}`,
-        apikey: anonKey,
-      },
-      body: JSON.stringify(payload),
-    })
-
-    const text = await response.text()
-    let parsed = null
-    try {
-      parsed = text ? JSON.parse(text) : null
-    } catch {
-      parsed = { raw: text }
-    }
-
-    if (!response.ok) {
-      return {
-        data: null,
-        error: new Error(parsed?.message || parsed?.error || `HTTP ${response.status}`),
-      }
-    }
-
-    return { data: parsed, error: null }
-  } catch (fallbackError) {
-    return {
-      data: null,
-      error: fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError || 'Falha ao chamar function')),
-    }
-  }
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.message || payload?.code || 'Falha ao executar playground no Edge.')
+  return payload?.data || payload
 }
 
 export default function AiLabPage() {
   const { profile, activeTenantId } = useAuthCtx()
   const { activeModule } = useModuleCtx()
+  const defaultModule = moduleKey(activeModule)
 
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState({ type: '', text: '' })
-
-  const [coreSchemaMissing, setCoreSchemaMissing] = useState(false)
-  const [trainingSchemaMissing, setTrainingSchemaMissing] = useState(false)
-
   const [companies, setCompanies] = useState([])
-  const [nichesById, setNichesById] = useState({})
-  const [selectedModuleId, setSelectedModuleId] = useState('')
-  const [selectedBusinessName, setSelectedBusinessName] = useState('')
+  const [niches, setNiches] = useState([])
+  const [selectedModuleId, setSelectedModuleId] = useState(defaultModule)
   const [selectedCompanyId, setSelectedCompanyId] = useState('')
-
   const [promptVersions, setPromptVersions] = useState([])
-  const [promptDraft, setPromptDraft] = useState({
-    core: '',
-    niche: '',
-    company: '',
-  })
-
+  const [promptDraft, setPromptDraft] = useState({ core: '', niche: '', company: '' })
   const [documents, setDocuments] = useState([])
-  const [docForm, setDocForm] = useState({
-    title: '',
-    tags: '',
-    contentText: '',
-    file: null,
-  })
-
+  const [runs, setRuns] = useState([])
+  const [savingLayer, setSavingLayer] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [docForm, setDocForm] = useState({ title: '', tags: '', contentText: '', file: null })
   const [playgroundMessage, setPlaygroundMessage] = useState('')
   const [playgroundPhone, setPlaygroundPhone] = useState('+5511999999999')
-  const [playgroundRuns, setPlaygroundRuns] = useState([])
-
-  const [refreshingWorkspace, setRefreshingWorkspace] = useState(false)
-  const [savingLayer, setSavingLayer] = useState('')
-  const [uploadingDoc, setUploadingDoc] = useState(false)
-  const [testing, setTesting] = useState(false)
 
   const isGlobalAdmin = profile?.role === 'admin'
-  const moduleOptions = useMemo(() => {
-    const map = new Map()
-    for (const company of companies) {
-      const moduleId = company.module_id || 'petshop'
-      if (!map.has(moduleId)) {
-        map.set(moduleId, moduleId)
-      }
-    }
-    return [...map.values()]
-  }, [companies])
-
-  const businessOptions = useMemo(() => {
-    const map = new Map()
-    for (const company of companies) {
-      const moduleId = company.module_id || 'petshop'
-      if (selectedModuleId && moduleId !== selectedModuleId) continue
-      const key = company.name || 'Empresa sem nome'
-      if (!map.has(key)) {
-        map.set(key, key)
-      }
-    }
-    return [...map.values()]
-  }, [companies, selectedModuleId])
-
-  const botOptions = useMemo(() => (
-    companies.filter((company) => {
-      const moduleId = company.module_id || 'petshop'
-      if (selectedModuleId && moduleId !== selectedModuleId) return false
-      if (selectedBusinessName && (company.name || 'Empresa sem nome') !== selectedBusinessName) return false
-      return true
-    })
-  ), [companies, selectedModuleId, selectedBusinessName])
-
   const selectedCompany = useMemo(
-    () => botOptions.find((company) => company.id === selectedCompanyId)
-      || companies.find((company) => company.id === selectedCompanyId)
-      || null,
-    [botOptions, companies, selectedCompanyId],
+    () => companies.find((company) => company.id === selectedCompanyId) || null,
+    [companies, selectedCompanyId],
   )
-  const selectedNiche = selectedCompany ? nichesById[selectedCompany.niche_id] : null
+  const selectedNiche = useMemo(
+    () => niches.find((niche) => niche.id === selectedCompany?.niche_id) || null,
+    [niches, selectedCompany?.niche_id],
+  )
+  const moduleOptions = useMemo(() => {
+    const values = new Set(companies.map((company) => company.module_id || 'petshop'))
+    if (!values.size) values.add(defaultModule)
+    return [...values]
+  }, [companies, defaultModule])
+  const visibleCompanies = useMemo(
+    () => companies.filter((company) => (company.module_id || 'petshop') === selectedModuleId),
+    [companies, selectedModuleId],
+  )
 
-  const rebuildPromptDraft = useCallback((versions, company, niche) => {
-    const latestByLayer = {}
-    for (const row of versions) {
-      if (!row?.layer) continue
-      if (latestByLayer[row.layer]) continue
-      latestByLayer[row.layer] = row.content || ''
+  const loadBase = useCallback(async () => {
+    if (!activeTenantId) {
+      setCompanies([])
+      setNiches([])
+      setLoading(false)
+      return
     }
-
-    setPromptDraft({
-      core: latestByLayer.core || '',
-      niche: latestByLayer.niche || niche?.base_prompt || '',
-      company: latestByLayer.company || company?.system_prompt || '',
-    })
-  }, [])
-
-  const loadCompanies = useCallback(async () => {
     setLoading(true)
     setError('')
-    setMessage({ type: '', text: '' })
-
     try {
       const [companiesRes, nichesRes] = await Promise.all([
-        supabase
-          .from('companies')
-          .select('id,tenant_id,module_id,niche_id,name,bot_name,model_name,temperature,is_active,system_prompt,schedule_free_status,schedule_booked_status,created_at')
+        supabase.from('companies')
+          .select('*')
+          .eq('tenant_id', activeTenantId)
+          .eq('module_id', selectedModuleId || defaultModule)
           .order('created_at', { ascending: true }),
-        supabase
-          .from('niches')
-          .select('id,name,base_prompt')
-          .order('created_at', { ascending: true }),
+        supabase.from('niches').select('*').order('created_at', { ascending: true }),
       ])
-
       if (companiesRes.error) throw companiesRes.error
       if (nichesRes.error) throw nichesRes.error
-
       const nextCompanies = companiesRes.data || []
       setCompanies(nextCompanies)
-      setNichesById(Object.fromEntries((nichesRes.data || []).map((niche) => [niche.id, niche])))
-
-      setCoreSchemaMissing(false)
+      setNiches(nichesRes.data || [])
+      setSelectedCompanyId((current) => nextCompanies.some((company) => company.id === current) ? current : (nextCompanies[0]?.id || ''))
     } catch (loadError) {
-      if (isAiCoreSchemaError(loadError)) {
-        setCoreSchemaMissing(true)
-        setCompanies([])
-        setNichesById({})
-        setSelectedModuleId('')
-        setSelectedBusinessName('')
-        setSelectedCompanyId('')
-      } else {
-        setError(loadError instanceof Error ? loadError.message : 'Falha ao carregar IA Lab.')
-      }
+      setError(loadError instanceof Error ? loadError.message : 'Falha ao carregar o AI Lab.')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [activeTenantId, defaultModule, selectedModuleId])
 
   const loadWorkspace = useCallback(async () => {
-    if (!selectedCompanyId) {
+    if (!activeTenantId || !selectedCompany) {
       setPromptVersions([])
-      setPromptDraft({ core: '', niche: '', company: '' })
       setDocuments([])
-      setPlaygroundRuns([])
+      setRuns([])
       return
     }
-
-    setRefreshingWorkspace(true)
+    setRefreshing(true)
     setError('')
-
     try {
+      const scope = { tenant: activeTenantId, module: selectedCompany.module_id || selectedModuleId || defaultModule }
       const [versionsRes, docsRes, runsRes] = await Promise.all([
-        supabase
-          .from('prompt_versions')
-          .select('id,layer,content,version,is_active,change_note,created_at')
-          .eq('company_id', selectedCompanyId)
-          .order('version', { ascending: false })
+        supabase.from('prompt_versions').select('*')
+          .eq('tenant_id', scope.tenant).eq('module_id', scope.module).eq('company_id', selectedCompany.id)
+          .order('version', { ascending: false }).order('created_at', { ascending: false }),
+        supabase.from('ai_training_documents').select('*')
+          .eq('tenant_id', scope.tenant).eq('module_id', scope.module).eq('company_id', selectedCompany.id)
           .order('created_at', { ascending: false }),
-        supabase
-          .from('ai_training_documents')
-          .select('id,title,tags,status,mime_type,file_size,content_text,storage_bucket,storage_path,created_at')
-          .eq('company_id', selectedCompanyId)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('ai_playground_runs')
-          .select('id,input_message,action,reply,parsed_intent,created_at')
-          .eq('company_id', selectedCompanyId)
-          .order('created_at', { ascending: false })
-          .limit(40),
+        supabase.from('ai_playground_runs').select('*')
+          .eq('tenant_id', scope.tenant).eq('module_id', scope.module).eq('company_id', selectedCompany.id)
+          .order('created_at', { ascending: false }).limit(40),
       ])
-
       if (versionsRes.error) throw versionsRes.error
       if (docsRes.error) throw docsRes.error
       if (runsRes.error) throw runsRes.error
-
-      const versionRows = versionsRes.data || []
-      setPromptVersions(versionRows)
-      rebuildPromptDraft(versionRows, selectedCompany, selectedNiche)
-
-      setTrainingSchemaMissing(false)
+      const versions = versionsRes.data || []
+      const latest = {}
+      for (const row of versions) if (row?.layer && latest[row.layer] == null) latest[row.layer] = row.content || ''
+      setPromptVersions(versions)
+      setPromptDraft({
+        core: latest.core || '',
+        niche: latest.niche || selectedNiche?.base_prompt || '',
+        company: latest.company || selectedCompany.system_prompt || '',
+      })
       setDocuments(docsRes.data || [])
-      setPlaygroundRuns(runsRes.data || [])
+      setRuns(runsRes.data || [])
     } catch (workspaceError) {
-      if (isAiTrainingSchemaError(workspaceError)) {
-        setTrainingSchemaMissing(true)
-        setDocuments([])
-        setPlaygroundRuns([])
-      } else if (isAiCoreSchemaError(workspaceError)) {
-        setCoreSchemaMissing(true)
-      } else {
-        setError(workspaceError instanceof Error ? workspaceError.message : 'Falha ao carregar workspace da IA.')
-      }
+      setError(workspaceError instanceof Error ? workspaceError.message : 'Falha ao carregar o workspace.')
     } finally {
-      setRefreshingWorkspace(false)
+      setRefreshing(false)
     }
-  }, [rebuildPromptDraft, selectedCompany, selectedCompanyId, selectedNiche])
+  }, [activeTenantId, defaultModule, selectedCompany, selectedModuleId, selectedNiche?.base_prompt])
 
+  useEffect(() => { loadBase() }, [loadBase])
+  useEffect(() => { loadWorkspace() }, [loadWorkspace])
   useEffect(() => {
-    loadCompanies()
-  }, [loadCompanies])
-
-  useEffect(() => {
-    if (moduleOptions.length === 0) {
-      if (selectedModuleId) setSelectedModuleId('')
-      return
+    if (visibleCompanies.length && !visibleCompanies.some((company) => company.id === selectedCompanyId)) {
+      setSelectedCompanyId(visibleCompanies[0].id)
     }
-    if (!selectedModuleId || !moduleOptions.includes(selectedModuleId)) {
-      setSelectedModuleId(moduleOptions[0])
-    }
-  }, [moduleOptions, selectedModuleId])
-
-  useEffect(() => {
-    if (businessOptions.length === 0) {
-      if (selectedBusinessName) setSelectedBusinessName('')
-      return
-    }
-    if (!selectedBusinessName || !businessOptions.includes(selectedBusinessName)) {
-      setSelectedBusinessName(businessOptions[0])
-    }
-  }, [businessOptions, selectedBusinessName])
-
-  useEffect(() => {
-    if (botOptions.length === 0) {
-      if (selectedCompanyId) setSelectedCompanyId('')
-      return
-    }
-    if (!selectedCompanyId || !botOptions.some((bot) => bot.id === selectedCompanyId)) {
-      setSelectedCompanyId(botOptions[0].id)
-    }
-  }, [botOptions, selectedCompanyId])
-
-  useEffect(() => {
-    loadWorkspace()
-  }, [loadWorkspace])
+  }, [selectedCompanyId, visibleCompanies])
 
   async function savePromptLayer(layer) {
-    if (!selectedCompany || !layer) return
+    if (!selectedCompany || !activeTenantId) return
     const content = String(promptDraft[layer] || '').trim()
-    if (!content) {
-      setError(`A camada ${layer} nao pode ficar vazia.`)
-      return
-    }
-
+    if (!content) return setError(`A camada ${layer} nao pode ficar vazia.`)
     setSavingLayer(layer)
     setError('')
     setMessage({ type: '', text: '' })
-
     try {
-      const currentVersion = Math.max(
-        0,
-        ...promptVersions
-          .filter((row) => row.layer === layer)
-          .map((row) => Number(row.version || 0)),
-      )
-
-      const { error: insertError } = await supabase
-        .from('prompt_versions')
-        .insert({
-          company_id: selectedCompany.id,
-          layer,
-          content,
-          version: currentVersion + 1,
-          is_active: true,
-          changed_by: profile?.id || null,
-          change_note: 'Atualizacao via IA Lab',
-        })
-
-      if (insertError) throw insertError
-
+      const nextVersion = Math.max(0, ...promptVersions.filter((row) => row.layer === layer).map((row) => Number(row.version || 0))) + 1
+      const moduleId = selectedCompany.module_id || selectedModuleId || defaultModule
+      const insert = await supabase.from('prompt_versions').insert({
+        tenant_id: activeTenantId,
+        module_id: moduleId,
+        company_id: selectedCompany.id,
+        layer,
+        content,
+        version: nextVersion,
+        is_active: true,
+        changed_by: profile?.id || null,
+        change_note: 'Atualizacao via AI Lab Cloudflare',
+      })
+      if (insert.error) throw insert.error
       if (layer === 'company') {
-        const { error: companyUpdateError } = await supabase
-          .from('companies')
-          .update({
-            system_prompt: content,
-          })
-          .eq('id', selectedCompany.id)
-
-        if (companyUpdateError) throw companyUpdateError
+        const update = await supabase.from('companies').update({ system_prompt: content })
+          .eq('tenant_id', activeTenantId).eq('module_id', moduleId).eq('id', selectedCompany.id)
+        if (update.error) throw update.error
       }
-
-      if (layer === 'niche' && selectedCompany.niche_id) {
-        const { error: nicheUpdateError } = await supabase
-          .from('niches')
-          .update({
-            base_prompt: content,
-          })
-          .eq('id', selectedCompany.niche_id)
-
-        if (nicheUpdateError) throw nicheUpdateError
+      if (layer === 'niche' && selectedNiche?.id) {
+        const update = await supabase.from('niches').update({ base_prompt: content }).eq('id', selectedNiche.id)
+        if (update.error) throw update.error
       }
-
-      setMessage({ type: 'success', text: `Camada ${layer} salva com nova versao.` })
-      await loadCompanies()
+      setMessage({ type: 'success', text: `Camada ${layer} salva no Edge.` })
+      await loadBase()
       await loadWorkspace()
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Nao foi possivel salvar a camada.')
+      setError(saveError instanceof Error ? saveError.message : 'Falha ao salvar prompt.')
     } finally {
       setSavingLayer('')
     }
   }
 
-  async function handleUploadDocument() {
-    if (!selectedCompany) return
-
-    const hasFile = Boolean(docForm.file)
-    const hasText = Boolean(String(docForm.contentText || '').trim())
-    if (!hasFile && !hasText) {
-      setError('Envie um arquivo ou preencha o resumo textual para treinar a IA.')
-      return
-    }
-
-    const tenantId = selectedCompany.tenant_id || activeTenantId
-    if (!tenantId) {
-      setError('Selecione uma instancia ativa antes de enviar documentos para treino.')
-      return
-    }
-
-    setUploadingDoc(true)
+  async function uploadDocument() {
+    if (!selectedCompany || !activeTenantId) return
+    setUploading(true)
     setError('')
     setMessage({ type: '', text: '' })
-
     try {
-      let storageBucket = null
-      let storagePath = null
+      let contentText = String(docForm.contentText || '').trim()
       let mimeType = null
       let fileSize = null
-      let contentText = String(docForm.contentText || '').trim()
-
       if (docForm.file) {
-        const file = docForm.file
-        storageBucket = 'yuisync-ai-docs'
-        const safeName = normalizeFilename(file.name) || `doc-${Date.now()}`
-        storagePath = `${tenantId}/${selectedCompany.id}/${Date.now()}-${safeName}`
-        mimeType = file.type || 'application/octet-stream'
-        fileSize = Number(file.size || 0)
-
-        const { error: uploadError } = await supabase.storage
-          .from(storageBucket)
-          .upload(storagePath, file, {
-            upsert: false,
-            contentType: mimeType,
-          })
-
-        if (uploadError) throw uploadError
-
-        if (!contentText && (mimeType.startsWith('text/') || /\.(txt|md|csv|json)$/i.test(file.name))) {
-          const text = await file.text()
-          contentText = text.slice(0, 16000)
-        }
+        mimeType = docForm.file.type || 'text/plain'
+        fileSize = Number(docForm.file.size || 0)
+        const textLike = mimeType.startsWith('text/') || /\.(txt|md|csv|json)$/i.test(docForm.file.name)
+        if (!textLike) throw new Error('Neste cutover Cloudflare, documentos binarios devem ser convertidos para TXT, MD, CSV ou JSON antes do envio.')
+        if (!contentText) contentText = (await docForm.file.text()).slice(0, 120000)
       }
-
-      const title = String(docForm.title || '').trim() || docForm.file?.name || 'Documento de treino'
-      const tags = parseTags(docForm.tags)
-
-      const { error: insertError } = await supabase
-        .from('ai_training_documents')
-        .insert({
-          tenant_id: tenantId,
-          module_id: selectedCompany.module_id || selectedModuleId || 'petshop',
-          company_id: selectedCompany.id,
-          title,
-          storage_bucket: storageBucket,
-          storage_path: storagePath,
-          mime_type: mimeType,
-          file_size: fileSize,
-          content_text: contentText || null,
-          tags,
-          status: 'active',
-          uploaded_by: profile?.id || null,
-        })
-
-      if (insertError) throw insertError
-
-      setDocForm({
-        title: '',
-        tags: '',
-        contentText: '',
-        file: null,
+      if (!contentText) throw new Error('Informe um texto ou selecione um arquivo textual.')
+      const moduleId = selectedCompany.module_id || selectedModuleId || defaultModule
+      const insert = await supabase.from('ai_training_documents').insert({
+        tenant_id: activeTenantId,
+        module_id: moduleId,
+        company_id: selectedCompany.id,
+        title: String(docForm.title || '').trim() || docForm.file?.name || 'Documento de treino',
+        mime_type: mimeType,
+        file_size: fileSize,
+        content_text: contentText,
+        tags: parseTags(docForm.tags),
+        status: 'active',
+        uploaded_by: profile?.id || null,
       })
-      setMessage({ type: 'success', text: 'Documento enviado e vinculado ao treino da IA.' })
+      if (insert.error) throw insert.error
+      setDocForm({ title: '', tags: '', contentText: '', file: null })
+      setMessage({ type: 'success', text: 'Documento persistido no D1 e disponivel para o playground.' })
       await loadWorkspace()
     } catch (uploadError) {
-      if (isAiTrainingSchemaError(uploadError)) {
-        setTrainingSchemaMissing(true)
-      }
       setError(uploadError instanceof Error ? uploadError.message : 'Falha ao enviar documento.')
     } finally {
-      setUploadingDoc(false)
+      setUploading(false)
     }
   }
 
   async function archiveDocument(documentId) {
-    if (!documentId) return
-    setError('')
-    setMessage({ type: '', text: '' })
-
-    try {
-      const { error: archiveError } = await supabase
-        .from('ai_training_documents')
-        .update({
-          status: 'archived',
-        })
-        .eq('id', documentId)
-
-      if (archiveError) throw archiveError
-
-      setMessage({ type: 'success', text: 'Documento arquivado.' })
-      await loadWorkspace()
-    } catch (archiveError) {
-      setError(archiveError instanceof Error ? archiveError.message : 'Falha ao arquivar documento.')
-    }
+    if (!selectedCompany || !activeTenantId || !documentId) return
+    const moduleId = selectedCompany.module_id || selectedModuleId || defaultModule
+    const result = await supabase.from('ai_training_documents').update({ status: 'archived' })
+      .eq('tenant_id', activeTenantId).eq('module_id', moduleId).eq('id', documentId)
+    if (result.error) setError(result.error.message)
+    else await loadWorkspace()
   }
 
-  async function runPlaygroundTest() {
-    if (!selectedCompany || !playgroundMessage.trim()) return
-
-    const tenantId = selectedCompany.tenant_id || activeTenantId
-    if (!tenantId) {
-      setError('Selecione uma instancia ativa antes de testar a IA.')
-      return
-    }
-
+  async function runPlayground() {
+    if (!selectedCompany || !activeTenantId || !playgroundMessage.trim()) return
     setTesting(true)
     setError('')
     setMessage({ type: '', text: '' })
-
     try {
-      const payload = {
-        company_id: selectedCompany.id,
-        customer_phone: String(playgroundPhone || '').trim() || '+5511999999999',
+      const moduleId = selectedCompany.module_id || selectedModuleId || defaultModule
+      const run = await runEdgePlayground({
+        tenantId: activeTenantId,
+        moduleId,
+        companyId: selectedCompany.id,
+        customerPhone: playgroundPhone,
         message: playgroundMessage.trim(),
-      }
-
-      const { data, error: invokeError } = await invokeChatFromUi(payload)
-
-      if (invokeError) throw invokeError
-
-      const run = {
-        id: `local-${Date.now()}`,
-        input_message: payload.message,
-        action: data?.action || 'none',
-        reply: data?.reply || '',
-        parsed_intent: data?.intent || null,
-        created_at: new Date().toISOString(),
-      }
-
-      setPlaygroundRuns((prev) => [run, ...prev].slice(0, 40))
-
-      const { error: runInsertError } = await supabase
-        .from('ai_playground_runs')
-        .insert({
-          tenant_id: tenantId,
-          module_id: selectedCompany.module_id || selectedModuleId || 'petshop',
-          company_id: selectedCompany.id,
-          created_by: profile?.id || null,
-          customer_phone: payload.customer_phone,
-          input_message: payload.message,
-          parsed_intent: data?.intent || {},
-          action: data?.action || null,
-          reply: data?.reply || null,
-          raw_response: data || {},
-        })
-
-      if (runInsertError && !isAiTrainingSchemaError(runInsertError)) {
-        throw runInsertError
-      }
-
-      if (data?.action === 'plan_limit') {
-        setMessage({
-          type: 'info',
-          text: data?.reply || 'Teste executado, mas a IA foi bloqueada pela governanca de plano.',
-        })
-      } else {
-        setMessage({ type: 'success', text: 'Teste executado com sucesso.' })
-      }
+      })
+      setRuns((current) => [{
+        id: run.id || `edge-${Date.now()}`,
+        input_message: playgroundMessage.trim(),
+        action: run.action || 'preview',
+        reply: run.reply || '',
+        parsed_intent: run.intent || null,
+        created_at: run.created_at || new Date().toISOString(),
+      }, ...current].slice(0, 40))
       setPlaygroundMessage('')
+      setMessage({ type: 'success', text: 'Playground executado no Cloudflare Edge sem efeitos operacionais.' })
     } catch (testError) {
       setError(testError instanceof Error ? testError.message : 'Falha ao testar a IA.')
     } finally {
@@ -591,272 +281,62 @@ export default function AiLabPage() {
     }
   }
 
-  if (!isGlobalAdmin) {
-    return (
-      <div className="page animate-fade-up max-w-4xl mx-auto">
-        <div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 text-amber-200">
-          Esta area e exclusiva para Admin Global.
-        </div>
-      </div>
-    )
-  }
-
-  if (loading) {
-    return (
-      <div className="page flex items-center justify-center py-20 text-muted">
-        <RefreshCw size={18} className="animate-spin mr-2 text-[var(--primary)]" />
-        Carregando IA Lab...
-      </div>
-    )
-  }
+  if (!isGlobalAdmin) return <div className="page max-w-4xl mx-auto"><div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 text-amber-200">Esta area e exclusiva para Admin Global.</div></div>
+  if (!activeTenantId) return <div className="page max-w-4xl mx-auto"><div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 text-amber-200">Selecione uma instancia ativa para abrir o AI Lab.</div></div>
+  if (loading) return <div className="page flex items-center justify-center py-20 text-muted"><RefreshCw size={18} className="animate-spin mr-2" />Carregando AI Lab...</div>
 
   return (
     <div className="page animate-fade-up max-w-7xl mx-auto pb-20 space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="page-title flex items-center gap-2">
-            <Sparkles size={22} className={activeModule?.theme?.textPrimary} />
-            Treino de IA
-          </h1>
-          <p className="page-sub">
-            Gerencie prompts, adicione documentos de conhecimento e rode testes reais do bot em um unico painel.
-          </p>
+          <h1 className="page-title flex items-center gap-2"><Sparkles size={22} />Treino de IA</h1>
+          <p className="page-sub">Prompts, conhecimento e playground agora persistidos e executados pelo Cloudflare Edge.</p>
         </div>
-        <button onClick={loadWorkspace} className="btn btn-secondary gap-2">
-          {refreshingWorkspace ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-          Atualizar workspace
-        </button>
+        <button onClick={loadWorkspace} className="btn btn-secondary gap-2"><RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />Atualizar</button>
       </div>
 
-      {coreSchemaMissing && (
-        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          Estrutura base da IA ainda nao existe. Rode o SQL <span className="font-bold">database/yuisync_core_engine.sql</span>.
-        </div>
-      )}
+      {error && <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex gap-2"><AlertCircle size={15} />{error}</div>}
+      {message.text && <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 flex gap-2"><CheckCircle2 size={15} />{message.text}</div>}
 
-      {trainingSchemaMissing && (
-        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          Estrutura de treino/documentos ainda nao existe. Rode o SQL <span className="font-bold">database/yuisync_ai_training_hub.sql</span>.
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
-          <AlertCircle size={15} />
-          {error}
-        </div>
-      )}
-
-      {message.text && (
-        <div className={`rounded-2xl border px-4 py-3 text-sm flex items-center gap-2 ${
-          message.type === 'success'
-            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-            : 'border-blue-500/30 bg-blue-500/10 text-blue-200'
-        }`}>
-          <CheckCircle2 size={15} />
-          {message.text}
-        </div>
-      )}
-
-      <section className="bg-card border border-white/10 rounded-3xl p-5 space-y-4">
-        <p className="text-xs font-black uppercase tracking-[0.2em] text-muted">Bot alvo</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-[1fr_1fr_1fr_auto] gap-3 items-end">
-          <div>
-            <label className="inp-label">Modulo</label>
-            <select
-              className="inp"
-              value={selectedModuleId}
-              onChange={(event) => setSelectedModuleId(event.target.value)}
-              disabled={moduleOptions.length === 0}
-            >
-              {moduleOptions.length === 0 && <option value="">Sem modulo</option>}
-              {moduleOptions.map((moduleId) => (
-                <option key={moduleId} value={moduleId}>
-                  {moduleId}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="inp-label">Empresa</label>
-            <select
-              className="inp"
-              value={selectedBusinessName}
-              onChange={(event) => setSelectedBusinessName(event.target.value)}
-              disabled={businessOptions.length === 0}
-            >
-              {businessOptions.length === 0 && <option value="">Sem empresa</option>}
-              {businessOptions.map((businessName) => (
-                <option key={businessName} value={businessName}>
-                  {businessName}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="inp-label">Bot</label>
-            <select
-              className="inp"
-              value={selectedCompanyId}
-              onChange={(event) => setSelectedCompanyId(event.target.value)}
-              disabled={botOptions.length === 0}
-            >
-              {botOptions.length === 0 && <option value="">Sem bot</option>}
-              {botOptions.map((company) => (
-                <option key={company.id} value={company.id}>
-                  {company.bot_name || 'Bot'} ({company.model_name || 'gpt-4o-mini'})
-                </option>
-              ))}
-            </select>
-          </div>
-          {selectedCompany && (
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-xs text-muted">
-              <p className="text-text font-semibold flex items-center gap-2">
-                <Bot size={13} className="text-[var(--primary)]" />
-                {selectedCompany.bot_name} ({selectedCompany.model_name || 'gpt-4o-mini'})
-              </p>
-              <p className="mt-1">Modulo: {selectedCompany.module_id || selectedModuleId || 'petshop'}</p>
-              <p className="mt-1">Nicho: {selectedNiche?.name || selectedCompany.niche_id}</p>
-            </div>
-          )}
-        </div>
+      <section className="bg-card border border-white/10 rounded-3xl p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label className="inp-label">Modulo</label><select className="inp" value={selectedModuleId} onChange={(event) => setSelectedModuleId(event.target.value)}>{moduleOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></div>
+        <div><label className="inp-label">Bot</label><select className="inp" value={selectedCompanyId} onChange={(event) => setSelectedCompanyId(event.target.value)}><option value="">Selecione</option>{visibleCompanies.map((company) => <option key={company.id} value={company.id}>{company.bot_name || company.name}</option>)}</select></div>
       </section>
 
-      {selectedCompany && (
-        <>
-          <section className="bg-card border border-white/10 rounded-3xl p-5 space-y-4">
-            <p className="text-xs font-black uppercase tracking-[0.2em] text-muted">Camadas de prompt</p>
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-              {['core', 'niche', 'company'].map((layer) => (
-                <div key={layer} className="rounded-2xl border border-white/10 bg-black/10 p-4 space-y-3">
-                  <p className="text-sm font-bold text-text uppercase tracking-wide">{layer}</p>
-                  <textarea
-                    className="inp min-h-[240px] resize-y"
-                    value={promptDraft[layer] || ''}
-                    onChange={(event) => setPromptDraft((prev) => ({ ...prev, [layer]: event.target.value }))}
-                    placeholder={`Defina a camada ${layer}`}
-                  />
-                  <button
-                    onClick={() => savePromptLayer(layer)}
-                    disabled={savingLayer === layer || coreSchemaMissing}
-                    className="btn btn-primary w-full gap-2"
-                  >
-                    {savingLayer === layer ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-                    Salvar camada
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
+      {!selectedCompany && <div className="rounded-2xl border border-white/10 p-6 text-muted">Nenhuma empresa de IA migrada para este tenant/modulo.</div>}
 
-          <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <div className="bg-card border border-white/10 rounded-3xl p-5 space-y-4">
-              <p className="text-xs font-black uppercase tracking-[0.2em] text-muted">Documentos para RAG</p>
+      {selectedCompany && <>
+        <section className="bg-card border border-white/10 rounded-3xl p-5 space-y-4">
+          <div className="flex items-center gap-2 text-sm font-bold"><Bot size={16} />{selectedCompany.bot_name || selectedCompany.name} · {selectedCompany.model_name || 'gpt-4o-mini'}</div>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            {['core', 'niche', 'company'].map((layer) => <div key={layer} className="rounded-2xl border border-white/10 p-4 space-y-3">
+              <p className="text-xs font-black uppercase tracking-wider text-muted">{layer}</p>
+              <textarea className="inp min-h-[220px] resize-y" value={promptDraft[layer] || ''} onChange={(event) => setPromptDraft((current) => ({ ...current, [layer]: event.target.value }))} />
+              <button onClick={() => savePromptLayer(layer)} disabled={savingLayer === layer} className="btn btn-primary w-full gap-2">{savingLayer === layer ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}Salvar</button>
+            </div>)}
+          </div>
+        </section>
 
-              <div className="space-y-3">
-                <input
-                  className="inp"
-                  placeholder="Titulo do documento"
-                  value={docForm.title}
-                  onChange={(event) => setDocForm((prev) => ({ ...prev, title: event.target.value }))}
-                />
-                <input
-                  className="inp"
-                  placeholder="Tags (separadas por virgula)"
-                  value={docForm.tags}
-                  onChange={(event) => setDocForm((prev) => ({ ...prev, tags: event.target.value }))}
-                />
-                <textarea
-                  className="inp min-h-[120px] resize-y"
-                  placeholder="Resumo textual do documento (melhora o RAG rapidamente)"
-                  value={docForm.contentText}
-                  onChange={(event) => setDocForm((prev) => ({ ...prev, contentText: event.target.value }))}
-                />
-                <input
-                  className="inp"
-                  type="file"
-                  onChange={(event) => setDocForm((prev) => ({ ...prev, file: event.target.files?.[0] || null }))}
-                />
-                <button
-                  onClick={handleUploadDocument}
-                  disabled={uploadingDoc || coreSchemaMissing}
-                  className="btn btn-primary w-full gap-2"
-                >
-                  {uploadingDoc ? <RefreshCw size={14} className="animate-spin" /> : <UploadCloud size={14} />}
-                  Enviar documento
-                </button>
-              </div>
+        <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="bg-card border border-white/10 rounded-3xl p-5 space-y-4">
+            <p className="text-xs font-black uppercase tracking-wider text-muted flex items-center gap-2"><FileText size={14} />Conhecimento D1</p>
+            <input className="inp" placeholder="Titulo" value={docForm.title} onChange={(event) => setDocForm((current) => ({ ...current, title: event.target.value }))} />
+            <input className="inp" placeholder="tags, separadas, por virgula" value={docForm.tags} onChange={(event) => setDocForm((current) => ({ ...current, tags: event.target.value }))} />
+            <textarea className="inp min-h-[130px]" placeholder="Conteudo textual" value={docForm.contentText} onChange={(event) => setDocForm((current) => ({ ...current, contentText: event.target.value }))} />
+            <input type="file" accept=".txt,.md,.csv,.json,text/plain,text/markdown,text/csv,application/json" onChange={(event) => setDocForm((current) => ({ ...current, file: event.target.files?.[0] || null }))} className="block w-full text-sm text-muted" />
+            <button onClick={uploadDocument} disabled={uploading} className="btn btn-primary w-full gap-2"><UploadCloud size={14} />{uploading ? 'Enviando...' : 'Adicionar conhecimento'}</button>
+            <div className="space-y-2 max-h-[320px] overflow-auto">{documents.map((doc) => <div key={doc.id} className="rounded-xl border border-white/10 p-3 flex items-center justify-between gap-3"><div><p className="text-sm font-semibold">{doc.title}</p><p className="text-xs text-muted">{doc.status} · {toDateTime(doc.created_at)}</p></div>{doc.status !== 'archived' && <button className="btn btn-secondary text-xs" onClick={() => archiveDocument(doc.id)}>Arquivar</button>}</div>)}</div>
+          </div>
 
-              <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
-                {documents.length === 0 ? (
-                  <p className="text-sm text-muted">Nenhum documento ativo para este bot.</p>
-                ) : documents.map((doc) => (
-                  <div key={doc.id} className="rounded-2xl border border-white/10 bg-black/10 p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-text truncate flex items-center gap-2">
-                          <FileText size={13} className="text-[var(--primary)]" />
-                          {doc.title}
-                        </p>
-                        <p className="text-xs text-muted mt-1">
-                          {doc.tags?.length ? doc.tags.join(', ') : 'Sem tags'} - {toDateTime(doc.created_at)}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => archiveDocument(doc.id)}
-                        className="btn btn-sm btn-secondary"
-                      >
-                        Arquivar
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-card border border-white/10 rounded-3xl p-5 space-y-4">
-              <p className="text-xs font-black uppercase tracking-[0.2em] text-muted">Playground de teste</p>
-              <div className="space-y-3">
-                <input
-                  className="inp"
-                  placeholder="Telefone de sessao (teste)"
-                  value={playgroundPhone}
-                  onChange={(event) => setPlaygroundPhone(event.target.value)}
-                />
-                <textarea
-                  className="inp min-h-[140px] resize-y"
-                  placeholder="Digite a mensagem que voce quer testar neste bot"
-                  value={playgroundMessage}
-                  onChange={(event) => setPlaygroundMessage(event.target.value)}
-                />
-                <button
-                  onClick={runPlaygroundTest}
-                  disabled={testing || !playgroundMessage.trim() || coreSchemaMissing}
-                  className="btn btn-primary w-full gap-2"
-                >
-                  {testing ? <RefreshCw size={14} className="animate-spin" /> : <Send size={14} />}
-                  Executar teste
-                </button>
-              </div>
-
-              <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
-                {playgroundRuns.length === 0 ? (
-                  <p className="text-sm text-muted">Sem testes registrados para este bot.</p>
-                ) : playgroundRuns.map((run) => (
-                  <div key={run.id} className="rounded-2xl border border-white/10 bg-black/10 p-3">
-                    <p className="text-[11px] uppercase tracking-[0.12em] text-muted flex items-center gap-2">
-                      <FlaskConical size={12} />
-                      {toDateTime(run.created_at)} - action: {run.action || 'none'}
-                    </p>
-                    <p className="text-sm text-text mt-2"><span className="text-muted">Input:</span> {run.input_message}</p>
-                    <p className="text-sm text-emerald-300 mt-1"><span className="text-muted">Reply:</span> {run.reply || '-'}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        </>
-      )}
+          <div className="bg-card border border-white/10 rounded-3xl p-5 space-y-4">
+            <p className="text-xs font-black uppercase tracking-wider text-muted flex items-center gap-2"><Sparkles size={14} />Playground Edge</p>
+            <input className="inp" value={playgroundPhone} onChange={(event) => setPlaygroundPhone(event.target.value)} placeholder="Telefone de teste" />
+            <textarea className="inp min-h-[130px]" value={playgroundMessage} onChange={(event) => setPlaygroundMessage(event.target.value)} placeholder="Mensagem para testar o bot" />
+            <button onClick={runPlayground} disabled={testing || !playgroundMessage.trim()} className="btn btn-primary w-full gap-2"><Send size={14} />{testing ? 'Executando...' : 'Testar no Edge'}</button>
+            <div className="space-y-2 max-h-[380px] overflow-auto">{runs.map((run) => <div key={run.id} className="rounded-xl border border-white/10 p-3 space-y-2"><p className="text-xs text-muted">{toDateTime(run.created_at)} · {run.action || 'preview'}</p><p className="text-sm"><strong>Entrada:</strong> {run.input_message}</p><p className="text-sm whitespace-pre-wrap"><strong>Resposta:</strong> {run.reply || '-'}</p></div>)}</div>
+          </div>
+        </section>
+      </>}
     </div>
   )
 }
