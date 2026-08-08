@@ -45,5 +45,30 @@
     "calculate_petshop_operational_commissions",
     "calculate_petshop_commissions_v2",
     "calculate_commissions"
+  ],
+  "deferredTables": [
+    "fiscal_policy_versions",
+    "petshop_growth_exec_daily",
+    "petshop_growth_portal_access",
+    "platform_plan_catalog",
+    "profiles",
+    "quick_replies",
+    "system_update_logs",
+    "tenant_governance_alerts",
+    "tenant_onboarding",
+    "tenant_subscriptions",
+    "tenants"
+  ],
+  "deferredRpcs": [
+    "book_petshop_appointment_transaction",
+    "checkout_petshop_appointment_transaction",
+    "checkout_petshop_subscription_transaction",
+    "create_petshop_booking_request",
+    "get_petshop_portal_snapshot",
+    "queue_fiscal_document_for_sale",
+    "reconcile_petshop_completed_appointment_package",
+    "sync_all_tenant_fiscal_profiles",
+    "update_petshop_appointment_transaction",
+    "yui_refresh_governance_alerts"
   ]
 }
