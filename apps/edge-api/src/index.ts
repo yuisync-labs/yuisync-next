@@ -1,6 +1,7 @@
 import app from './app'
 import { handleAppApiRequest } from './appApi'
 import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
+import { handleCompatApiRequest } from './compatApi'
 import { handleFinalReadiness } from './finalReadiness'
 import { handleAuthMigrationRequest } from './migration/authMigrationHttp'
 import { handleClientsPetsMigrationRequest } from './migration/clientsPetsMigrationHttp'
@@ -28,6 +29,9 @@ export default {
 
     const authResponse = await handleBetterAuthRequest(request, bindings)
     if (authResponse) return authResponse
+
+    const compatResponse = await handleCompatApiRequest(request, bindings)
+    if (compatResponse) return compatResponse
 
     const appApiResponse = await handleAppApiRequest(request, bindings)
     if (appApiResponse) return appApiResponse
