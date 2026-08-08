@@ -44,6 +44,7 @@ jobs:
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add package-lock.json
             git commit -m 'Refresh finalization lockfile'
+            git pull --rebase origin ${{ github.event.pull_request.head.ref }}
             git push origin HEAD:${{ github.event.pull_request.head.ref }}
           fi
 
@@ -100,6 +101,7 @@ jobs:
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add apps/edge-api/wrangler.jsonc apps/edge-api/worker-configuration.d.ts
             git commit -m 'Bootstrap staging Better Auth database'
+            git pull --rebase origin ${{ github.event.pull_request.head.ref }}
             git push origin HEAD:${{ github.event.pull_request.head.ref }}
           fi
       - name: Verify generated config and build
