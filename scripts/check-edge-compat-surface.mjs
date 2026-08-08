@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { extname, relative } from 'node:path'
 
 const ROOT = new URL('../src/', import.meta.url)
-const COMPAT_API = new URL('../apps/edge-api/src/compatApi.ts', import.meta.url)
+const MANIFEST = new URL('../apps/edge-api/src/compatSurface.json', import.meta.url)
 const EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx'])
 
 async function walk(url, output = []) {
@@ -22,17 +22,10 @@ function literalCalls(content, method) {
   return values
 }
 
-const compatSource = await readFile(COMPAT_API, 'utf8')
-const tableStart = compatSource.indexOf('const TABLES:')
-const tableEnd = compatSource.indexOf('\nfunction json(', tableStart)
-if (tableStart < 0 || tableEnd < 0) throw new Error('Could not locate compatibility table registry.')
-const tableRegistry = compatSource.slice(tableStart, tableEnd)
-
-const rpcMarker = "const allowed = new Set(["
-const rpcStart = compatSource.indexOf(rpcMarker)
-const rpcEnd = compatSource.indexOf('])', rpcStart)
-if (rpcStart < 0 || rpcEnd < 0) throw new Error('Could not locate compatibility RPC registry.')
-const rpcRegistry = compatSource.slice(rpcStart, rpcEnd + 2)
+const manifest = JSON.parse(await readFile(MANIFEST, 'utf8'))
+const supportedTables = new Set(Array.isArray(manifest.tables) ? manifest.tables : [])
+const supportedRpcs = new Set(Array.isArray(manifest.rpcs) ? manifest.rpcs : [])
+if (!supportedTables.size) throw new Error('Compatibility table manifest is empty.')
 
 const tables = new Map()
 const rpcs = new Map()
@@ -51,20 +44,20 @@ for (const file of await walk(ROOT)) {
   }
 }
 
-const unsupportedTables = [...tables.keys()].filter((name) => !new RegExp(`\\n\\s*${name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}\\s*:`).test(tableRegistry)).sort()
-const unsupportedRpcs = [...rpcs.keys()].filter((name) => !rpcRegistry.includes(`'${name}'`) && !rpcRegistry.includes(`\"${name}\"`)).sort()
+const unsupportedTables = [...tables.keys()].filter((name) => !supportedTables.has(name)).sort()
+const unsupportedRpcs = [...rpcs.keys()].filter((name) => !supportedRpcs.has(name)).sort()
 
 console.log(`Frontend compatibility surface: ${tables.size} tables, ${rpcs.size} RPCs.`)
 if (unsupportedTables.length || unsupportedRpcs.length) {
   if (unsupportedTables.length) {
-    console.error('Frontend tables missing from the Edge compatibility registry:')
+    console.error('Frontend tables missing from the Edge compatibility manifest:')
     for (const name of unsupportedTables) console.error(`- ${name}: ${(tables.get(name) || []).join(', ')}`)
   }
   if (unsupportedRpcs.length) {
-    console.error('Frontend RPCs missing from the Edge compatibility registry:')
+    console.error('Frontend RPCs missing from the Edge compatibility manifest:')
     for (const name of unsupportedRpcs) console.error(`- ${name}: ${(rpcs.get(name) || []).join(', ')}`)
   }
   process.exit(2)
 }
 
-console.log('Every literal frontend data call is covered by the Edge compatibility registry.')
+console.log('Every literal frontend data call is covered by the Edge compatibility manifest.')
