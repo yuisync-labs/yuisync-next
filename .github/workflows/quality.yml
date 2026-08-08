@@ -59,6 +59,7 @@ jobs:
           package-manager-cache: false
       - run: npm ci
       - run: npm run check:no-runtime-supabase
+      - run: npm run check:edge-compat-surface
       - run: npm run typecheck
       - run: npm run typecheck:contracts
       - run: npm run check:contract-boundaries
