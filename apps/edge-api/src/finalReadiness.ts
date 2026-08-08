@@ -2,6 +2,7 @@ import { getAuthDatabaseReadiness } from './auth/authDatabaseFeature'
 import { CoordinationDurableObject } from './coordination/coordinationDurableObject'
 import { hasCoordinationBinding, isEdgeCoordinationEnabled } from './coordination/coordinationFeature'
 import { hasD1Binding, isEdgeDatabaseEnabled } from './databaseFeature'
+import { resolveRequestId } from './requestContext'
 
 export type FinalReadinessBindings={
   APP_ENV?:string;SERVICE_NAME?:string;RELEASE_CHANNEL?:string;
@@ -23,6 +24,7 @@ async function authSchema(database:D1Database|undefined){
 
 export async function handleFinalReadiness(request:Request,bindings:FinalReadinessBindings):Promise<Response|null>{
   if(new URL(request.url).pathname!=='/ready'||request.method!=='GET')return null
+  const requestId=resolveRequestId(request.headers.get('x-request-id')??undefined)
   const dbEnabled=isEdgeDatabaseEnabled(bindings.EDGE_DATABASE_ENABLED)
   const dbBinding=hasD1Binding(bindings.DB)
   const main=await mainSchema(dbBinding?bindings.DB:undefined)
@@ -37,8 +39,8 @@ export async function handleFinalReadiness(request:Request,bindings:FinalReadine
     &&authEnabled&&authConfig==='configured'&&authCore==='ready'
     &&(!coordinationEnabled||coordination==='ready')&&migrationClosed
   return Response.json({
-    service:bindings.SERVICE_NAME,environment:bindings.APP_ENV,release_channel:bindings.RELEASE_CHANNEL,status:ready?'ready':'not_ready',
+    service:bindings.SERVICE_NAME,environment:bindings.APP_ENV,release_channel:bindings.RELEASE_CHANNEL,request_id:requestId,status:ready?'ready':'not_ready',
     checks:{database:main.status,schema_version:main.version,auth_database:authConfig==='configured'&&authCore==='ready'?'configured':authCore,
       coordination,better_auth:authEnabled?'enabled':'disabled',migration_capabilities:migrationClosed?'closed':'open'},
-  },{status:ready?200:503,headers:{'cache-control':'no-store'}})
+  },{status:ready?200:503,headers:{'cache-control':'no-store','x-request-id':requestId,'x-content-type-options':'nosniff','referrer-policy':'no-referrer'}})
 }
