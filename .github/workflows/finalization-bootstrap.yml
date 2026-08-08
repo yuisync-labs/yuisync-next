@@ -74,23 +74,53 @@ jobs:
         run: |
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
+
       - name: Provision or reuse staging AUTH_DB
         run: node scripts/bootstrap-cloudflare-auth-db.mjs
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Store Better Auth secret without logging it
+
+      - name: Provision Better Auth secret once
         shell: bash
-        run: |
-          set +x
-          BETTER_AUTH_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
-          printf '%s' "$BETTER_AUTH_SECRET" | npm exec --workspace @yuisync/edge-api -- wrangler secret put BETTER_AUTH_SECRET --env staging
-          unset BETTER_AUTH_SECRET
+        working-directory: apps/edge-api
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          set +x
+          SECRETS_JSON="$(npx wrangler secret list --env staging --format json)"
+          if node -e "const rows=JSON.parse(process.argv[1]);process.exit(rows.some((row)=>row.name==='BETTER_AUTH_SECRET')?0:1)" "$SECRETS_JSON"; then
+            echo 'BETTER_AUTH_SECRET is already configured; preserving the existing value.'
+          else
+            GENERATED_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
+            printf '%s' "$GENERATED_SECRET" | npx wrangler secret put BETTER_AUTH_SECRET --env staging
+            unset GENERATED_SECRET
+            echo 'BETTER_AUTH_SECRET was provisioned for staging.'
+          fi
+          unset SECRETS_JSON
+
+      - name: Sync optional OpenAI staging secret
+        shell: bash
+        working-directory: apps/edge-api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          set +x
+          if [ -n "${OPENAI_API_KEY:-}" ]; then
+            printf '%s' "$OPENAI_API_KEY" | npx wrangler secret put OPENAI_API_KEY --env staging
+            echo 'OPENAI_API_KEY is configured for the staging Worker.'
+          else
+            echo 'OPENAI_API_KEY is not configured in the cloudflare-staging environment; AI Lab provider smoke tests will remain gated.'
+          fi
+
       - name: Generate Worker binding types
         run: npm run edge:types
+
       - name: Commit generated AUTH_DB binding
         shell: bash
         run: |
@@ -104,6 +134,7 @@ jobs:
             git pull --rebase origin ${{ github.event.pull_request.head.ref }}
             git push origin HEAD:${{ github.event.pull_request.head.ref }}
           fi
+
       - name: Verify generated config and build
         run: |
           npm run build
