@@ -14,7 +14,12 @@
     "directory": "../../dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/internal/*", "/health", "/ready"]
+    "run_worker_first": [
+      "/api/*",
+      "/internal/*",
+      "/health",
+      "/ready"
+    ]
   },
   "vars": {
     "APP_ENV": "local",
@@ -65,7 +70,7 @@
         "EDGE_DATABASE_ENABLED": "true",
         "EDGE_ASYNC_ENABLED": "true",
         "EDGE_COORDINATION_ENABLED": "true",
-        "EDGE_BETTER_AUTH_ENABLED": "false",
+        "EDGE_BETTER_AUTH_ENABLED": "true",
         "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
         "EDGE_AUTH_MIGRATION_ENABLED": "false"
       },
@@ -76,6 +81,13 @@
           "database_id": "4abe6b77-3042-4960-88ef-1fdb43d488d1",
           "migrations_dir": "migrations",
           "migrations_table": "d1_migrations"
+        },
+        {
+          "binding": "AUTH_DB",
+          "database_name": "yuisync-auth-staging",
+          "database_id": "9157ec55-a04d-449e-a92c-710f8e39cd51",
+          "migrations_dir": "auth-migrations",
+          "migrations_table": "auth_d1_migrations"
         }
       ],
       "queues": {
