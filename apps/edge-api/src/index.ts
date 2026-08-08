@@ -1,4 +1,5 @@
 import app from './app'
+import { handleAiLabApiRequest } from './aiLabApi'
 import { handleAppApiRequest } from './appApi'
 import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
 import { handleCompatApiRequest } from './compatApi'
@@ -29,6 +30,9 @@ export default {
 
     const authResponse = await handleBetterAuthRequest(request, bindings)
     if (authResponse) return authResponse
+
+    const aiLabResponse = await handleAiLabApiRequest(request, bindings)
+    if (aiLabResponse) return aiLabResponse
 
     const compatResponse = await handleCompatApiRequest(request, bindings)
     if (compatResponse) return compatResponse
