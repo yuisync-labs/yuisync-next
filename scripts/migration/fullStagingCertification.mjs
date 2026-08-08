@@ -1,7 +1,7 @@
 export const REQUIRED_CERTIFICATION_CHECKS = Object.freeze([
-  'schema_v19','tenant_isolation','clients_pets','catalog_services','inventory','operational_config',
+  'schema_v20','tenant_isolation','clients_pets','catalog_services','inventory','operational_config',
   'appointments','motodog','sales_checkout','payments_splits','chat','operation_state','fiscal_outbox','auth_db',
-  'operational_reconciliation','auth_identity_transition','auth_signin','frontend_no_supabase','cloudflare_spa',
+  'operational_reconciliation','ai_lab_migration','ai_lab_reconciliation','auth_identity_transition','auth_signin','frontend_no_supabase','cloudflare_spa',
   'transient_state_drained','idempotency_rerun','rollback_bookmark','queue_dlq','readiness',
 ])
 
@@ -19,7 +19,7 @@ export function certifyStaging({ environment, checks, runId, certifiedAt }) {
     if (!check || check.status !== 'pass') throw new StagingCertificationError(`CHECK_FAILED:${name}`)
   }
   return Object.freeze({
-    schema: 'yuisync-staging-certification/v3', environment: 'staging', run_id: runId,
+    schema: 'yuisync-staging-certification/v4', environment: 'staging', run_id: runId,
     status: 'certified', certified_at: certifiedAt, checks: REQUIRED_CERTIFICATION_CHECKS,
   })
 }
