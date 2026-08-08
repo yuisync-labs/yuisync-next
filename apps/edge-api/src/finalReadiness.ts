@@ -1,11 +1,12 @@
 import { getAuthDatabaseReadiness } from './auth/authDatabaseFeature'
+import { CoordinationDurableObject } from './coordination/coordinationDurableObject'
 import { hasCoordinationBinding, isEdgeCoordinationEnabled } from './coordination/coordinationFeature'
 import { hasD1Binding, isEdgeDatabaseEnabled } from './databaseFeature'
 
 export type FinalReadinessBindings={
   APP_ENV?:string;SERVICE_NAME?:string;RELEASE_CHANNEL?:string;
   EDGE_DATABASE_ENABLED?:string;DB?:D1Database;
-  EDGE_COORDINATION_ENABLED?:string;COORDINATOR?:DurableObjectNamespace;
+  EDGE_COORDINATION_ENABLED?:string;COORDINATOR?:DurableObjectNamespace<CoordinationDurableObject>;
   EDGE_BETTER_AUTH_ENABLED?:string;AUTH_DB?:D1Database;BETTER_AUTH_SECRET?:string;
   EDGE_OPERATIONAL_MIGRATION_ENABLED?:string;EDGE_AUTH_MIGRATION_ENABLED?:string;
 }
