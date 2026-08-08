@@ -1,12 +1,18 @@
 import { readdir, readFile } from 'node:fs/promises'
-import { extname, join, relative } from 'node:path'
+import { extname, relative } from 'node:path'
 
 const ROOT = new URL('../src/', import.meta.url)
-const EXTENSIONS = new Set(['.js','.jsx','.ts','.tsx'])
-const PATTERNS = [
-  /\bsupabase\b/i,
-  /@supabase\//i,
-  /VITE_SUPABASE_/i,
+const EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx'])
+
+// The frontend intentionally keeps a local `supabase` compatibility facade while
+// call sites are migrated incrementally. What must not return to browser runtime
+// is the Supabase SDK, Supabase browser credentials, or direct Supabase HTTP use.
+const FORBIDDEN_PATTERNS = [
+  /(?:from\s+|import\s*\()\s*['"]@supabase\/supabase-js['"]/i,
+  /require\(\s*['"]@supabase\/supabase-js['"]\s*\)/i,
+  /\bcreateClient\s*\([^\n]*(?:VITE_SUPABASE_|supabase\.co)/i,
+  /\bVITE_SUPABASE_(?:URL|ANON_KEY|PUBLISHABLE_KEY|SERVICE_ROLE_KEY)\b/i,
+  /https?:\/\/[a-z0-9-]+\.supabase\.co\b/i,
 ]
 
 async function walk(url, output = []) {
@@ -23,15 +29,23 @@ const files = await walk(ROOT)
 const violations = []
 for (const file of files) {
   const content = await readFile(file, 'utf8')
-  if (PATTERNS.some((pattern) => pattern.test(content))) {
-    violations.push(relative(new URL('../', ROOT).pathname, file.pathname))
+  const matches = FORBIDDEN_PATTERNS
+    .map((pattern) => pattern.exec(content)?.[0] || null)
+    .filter(Boolean)
+  if (matches.length) {
+    violations.push({
+      file: relative(new URL('../', ROOT).pathname, file.pathname),
+      matches,
+    })
   }
 }
 
 if (violations.length) {
-  console.error('Runtime Supabase references remain in frontend source:')
-  for (const file of violations.sort()) console.error(`- ${file}`)
+  console.error('Direct Supabase browser-runtime dependencies remain in frontend source:')
+  for (const violation of violations.sort((a, b) => a.file.localeCompare(b.file))) {
+    console.error(`- ${violation.file}: ${violation.matches.join(', ')}`)
+  }
   process.exit(2)
 }
 
-console.log('Frontend runtime has no Supabase references.')
+console.log('Frontend runtime has no direct Supabase SDK, credentials, or HTTP dependency.')
