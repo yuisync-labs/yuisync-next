@@ -25,6 +25,10 @@ async function walk(url, output = []) {
   return output
 }
 
+function annotationValue(value) {
+  return String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')
+}
+
 const files = await walk(ROOT)
 const violations = []
 for (const file of files) {
@@ -43,7 +47,11 @@ for (const file of files) {
 if (violations.length) {
   console.error('Direct Supabase browser-runtime dependencies remain in frontend source:')
   for (const violation of violations.sort((a, b) => a.file.localeCompare(b.file))) {
+    const message = `Forbidden browser Supabase dependency: ${violation.matches.join(', ')}`
     console.error(`- ${violation.file}: ${violation.matches.join(', ')}`)
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      console.error(`::error file=${annotationValue(violation.file)},title=Direct Supabase runtime dependency::${annotationValue(message)}`)
+    }
   }
   process.exit(2)
 }
