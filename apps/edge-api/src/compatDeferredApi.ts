@@ -455,7 +455,9 @@ function prepareRow(
   if (table === 'platform_plan_catalog') {
     out.status = boolInt(input.active ?? true) ? 'active' : 'inactive'
     out.price_cents = Math.round(Number(input.monthly_price || 0) * 100)
-    out.entitlements_json = jsonString(input.features, [])
+    // 0017 carries a legacy truthiness CHECK(entitlements_json). Keep the
+    // compatibility marker truthy; browser-facing capabilities live in features.
+    out.entitlements_json = '1'
   }
 
   if (table === 'tenant_subscriptions') {
