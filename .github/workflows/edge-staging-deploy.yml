@@ -51,6 +51,10 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID"
 
       - run: npm ci
+
+      - name: Require complete Edge frontend compatibility
+        run: npm run check:edge-compat-surface -- --strict
+
       - run: npm run edge:check
 
       - name: Apply main D1 staging migrations
