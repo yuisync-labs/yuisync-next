@@ -128,6 +128,14 @@ async function listQueues() {
   return queues
 }
 
+function safeDiagnostic(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .replace(/bearer\s+[a-z0-9._~+/-]+/gi, 'Bearer [redacted]')
+    .replace(/better-auth\.[^=;\s]+=[^;\s]+/gi, 'better-auth.[redacted]=[redacted]')
+    .slice(0, 700)
+}
+
 async function record(name, probe) {
   const started = Date.now()
   try {
@@ -167,7 +175,10 @@ async function authProbe() {
         body: JSON.stringify({ email: PROBE_EMAIL, password: PROBE_PASSWORD, rememberMe: false }),
         redirect: 'manual',
       })
-      if (!signIn.ok) throw new Error(`AUTH_SIGNIN_HTTP_${signIn.status}`)
+      if (!signIn.ok) {
+        const diagnostic = safeDiagnostic(await signIn.text().catch(() => ''))
+        throw new Error(`AUTH_SIGNIN_HTTP_${signIn.status}${diagnostic ? `:${diagnostic}` : ''}`)
+      }
       const setCookies = typeof signIn.headers.getSetCookie === 'function'
         ? signIn.headers.getSetCookie()
         : [signIn.headers.get('set-cookie')].filter(Boolean)
@@ -175,7 +186,10 @@ async function authProbe() {
       if (!cookie) throw new Error('AUTH_SESSION_COOKIE_MISSING')
 
       const session = await fetch(`${STAGING_URL}/api/auth/get-session`, { headers: { cookie, origin: STAGING_URL } })
-      if (!session.ok) throw new Error(`AUTH_SESSION_HTTP_${session.status}`)
+      if (!session.ok) {
+        const diagnostic = safeDiagnostic(await session.text().catch(() => ''))
+        throw new Error(`AUTH_SESSION_HTTP_${session.status}${diagnostic ? `:${diagnostic}` : ''}`)
+      }
       const sessionBody = await session.json()
       if (String(sessionBody?.user?.id || '') !== PROBE_USER) throw new Error('AUTH_SESSION_USER_MISMATCH')
 
@@ -333,6 +347,8 @@ async function main() {
   await mkdir(outDir, { recursive: true })
   await writeFile(resolve(outDir, `${RUN_ID}.json`), `${JSON.stringify(report, null, 2)}\n`, 'utf8')
 
+  const failed = checks.filter((item) => item.status !== 'pass')
+  if (failed.length) console.error(`STAGING_CERTIFICATION_FAILURES=${JSON.stringify(failed)}`)
   const certification = certifyStaging({ environment: 'staging', checks, runId: RUN_ID, certifiedAt: new Date().toISOString() })
   await writeFile(resolve(outDir, `${RUN_ID}.certified.json`), `${JSON.stringify(certification, null, 2)}\n`, 'utf8')
   process.stdout.write(`${JSON.stringify({ ...certification, passed: checks.filter((item) => item.status === 'pass').length, required: REQUIRED_CERTIFICATION_CHECKS.length })}\n`)
