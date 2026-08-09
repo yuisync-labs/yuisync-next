@@ -100,6 +100,34 @@ function requireObjects(names, database = 'DB') {
   return names
 }
 
+async function cloudflareApi(path, options = {}) {
+  const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CF_ACCOUNT)}${path}`, {
+    ...options,
+    headers: {
+      authorization: `Bearer ${CF_TOKEN}`,
+      ...(options.body ? { 'content-type': 'application/json' } : {}),
+      ...(options.headers || {}),
+    },
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok || body?.success !== true) {
+    const code = body?.errors?.[0]?.code || response.status
+    throw new Error(`CLOUDFLARE_API_${code}`)
+  }
+  return body
+}
+
+async function listQueues() {
+  const queues = []
+  for (let page = 1; page <= 20; page += 1) {
+    const body = await cloudflareApi(`/queues?page=${page}&per_page=50`)
+    if (Array.isArray(body.result)) queues.push(...body.result)
+    const totalPages = Number(body?.result_info?.total_pages || 1)
+    if (page >= totalPages) break
+  }
+  return queues
+}
+
 async function record(name, probe) {
   const started = Date.now()
   try {
@@ -171,21 +199,13 @@ async function authProbe() {
   return authProbePromise
 }
 
-function walkObjects(value, output = []) {
-  if (Array.isArray(value)) for (const item of value) walkObjects(item, output)
-  else if (value && typeof value === 'object') { output.push(value); for (const item of Object.values(value)) walkObjects(item, output) }
-  return output
-}
-
 async function queueProbe() {
   if (queueProbePromise) return queueProbePromise
   queueProbePromise = (async () => {
     if (!CF_TOKEN || !CF_ACCOUNT) throw new Error('CLOUDFLARE_CREDENTIALS_MISSING')
-    const queueJson = parseJson(wrangler(['queues', 'list', '--json']), 'QUEUES')
-    const objects = walkObjects(queueJson)
-    const findQueue = (name) => objects.find((item) => [item.queue_name, item.name].some((value) => String(value || '') === name))
-    const queue = findQueue(QUEUE_NAME)
-    const dlq = findQueue(DLQ_NAME)
+    const queues = await listQueues()
+    const queue = queues.find((item) => String(item?.queue_name || item?.name || '') === QUEUE_NAME)
+    const dlq = queues.find((item) => String(item?.queue_name || item?.name || '') === DLQ_NAME)
     if (!queue) throw new Error(`QUEUE_MISSING:${QUEUE_NAME}`)
     if (!dlq) throw new Error(`QUEUE_MISSING:${DLQ_NAME}`)
     const queueId = String(queue.queue_id || queue.id || '')
@@ -201,15 +221,11 @@ async function queueProbe() {
       occurred_at: new Date().toISOString(), correlation_id: randomUUID(), causation_id: null,
       idempotency_key: idempotencyKey, payload: { probe_id: RUN_ID }, metadata: { source: 'staging-certification' },
     }
-    const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CF_ACCOUNT)}/queues/${encodeURIComponent(queueId)}/messages`
     const publish = async () => {
-      const response = await fetch(endpoint, {
+      await cloudflareApi(`/queues/${encodeURIComponent(queueId)}/messages`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${CF_TOKEN}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ body: event }),
+        body: JSON.stringify({ body: event, content_type: 'json' }),
       })
-      const body = await response.json().catch(() => ({}))
-      if (!response.ok || body?.success !== true) throw new Error(`QUEUE_PUBLISH_HTTP_${response.status}`)
     }
     const readState = () => d1Rows('DB', `SELECT status,attempt_count,event_id FROM _yuisync_event_processing WHERE tenant_id=${sql(PROBE_TENANT_A)} AND idempotency_key=${sql(idempotencyKey)} LIMIT 1`)[0]
     const waitSucceeded = async () => {
