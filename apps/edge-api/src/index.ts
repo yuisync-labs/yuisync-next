@@ -2,6 +2,7 @@ import app from './app'
 import { handleAiLabApiRequest } from './aiLabApi'
 import { handleAppApiRequest } from './appApi'
 import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
+import { handleCheckoutApiRequest } from './checkoutApi'
 import { handleCompatApiRequest } from './compatApi'
 import { handleFinalReadiness } from './finalReadiness'
 import { handleAiLabMigrationRequest } from './migration/aiLabMigrationHttp'
@@ -37,6 +38,9 @@ export default {
 
     const aiLabResponse = await handleAiLabApiRequest(request, bindings)
     if (aiLabResponse) return aiLabResponse
+
+    const checkoutResponse = await handleCheckoutApiRequest(request, bindings)
+    if (checkoutResponse) return checkoutResponse
 
     const compatResponse = await handleCompatApiRequest(request, bindings)
     if (compatResponse) return compatResponse
