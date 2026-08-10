@@ -2,7 +2,8 @@ import { env } from 'cloudflare:workers'
 import { hash } from 'bcryptjs'
 import { describe, expect, it } from 'vitest'
 
-import { handleBetterAuthRequest } from '../src/auth/betterAuthRuntime'
+import { handleAppApiRequest } from '../src/appApi'
+import { getBetterAuthSession, handleBetterAuthRequest } from '../src/auth/betterAuthRuntime'
 
 const AUTH_SECRET = 'better-auth-d1-test-secret-123456789012345678901234'
 
@@ -14,6 +15,16 @@ function bindings() {
     BETTER_AUTH_SECRET: AUTH_SECRET,
     AUTH_DB: (env as EdgeEnv & { AUTH_DB: D1Database }).AUTH_DB,
   }
+}
+
+function fakeAppSession(userId: string) {
+  return {
+    user: {
+      id: userId,
+      name: 'Directory Test User',
+      email: `${userId}@test.invalid`,
+    },
+  } as unknown as NonNullable<Awaited<ReturnType<typeof getBetterAuthSession>>>
 }
 
 describe('Better Auth native D1 runtime', () => {
@@ -59,6 +70,102 @@ describe('Better Auth native D1 runtime', () => {
       await database.prepare('DELETE FROM session WHERE userId=?1').bind(userId).run()
       await database.prepare('DELETE FROM account WHERE userId=?1').bind(userId).run()
       await database.prepare('DELETE FROM user WHERE id=?1').bind(userId).run()
+    }
+  })
+
+  it('lists only the requested tenant directory for authorized manager and staff sessions', async () => {
+    const database = (env as EdgeEnv & { DB: D1Database }).DB
+    const suffix = crypto.randomUUID()
+    const tenantId = `tenant-directory-${suffix}`
+    const otherTenantId = `tenant-directory-other-${suffix}`
+    const managerId = `principal-manager-${suffix}`
+    const memberId = `principal-member-${suffix}`
+    const adminId = `principal-admin-${suffix}`
+    const inactiveId = `principal-inactive-${suffix}`
+    const outsiderId = `principal-outsider-${suffix}`
+    const managerSubject = `better-manager-${suffix}`
+    const memberSubject = `better-member-${suffix}`
+    const now = Date.now()
+    const allPrincipalIds = [managerId, memberId, adminId, inactiveId, outsiderId]
+
+    await database.batch([
+      database.prepare("INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(?1,?2,'Directory Tenant','active',?3,?3)")
+        .bind(tenantId, `directory-${suffix}`, now),
+      database.prepare("INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(?1,?2,'Other Directory Tenant','active',?3,?3)")
+        .bind(otherTenantId, `directory-other-${suffix}`, now),
+      database.prepare("INSERT INTO identity_principals(id,provider,subject,display_name,email,status,created_at_ms,updated_at_ms) VALUES(?1,'better-auth',?2,'Manager Test',?3,'active',?4,?4)")
+        .bind(managerId, managerSubject, `manager-${suffix}@test.invalid`, now),
+      database.prepare("INSERT INTO identity_principals(id,provider,subject,display_name,email,status,created_at_ms,updated_at_ms) VALUES(?1,'better-auth',?2,'Member Test',?3,'active',?4,?4)")
+        .bind(memberId, memberSubject, `member-${suffix}@test.invalid`, now),
+      database.prepare("INSERT INTO identity_principals(id,provider,subject,display_name,email,status,created_at_ms,updated_at_ms) VALUES(?1,'better-auth',?2,'Admin Test',?3,'active',?4,?4)")
+        .bind(adminId, `better-admin-${suffix}`, `admin-${suffix}@test.invalid`, now),
+      database.prepare("INSERT INTO identity_principals(id,provider,subject,display_name,email,status,created_at_ms,updated_at_ms) VALUES(?1,'better-auth',?2,'Inactive Test',?3,'active',?4,?4)")
+        .bind(inactiveId, `better-inactive-${suffix}`, `inactive-${suffix}@test.invalid`, now),
+      database.prepare("INSERT INTO identity_principals(id,provider,subject,display_name,email,status,created_at_ms,updated_at_ms) VALUES(?1,'better-auth',?2,'Outsider Test',?3,'active',?4,?4)")
+        .bind(outsiderId, `better-outsider-${suffix}`, `outsider-${suffix}@test.invalid`, now),
+      database.prepare("INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'active',?3,?3,'manager',?4)")
+        .bind(tenantId, managerId, now, JSON.stringify({ petshop: { role: 'admin_pet' } })),
+      database.prepare("INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'active',?3,?3,'staff',?4)")
+        .bind(tenantId, memberId, now, JSON.stringify({ petshop: { role: 'funcionario_pet' } })),
+      database.prepare("INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'active',?3,?3,'admin',?4)")
+        .bind(tenantId, adminId, now, JSON.stringify({ petshop: { role: 'admin_pet' } })),
+      database.prepare("INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'inactive',?3,?3,'staff',?4)")
+        .bind(tenantId, inactiveId, now, JSON.stringify({ petshop: { role: 'funcionario_pet' } })),
+      database.prepare("INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'active',?3,?3,'staff',?4)")
+        .bind(otherTenantId, outsiderId, now, JSON.stringify({ petshop: { role: 'funcionario_pet' } })),
+    ])
+
+    const appBindings = { ...(env as EdgeEnv), DB: database }
+
+    try {
+      for (const subject of [managerSubject, memberSubject]) {
+        const response = await handleAppApiRequest(
+          new Request(`https://edge.test/api/admin/users?module_id=petshop&tenant_id=${encodeURIComponent(tenantId)}`),
+          appBindings,
+          { getSession: async () => fakeAppSession(subject) },
+        )
+        expect(response).not.toBeNull()
+        if (!response) continue
+        expect(response.status).toBe(200)
+
+        const body = await response.json<{ profiles: Array<Record<string, unknown>> }>()
+        expect(body.profiles).toHaveLength(4)
+        expect(body.profiles.some((profile) => profile.id === outsiderId)).toBe(false)
+        expect(body.profiles.find((profile) => profile.id === adminId)).toEqual(expect.objectContaining({
+          role: 'admin',
+          staff_type: 'gerente',
+          active: true,
+        }))
+        expect(body.profiles.find((profile) => profile.id === managerId)).toEqual(expect.objectContaining({
+          role: 'employee',
+          staff_type: 'gerente',
+          active: true,
+        }))
+        expect(body.profiles.find((profile) => profile.id === memberId)).toEqual(expect.objectContaining({
+          role: 'employee',
+          staff_type: 'funcionario',
+          active: true,
+        }))
+        expect(body.profiles.find((profile) => profile.id === inactiveId)).toEqual(expect.objectContaining({ active: false }))
+        expect(Object.keys(body.profiles[0] || {}).sort()).toEqual(['active', 'email', 'full_name', 'id', 'role', 'staff_type'].sort())
+        expect(JSON.stringify(body)).not.toContain('module_permissions_json')
+        expect(JSON.stringify(body)).not.toContain(managerSubject)
+        expect(JSON.stringify(body)).not.toContain(memberSubject)
+      }
+
+      const crossTenant = await handleAppApiRequest(
+        new Request(`https://edge.test/api/admin/users?module_id=petshop&tenant_id=${encodeURIComponent(otherTenantId)}`),
+        appBindings,
+        { getSession: async () => fakeAppSession(managerSubject) },
+      )
+      expect(crossTenant).not.toBeNull()
+      expect(crossTenant?.status).toBe(403)
+    } finally {
+      await database.prepare('DELETE FROM tenant_memberships WHERE tenant_id IN (?1,?2)').bind(tenantId, otherTenantId).run()
+      for (const principalId of allPrincipalIds) {
+        await database.prepare('DELETE FROM identity_principals WHERE id=?1').bind(principalId).run()
+      }
+      await database.prepare('DELETE FROM tenants WHERE id IN (?1,?2)').bind(tenantId, otherTenantId).run()
     }
   })
 })
