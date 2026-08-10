@@ -21,7 +21,11 @@ export async function handleCompatApiRequest(
   request: Request,
   env: CompatRuntimeBindings,
 ): Promise<Response | null> {
-  const deferredResponse = await handleDeferredCompatApiRequest(request, env)
+  // Deferred compat probes the generic /api/compat/query and /rpc endpoints and
+  // may parse the body before deciding the requested table/RPC is not one of
+  // its own. Keep the original Request body untouched for the remaining
+  // fallbacks, especially the base compat runtime.
+  const deferredResponse = await handleDeferredCompatApiRequest(request.clone(), env)
   if (deferredResponse) return deferredResponse
   const subscriptionResponse = await handleSubscriptionCompatRpcRequest(request, env)
   if (subscriptionResponse) return subscriptionResponse
