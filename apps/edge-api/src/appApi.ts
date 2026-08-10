@@ -82,20 +82,23 @@ function modulePermissionsFor(row: MembershipRow): Record<string, ModulePermissi
     const parsed = JSON.parse(row.module_permissions_json || '{}')
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
 
-    const entries = Object.entries(parsed).flatMap(([rawModuleId, rawPermission]) => {
+    const permissions: Record<string, ModulePermission> = {}
+    for (const [rawModuleId, rawPermission] of Object.entries(parsed)) {
       const moduleId = validModule(rawModuleId)
-      if (!moduleId) return []
-      if (rawPermission === true) return [[moduleId, true] as const]
+      if (!moduleId) continue
+      if (rawPermission === true) {
+        permissions[moduleId] = true
+        continue
+      }
       if (typeof rawPermission === 'string' && rawPermission.trim()) {
-        return [[moduleId, rawPermission.trim()] as const]
+        permissions[moduleId] = rawPermission.trim()
+        continue
       }
       if (rawPermission && typeof rawPermission === 'object' && !Array.isArray(rawPermission)) {
-        return [[moduleId, rawPermission as Record<string, unknown>] as const]
+        permissions[moduleId] = rawPermission as Record<string, unknown>
       }
-      return []
-    })
-
-    return Object.fromEntries(entries)
+    }
+    return permissions
   } catch {
     return {}
   }
