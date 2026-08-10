@@ -41,6 +41,23 @@ function modulesForTenant(tenant) {
   return filtered.length ? [...new Set(filtered)] : ['petshop']
 }
 
+function modulePermissionForTenant(tenant, moduleId) {
+  const explicit = tenant?.module_permissions?.[moduleId]
+  if (typeof explicit === 'string' && explicit.trim()) return explicit.trim()
+  if (explicit && typeof explicit === 'object') {
+    const role = String(explicit.role || explicit.id || '').trim()
+    if (role) return role
+  }
+
+  if (moduleId === 'petshop') {
+    return ['owner', 'admin'].includes(String(tenant?.role || '').toLowerCase())
+      ? 'admin_pet'
+      : 'funcionario_pet'
+  }
+
+  return explicit === true ? true : null
+}
+
 export function AuthProvider({ children }) {
   const auth = useAuth()
   const location = useLocation()
@@ -179,12 +196,15 @@ export function AuthProvider({ children }) {
 
   const effectiveProfile = useMemo(() => {
     if (!auth.profile) return null
+    const enabledModules = modulesForTenant(activeTenant)
     return {
       ...auth.profile,
       role: activeTenant?.role || 'member',
       active_tenant_id: activeTenantId,
-      allowed_modules: modulesForTenant(activeTenant),
-      module_permissions: Object.fromEntries(modulesForTenant(activeTenant).map((moduleId) => [moduleId, true])),
+      allowed_modules: enabledModules,
+      module_permissions: Object.fromEntries(
+        enabledModules.map((moduleId) => [moduleId, modulePermissionForTenant(activeTenant, moduleId)]),
+      ),
     }
   }, [auth.profile, activeTenant, activeTenantId])
 
