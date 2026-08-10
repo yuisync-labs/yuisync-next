@@ -17,10 +17,11 @@ describe('production cutover gate', () => {
     productionPreflight: { status: 'pass' },
   })
 
-  it('accepts the current v5 staging certification contract', () => {
+  it('accepts the current v5 staging certification contract and authorizes execution', () => {
     expect(REQUIRED_STAGING_CERTIFICATION_SCHEMA).toBe('yuisync-staging-certification/v5')
     const plan = buildProductionCutoverPlan(validInput())
-    expect(plan.executable).toBe(false)
+    expect(plan.executable).toBe(true)
+    expect(plan.authorization).toBe('explicit')
     expect(plan.staging_certification_schema).toBe('yuisync-staging-certification/v5')
   })
 
