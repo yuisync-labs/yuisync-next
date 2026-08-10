@@ -12,11 +12,16 @@ const ARTIFACT_DIR = resolve(REPO_ROOT, '.artifacts/staging-e2e')
 const MANIFEST_PATH = resolve(ARTIFACT_DIR, 'fixture.json')
 const E2E_BASE_URL = String(
   process.env.YUISYNC_E2E_BASE_URL ||
+  process.env.YUISYNC_PRODUCTION_WORKERS_URL ||
   process.env.YUISYNC_STAGING_URL ||
   'https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev',
 ).replace(/\/$/, '')
 const WRANGLER_ENV = String(process.env.YUISYNC_E2E_WRANGLER_ENV || 'staging').trim()
-const WRANGLER_CONFIG = String(process.env.YUISYNC_E2E_WRANGLER_CONFIG || '').trim()
+const WRANGLER_CONFIG = String(
+  process.env.YUISYNC_E2E_WRANGLER_CONFIG ||
+  process.env.YUISYNC_PRODUCTION_WRANGLER_CONFIG ||
+  '',
+).trim()
 const COMMAND = String(process.argv[2] || '').trim().toLowerCase()
 const SAFE_TABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const E2E_TENANT_LIKE = 'e2e-%-tenant'
