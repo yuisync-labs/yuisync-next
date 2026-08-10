@@ -23,12 +23,16 @@ type CheckoutPayload = {
   source: 'manual' | 'pos' | 'whatsapp' | 'import'
   fulfillmentType: 'counter' | 'delivery' | 'service'
   discountCents: number
-  transportFeeCents: number
   notes: string | null
   operationKey: string
   items: CheckoutItem[]
   rawPayments: Array<{ method: unknown; amount: unknown }>
   fallbackPaymentMethod: unknown
+}
+
+type CheckoutPolicy = {
+  maxDiscountBasisPoints: number
+  deliveryFeeCents: number
 }
 
 type ProductRow = {
@@ -72,6 +76,7 @@ const MAX_ITEMS = 100
 const MAX_PAYMENTS = 10
 const MAX_QUANTITY = 1_000_000
 const DEFAULT_MAX_DISCOUNT_BASIS_POINTS = 1000
+const DEFAULT_DELIVERY_FEE_CENTS = 800
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, {
@@ -171,9 +176,7 @@ export function normalizeCheckoutPayload(body: unknown): CheckoutPayload {
   }
 
   const discountCents = moneyToCents(input.discount)
-  const transportFeeCents = moneyToCents(input.deliveryFee ?? input.delivery_fee ?? input.transportFee ?? input.transport_fee)
   if (!Number.isFinite(discountCents) || discountCents < 0) throw new Error('INVALID_DISCOUNT')
-  if (!Number.isFinite(transportFeeCents) || transportFeeCents < 0) throw new Error('INVALID_TRANSPORT_FEE')
 
   const idempotencyKey = text(input.idempotencyKey ?? input.idempotency_key, 128)
   if (!idempotencyKey) throw new Error('IDEMPOTENCY_REQUIRED')
@@ -191,7 +194,6 @@ export function normalizeCheckoutPayload(body: unknown): CheckoutPayload {
     source: normalizeCheckoutSource(input.source),
     fulfillmentType: normalizeCheckoutFulfillment(input.fulfillmentType ?? input.fulfillment_type),
     discountCents,
-    transportFeeCents,
     notes: text(input.notes, 1000) || null,
     operationKey: `pdv:${idempotencyKey}`,
     items: [...itemsByProduct.values()],
@@ -285,24 +287,43 @@ async function resolveClientId(database: D1Database, payload: CheckoutPayload): 
   return row.id
 }
 
-async function loadMaxDiscountBasisPoints(database: D1Database, payload: CheckoutPayload): Promise<number> {
+async function loadCheckoutPolicy(database: D1Database, payload: CheckoutPayload): Promise<CheckoutPolicy> {
+  const policy: CheckoutPolicy = {
+    maxDiscountBasisPoints: DEFAULT_MAX_DISCOUNT_BASIS_POINTS,
+    deliveryFeeCents: DEFAULT_DELIVERY_FEE_CENTS,
+  }
   const row = await database.prepare(`
     SELECT data_json FROM module_settings_extensions
     WHERE tenant_id=?1 AND module_id=?2
     LIMIT 1
   `).bind(payload.tenantId, payload.moduleId).first<{ data_json: string | null }>()
 
-  if (!row?.data_json) return DEFAULT_MAX_DISCOUNT_BASIS_POINTS
+  if (!row?.data_json) return policy
   try {
     const data = object(JSON.parse(row.data_json))
     const basisPoints = Number(data.max_pdv_discount_basis_points)
-    if (Number.isFinite(basisPoints)) return Math.max(0, Math.min(10000, Math.round(basisPoints)))
-    const percent = Number(data.max_pdv_discount_percent)
-    if (Number.isFinite(percent)) return Math.max(0, Math.min(10000, Math.round(percent * 100)))
+    if (Number.isFinite(basisPoints)) {
+      policy.maxDiscountBasisPoints = Math.max(0, Math.min(10000, Math.round(basisPoints)))
+    } else {
+      const percent = Number(data.max_pdv_discount_percent)
+      if (Number.isFinite(percent)) {
+        policy.maxDiscountBasisPoints = Math.max(0, Math.min(10000, Math.round(percent * 100)))
+      }
+    }
+
+    const explicitDeliveryCents = Number(data.delivery_fee_cents)
+    if (Number.isFinite(explicitDeliveryCents)) {
+      policy.deliveryFeeCents = Math.max(0, Math.min(10_000_000, Math.round(explicitDeliveryCents)))
+    } else if (data.delivery_fee != null) {
+      const deliveryFeeCents = moneyToCents(data.delivery_fee)
+      if (Number.isFinite(deliveryFeeCents)) {
+        policy.deliveryFeeCents = Math.max(0, Math.min(10_000_000, deliveryFeeCents))
+      }
+    }
   } catch {
-    return DEFAULT_MAX_DISCOUNT_BASIS_POINTS
+    return policy
   }
-  return DEFAULT_MAX_DISCOUNT_BASIS_POINTS
+  return policy
 }
 
 async function loadProducts(database: D1Database, payload: CheckoutPayload): Promise<Map<string, ProductRow>> {
@@ -403,7 +424,6 @@ function errorResponse(error: unknown): Response {
     EMPTY_CART: [400, 'Carrinho vazio.'],
     INVALID_CART_ITEM: [400, 'Carrinho contem itens invalidos.'],
     INVALID_DISCOUNT: [400, 'Desconto invalido.'],
-    INVALID_TRANSPORT_FEE: [400, 'Taxa de entrega invalida.'],
     IDEMPOTENCY_REQUIRED: [400, 'Chave de idempotencia obrigatoria.'],
     CLIENT_NOT_FOUND: [400, 'Cliente selecionado nao encontrado.'],
     PRODUCT_UNAVAILABLE: [409, 'Um produto do carrinho nao esta disponivel.'],
@@ -444,14 +464,20 @@ async function executeCheckout(request: Request, bindings: CheckoutBindings): Pr
       sum + Math.round(item.price_cents * item.quantityMilliunits / 1000)
     ), 0)
     if (payload.discountCents > subtotalCents) throw new Error('DISCOUNT_EXCEEDS_SUBTOTAL')
-    const maxDiscountBasisPoints = await loadMaxDiscountBasisPoints(bindings.DB, payload)
-    const maxDiscountCents = Math.round(subtotalCents * maxDiscountBasisPoints / 10000)
+
+    const policy = await loadCheckoutPolicy(bindings.DB, payload)
+    const maxDiscountCents = Math.round(subtotalCents * policy.maxDiscountBasisPoints / 10000)
     if (payload.discountCents > maxDiscountCents) throw new Error('DISCOUNT_LIMIT_EXCEEDED')
 
-    const totalCents = subtotalCents - payload.discountCents + payload.transportFeeCents
+    const transportFeeCents = payload.fulfillmentType === 'delivery' ? policy.deliveryFeeCents : 0
+    const totalCents = subtotalCents - payload.discountCents + transportFeeCents
     const payments = normalizeCheckoutPayments(payload, totalCents)
     const saleId = crypto.randomUUID()
     const now = Date.now()
+    const saleNotes = [
+      payload.notes,
+      transportFeeCents > 0 ? `Taxa de entrega: R$ ${(transportFeeCents / 100).toFixed(2)}` : null,
+    ].filter(Boolean).join(' | ') || null
 
     const guardClauses: string[] = []
     const guardValues: Array<string | number> = []
@@ -483,9 +509,9 @@ async function executeCheckout(request: Request, bindings: CheckoutBindings): Pr
         payload.fulfillmentType,
         subtotalCents,
         payload.discountCents,
-        payload.transportFeeCents,
+        transportFeeCents,
         totalCents,
-        payload.notes,
+        saleNotes,
         now,
         now,
         ...guardValues,
