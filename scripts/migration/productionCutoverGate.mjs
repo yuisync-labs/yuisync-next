@@ -20,13 +20,22 @@ export function buildProductionCutoverPlan({ certification, explicitAuthorizatio
     staging_certification_schema: REQUIRED_STAGING_CERTIFICATION_SCHEMA,
     authorization: 'explicit',
     steps: [
-      'capture-final-source-checksums','freeze-legacy-writes','capture-production-time-travel-bookmark',
-      'apply-domain-migrations','reconcile-all-domain-checksums','enable-internal-canary','enable-test-tenant',
-      'increase-traffic-gradually','observe-slo-and-duplicate-effects','finalize-cutover','retain-rollback-window',
+      'verify-quality-and-double-staging-certification',
+      'provision-isolated-production-resources',
+      'snapshot-certified-staging-databases',
+      'restore-production-databases',
+      'reconcile-production-snapshot',
+      'deploy-release-sha-with-domain-detached',
+      'run-workers-dev-authenticated-canary',
+      'capture-production-time-travel-bookmarks',
+      'attach-yuisync-app-custom-domain',
+      'run-live-domain-authenticated-canary',
+      'retain-rollback-window',
     ],
     stop_conditions: [
-      'checksum-divergence','tenant-isolation-failure','duplicate-financial-or-fiscal-effect',
-      'error-budget-breach','rollback-path-unavailable',
+      'release-sha-mismatch','certification-count-below-two','snapshot-divergence',
+      'tenant-isolation-failure','authenticated-canary-failure','domain-ownership-conflict',
+      'rollback-path-unavailable','error-budget-breach',
     ],
   })
 }
