@@ -54,9 +54,9 @@ function fixture() {
   const runId = `e2e-${Date.now()}-${randomBytes(4).toString('hex')}`
   const tenantId = `${runId}-tenant`
   const users = [
-    { key: 'admin', role: 'admin', envEmail: 'E2E_EMAIL', envPassword: 'E2E_PASSWORD', name: 'E2E Admin' },
-    { key: 'manager', role: 'manager', envEmail: 'E2E_MANAGER_EMAIL', envPassword: 'E2E_MANAGER_PASSWORD', name: 'E2E Manager' },
-    { key: 'member', role: 'member', envEmail: 'E2E_COMMON_EMAIL', envPassword: 'E2E_COMMON_PASSWORD', name: 'E2E Member' },
+    { key: 'admin', role: 'admin', moduleRole: 'admin_pet', envEmail: 'E2E_EMAIL', envPassword: 'E2E_PASSWORD', name: 'E2E Admin' },
+    { key: 'manager', role: 'manager', moduleRole: 'funcionario_pet', envEmail: 'E2E_MANAGER_EMAIL', envPassword: 'E2E_MANAGER_PASSWORD', name: 'E2E Manager' },
+    { key: 'member', role: 'member', moduleRole: 'funcionario_pet', envEmail: 'E2E_COMMON_EMAIL', envPassword: 'E2E_COMMON_PASSWORD', name: 'E2E Member' },
   ].map((user) => ({
     ...user,
     userId: randomUUID(),
@@ -75,7 +75,7 @@ async function setup() {
     schema: current.schema,
     runId: current.runId,
     tenantId: current.tenantId,
-    users: current.users.map(({ key, role, userId, principalId, email }) => ({ key, role, userId, principalId, email })),
+    users: current.users.map(({ key, role, moduleRole, userId, principalId, email }) => ({ key, role, moduleRole, userId, principalId, email })),
   }, null, 2))
 
   const authStatements = []
@@ -87,13 +87,14 @@ async function setup() {
 
   for (const user of current.users) {
     const passwordHash = await hash(user.password, 12)
+    const modulePermissions = JSON.stringify({ petshop: user.moduleRole })
     authStatements.push(
       `INSERT INTO user(id,name,email,emailVerified,image,createdAt,updatedAt) VALUES(${sql(user.userId)},${sql(user.name)},${sql(user.email)},1,NULL,${now},${now});`,
       `INSERT INTO account(id,userId,accountId,providerId,password,createdAt,updatedAt) VALUES(${sql(`credential:${user.userId}`)},${sql(user.userId)},${sql(user.userId)},'credential',${sql(passwordHash)},${now},${now});`,
     )
     mainStatements.push(
       `INSERT INTO identity_principals(id,provider,subject,display_name,email,status,created_at_ms,updated_at_ms) VALUES(${sql(user.principalId)},'better-auth',${sql(user.userId)},${sql(user.name)},${sql(user.email)},'active',${now},${now});`,
-      `INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(${sql(current.tenantId)},${sql(user.principalId)},'active',${now},${now},${sql(user.role)},'{"petshop":true}');`,
+      `INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(${sql(current.tenantId)},${sql(user.principalId)},'active',${now},${now},${sql(user.role)},${sql(modulePermissions)});`,
     )
     mask(user.password)
     env[user.envEmail] = user.email
@@ -104,7 +105,7 @@ async function setup() {
     d1Run('AUTH_DB', authStatements.join(' '))
     d1Run('DB', mainStatements.join(' '))
     await exportEnv(env)
-    console.log(JSON.stringify({ status: 'ready', run_id: current.runId, tenant_id: current.tenantId, users: current.users.map(({ key, role }) => ({ key, role })) }))
+    console.log(JSON.stringify({ status: 'ready', run_id: current.runId, tenant_id: current.tenantId, users: current.users.map(({ key, role, moduleRole }) => ({ key, role, module_role: moduleRole })) }))
   } catch (error) {
     console.error(`Failed to prepare staging E2E fixtures: ${error instanceof Error ? error.message : String(error)}`)
     process.exitCode = 1
