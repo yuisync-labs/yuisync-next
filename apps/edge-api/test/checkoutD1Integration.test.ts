@@ -38,7 +38,7 @@ async function signIn(email: string, password: string): Promise<string> {
 }
 
 describe('PDV checkout D1 integration', () => {
-  it('atomically records sale, payment and stock movement and safely replays idempotency', async () => {
+  it('atomically records sale, payment and stock movement, enforces discount policy and safely replays idempotency', async () => {
     const runtime = bindings()
     const database = runtime.DB
     const authDatabase = runtime.AUTH_DB
@@ -129,7 +129,7 @@ describe('PDV checkout D1 integration', () => {
         expect.objectContaining({ method: 'pix', amount_cents: 2350, status: 'received' }),
       ])
 
-      const movements = await database.prepare('SELECT movement_type,delta_milliunits,stock_before_milliunits,stock_after_milliunits,reference_type,reference_id,reason FROM inventory_movements WHERE tenant_id=?1 AND module_id=?2 AND product_id=?3')
+      const movements = await database.prepare('SELECT movement_type,delta_milliunits,stock_before_milliunits,stock_after_milliunits,unit_cost_cents,reference_type,reference_id,reason FROM inventory_movements WHERE tenant_id=?1 AND module_id=?2 AND product_id=?3')
         .bind(tenantId, 'petshop', productId).all<Record<string, unknown>>()
       expect(movements.results).toEqual([
         expect.objectContaining({
@@ -137,6 +137,7 @@ describe('PDV checkout D1 integration', () => {
           delta_milliunits: -2000,
           stock_before_milliunits: 5000,
           stock_after_milliunits: 3000,
+          unit_cost_cents: 500,
           reference_type: 'sale',
           reference_id: saleId,
           reason: 'pdv_checkout',
@@ -156,6 +157,31 @@ describe('PDV checkout D1 integration', () => {
       expect(replayBody.data.sale.id).toBe(saleId)
       expect(replayBody.data.transaction.replayed).toBe(true)
 
+      await database.prepare(`
+        INSERT INTO module_settings_extensions(tenant_id,module_id,data_json,version,updated_at_ms)
+        VALUES(?1,'petshop',?2,1,?3)
+        ON CONFLICT(tenant_id,module_id) DO UPDATE SET data_json=excluded.data_json,version=module_settings_extensions.version+1,updated_at_ms=excluded.updated_at_ms
+      `).bind(tenantId, JSON.stringify({ max_pdv_discount_percent: 5 }), Date.now()).run()
+
+      const rejected = await handleCheckoutApiRequest(new Request('https://edge.test/api/petshop/checkout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: JSON.stringify({
+          ...requestBody,
+          idempotencyKey: `discount-limit-${suffix}`,
+          discount: 1,
+          deliveryFee: 0,
+          items: [{ productId, quantity: 1 }],
+        }),
+      }), runtime)
+
+      expect(rejected).not.toBeNull()
+      if (!rejected) return
+      const rejectedBody = await rejected.json<Record<string, any>>()
+      expect(rejected.status).toBe(409)
+      expect(rejectedBody.success).toBe(false)
+      expect(rejectedBody.error.code).toBe('DISCOUNT_LIMIT_EXCEEDED')
+
       const finalBalance = await database.prepare('SELECT on_hand_milliunits,version FROM inventory_balances WHERE tenant_id=?1 AND module_id=?2 AND product_id=?3')
         .bind(tenantId, 'petshop', productId).first<Record<string, number>>()
       expect(finalBalance).toEqual(expect.objectContaining({ on_hand_milliunits: 3000, version: 2 }))
@@ -171,6 +197,7 @@ describe('PDV checkout D1 integration', () => {
       await database.prepare('DELETE FROM inventory_movements WHERE tenant_id=?1 AND module_id=?2').bind(tenantId, 'petshop').run()
       await database.prepare('DELETE FROM sale_items WHERE tenant_id=?1 AND module_id=?2').bind(tenantId, 'petshop').run()
       await database.prepare('DELETE FROM sales WHERE tenant_id=?1 AND module_id=?2').bind(tenantId, 'petshop').run()
+      await database.prepare('DELETE FROM module_settings_extensions WHERE tenant_id=?1 AND module_id=?2').bind(tenantId, 'petshop').run()
       await database.prepare('DELETE FROM inventory_balances WHERE tenant_id=?1 AND module_id=?2').bind(tenantId, 'petshop').run()
       await database.prepare('DELETE FROM catalog_products WHERE tenant_id=?1 AND module_id=?2').bind(tenantId, 'petshop').run()
       await database.prepare('DELETE FROM tenant_memberships WHERE tenant_id=?1').bind(tenantId).run()
