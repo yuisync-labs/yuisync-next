@@ -52,8 +52,15 @@ export function classifyApexRecords(records) {
   const exact = Array.isArray(records) ? records : []
   return {
     cnames: exact.filter((record) => record?.type === 'CNAME'),
-    preserved: exact.filter((record) => record?.type !== 'CNAME'),
+    other: exact.filter((record) => record?.type !== 'CNAME'),
   }
+}
+
+export function recordsToClearForCustomDomain(records) {
+  // The Workers Custom Domain API rejects hostnames that still have externally
+  // managed apex records (A, AAAA, CNAME, etc.). The cutover therefore backs up
+  // every exact apex record and clears the exact hostname before attaching.
+  return Array.isArray(records) ? [...records] : []
 }
 
 function backupRecord(record) {
@@ -80,30 +87,33 @@ function recordKey(record) {
 async function backupAndClear() {
   const activeZone = await zone()
   const records = await apexRecords(activeZone.id)
-  const { cnames, preserved } = classifyApexRecords(records)
+  const toClear = recordsToClearForCustomDomain(records)
   if (records.some((record) => !record?.id || !record?.type || !record?.content)) throw new Error('PRODUCTION_APEX_RECORD_INVALID')
 
   const backup = {
-    schema: 'yuisync-production-dns-backup/v2',
+    schema: 'yuisync-production-dns-backup/v3',
     zone_id: activeZone.id,
     hostname: DOMAIN,
     records: records.map(backupRecord),
-    removed_records: cnames.map(backupRecord),
+    removed_records: toClear.map(backupRecord),
   }
   await mkdir(dirname(BACKUP_PATH), { recursive: true })
   await writeFile(BACKUP_PATH, `${JSON.stringify(backup, null, 2)}\n`, { mode: 0o600 })
 
-  // Cloudflare Custom Domains explicitly conflict with an existing CNAME.
-  // Other apex records (including A/AAAA) are preserved unless Cloudflare itself
-  // changes them while attaching the Custom Domain.
-  for (const record of cnames) {
+  for (const record of toClear) {
     await cf(`/zones/${encodeURIComponent(activeZone.id)}/dns_records/${encodeURIComponent(String(record.id))}`, { method: 'DELETE' })
   }
+
+  const remaining = await apexRecords(activeZone.id)
+  if (remaining.length) {
+    throw new Error(`PRODUCTION_APEX_NOT_CLEAR:${remaining.map((record) => record?.type || 'unknown').join(',')}`)
+  }
+
   console.log(JSON.stringify({
     status: 'backed-up-and-cleared',
     hostname: DOMAIN,
-    removed_cnames: cnames.length,
-    preserved_types: preserved.map((record) => record?.type || 'unknown'),
+    removed_records: toClear.length,
+    removed_types: toClear.map((record) => record?.type || 'unknown'),
   }))
 }
 
@@ -114,13 +124,17 @@ async function restore() {
   } catch (error) {
     throw new Error(`PRODUCTION_DNS_BACKUP_REQUIRED:${error instanceof Error ? error.message : String(error)}`)
   }
-  if (backup?.schema !== 'yuisync-production-dns-backup/v2' || backup?.hostname !== DOMAIN || !backup?.zone_id || !Array.isArray(backup?.records)) {
+  if (backup?.schema !== 'yuisync-production-dns-backup/v3' || backup?.hostname !== DOMAIN || !backup?.zone_id || !Array.isArray(backup?.records)) {
     throw new Error('PRODUCTION_DNS_BACKUP_INVALID')
   }
 
   let existing = await apexRecords(String(backup.zone_id))
   const expectedKeys = new Set(backup.records.map(recordKey))
   let existingKeys = new Set(existing.map(recordKey))
+  const unexpectedBeforeRestore = [...existingKeys].filter((key) => !expectedKeys.has(key))
+  if (unexpectedBeforeRestore.length) {
+    throw new Error(`PRODUCTION_DNS_RESTORE_CONFLICT:unexpected=${unexpectedBeforeRestore.length}`)
+  }
 
   for (const record of backup.records) {
     const key = recordKey(record)
@@ -146,13 +160,14 @@ async function restore() {
 async function inspect() {
   const activeZone = await zone()
   const records = await apexRecords(activeZone.id)
-  const { cnames, preserved } = classifyApexRecords(records)
+  const { cnames, other } = classifyApexRecords(records)
   console.log(JSON.stringify({
     status: 'inspected',
     hostname: DOMAIN,
     zone_id: activeZone.id,
     cnames: cnames.map(backupRecord),
-    preserved_types: preserved.map((record) => record?.type || 'unknown'),
+    other_types: other.map((record) => record?.type || 'unknown'),
+    cutover_record_count: recordsToClearForCustomDomain(records).length,
   }))
 }
 
