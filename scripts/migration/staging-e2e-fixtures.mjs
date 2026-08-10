@@ -12,10 +12,19 @@ const ARTIFACT_DIR = resolve(REPO_ROOT, '.artifacts/staging-e2e')
 const MANIFEST_PATH = resolve(ARTIFACT_DIR, 'fixture.json')
 const STAGING_URL = String(process.env.YUISYNC_STAGING_URL || 'https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev').replace(/\/$/, '')
 const COMMAND = String(process.argv[2] || '').trim().toLowerCase()
+const SAFE_TABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+const E2E_TENANT_LIKE = 'e2e-%-tenant'
+const E2E_EMAIL_LIKE = 'e2e-%@staging.invalid'
 
 function sql(value) {
   if (value == null) return 'NULL'
   return `'${String(value).replaceAll("'", "''")}'`
+}
+
+function identifier(value) {
+  const name = String(value || '')
+  if (!SAFE_TABLE_NAME.test(name)) throw new Error(`UNSAFE_SQL_IDENTIFIER:${name}`)
+  return `"${name}"`
 }
 
 function run(command, args, options = {}) {
@@ -34,6 +43,13 @@ function wrangler(args) {
 
 function d1Run(binding, statement) {
   wrangler(['d1', 'execute', binding, '--env', 'staging', '--remote', '--command', statement])
+}
+
+function d1Rows(binding, statement) {
+  const output = wrangler(['d1', 'execute', binding, '--env', 'staging', '--remote', '--json', '--command', statement])
+  const parsed = JSON.parse(output)
+  const result = Array.isArray(parsed) ? parsed[0] : parsed
+  return Array.isArray(result?.results) ? result.results : []
 }
 
 function password() {
@@ -64,10 +80,130 @@ function fixture() {
     email: `${runId}-${user.key}@staging.invalid`,
     password: password(),
   }))
-  return { schema: 'yuisync-staging-e2e-fixture/v1', runId, tenantId, users }
+  return { schema: 'yuisync-staging-e2e-fixture/v2', runId, tenantId, users }
+}
+
+function referencedTables(createSql) {
+  const references = []
+  const pattern = /\bREFERENCES\s+(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/gi
+  let match
+  while ((match = pattern.exec(String(createSql || ''))) !== null) {
+    const table = match[1] || match[2] || match[3] || match[4]
+    if (table && SAFE_TABLE_NAME.test(table)) references.push(table)
+  }
+  return [...new Set(references)]
+}
+
+function tenantScopedDeleteOrder(schemaRows) {
+  const definitions = schemaRows
+    .map((row) => ({ name: String(row?.name || ''), sql: String(row?.sql || '') }))
+    .filter((row) => SAFE_TABLE_NAME.test(row.name) && row.sql)
+
+  const scoped = definitions
+    .filter((row) => row.name !== 'tenants' && row.name !== 'identity_principals' && /\btenant_id\b/i.test(row.sql))
+    .map((row) => row.name)
+  const scopedSet = new Set(scoped)
+  const referencesByTable = new Map(
+    definitions.map((row) => [row.name, referencedTables(row.sql)]),
+  )
+
+  // Tenant isolation requires every application child of a tenant-scoped table
+  // to remain tenant-addressable. If a new schema violates that invariant, fail
+  // closed instead of leaving E2E rows behind or deleting data broadly.
+  const unscopedChildren = definitions
+    .filter((row) => !scopedSet.has(row.name) && row.name !== 'tenants' && row.name !== 'identity_principals')
+    .filter((row) => referencesByTable.get(row.name)?.some((parent) => scopedSet.has(parent)))
+    .map((row) => row.name)
+  if (unscopedChildren.length) {
+    throw new Error(`STAGING_E2E_UNSCOPED_TENANT_CHILD:${unscopedChildren.sort().join(',')}`)
+  }
+
+  // Edges are child -> parent, so a topological ordering naturally deletes
+  // children before the rows they reference.
+  const incoming = new Map(scoped.map((name) => [name, 0]))
+  const parents = new Map(scoped.map((name) => [
+    name,
+    (referencesByTable.get(name) || []).filter((parent) => scopedSet.has(parent)),
+  ]))
+  for (const tableParents of parents.values()) {
+    for (const parent of tableParents) incoming.set(parent, (incoming.get(parent) || 0) + 1)
+  }
+
+  const ready = [...incoming.entries()].filter(([, count]) => count === 0).map(([name]) => name).sort()
+  const ordered = []
+  while (ready.length) {
+    const child = ready.shift()
+    ordered.push(child)
+    for (const parent of parents.get(child) || []) {
+      const next = (incoming.get(parent) || 0) - 1
+      incoming.set(parent, next)
+      if (next === 0) {
+        ready.push(parent)
+        ready.sort()
+      }
+    }
+  }
+
+  if (ordered.length !== scoped.length) {
+    const unresolved = scoped.filter((name) => !ordered.includes(name)).sort()
+    throw new Error(`STAGING_E2E_TENANT_FK_CYCLE:${unresolved.join(',')}`)
+  }
+  return ordered
+}
+
+function mainSchemaRows() {
+  return d1Rows(
+    'DB',
+    "SELECT name, sql FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL ORDER BY name;",
+  )
+}
+
+function cleanupMainTenant(tenantId, principalIds = []) {
+  const id = String(tenantId || '')
+  if (!id.startsWith('e2e-') || !id.endsWith('-tenant')) {
+    throw new Error(`REFUSING_NON_E2E_TENANT_CLEANUP:${id}`)
+  }
+
+  const schemaRows = mainSchemaRows()
+  const deleteOrder = tenantScopedDeleteOrder(schemaRows)
+  const tenantDeletes = deleteOrder
+    .map((table) => `DELETE FROM ${identifier(table)} WHERE tenant_id=${sql(id)};`)
+    .join(' ')
+  if (tenantDeletes) d1Run('DB', tenantDeletes)
+
+  const principals = [...new Set(principalIds.map(String).filter(Boolean))]
+  if (principals.length) {
+    d1Run('DB', `DELETE FROM identity_principals WHERE id IN (${principals.map(sql).join(',')});`)
+  }
+  d1Run('DB', `DELETE FROM tenants WHERE id=${sql(id)};`)
+}
+
+function cleanupAuthUsers(userIds = []) {
+  const users = [...new Set(userIds.map(String).filter(Boolean))]
+  if (!users.length) return
+  const values = users.map(sql).join(',')
+  d1Run('AUTH_DB', `DELETE FROM session WHERE userId IN (${values}); DELETE FROM account WHERE userId IN (${values}); DELETE FROM user WHERE id IN (${values});`)
+}
+
+function sweepStaleFixtures() {
+  // A failed cleanup must not poison the next certification. Sweep only the
+  // deliberately namespaced E2E identities/tenants; no production-like row can
+  // match these setup-owned identifiers.
+  d1Run('AUTH_DB', `DELETE FROM session WHERE userId IN (SELECT id FROM user WHERE email LIKE ${sql(E2E_EMAIL_LIKE)}); DELETE FROM account WHERE userId IN (SELECT id FROM user WHERE email LIKE ${sql(E2E_EMAIL_LIKE)}); DELETE FROM user WHERE email LIKE ${sql(E2E_EMAIL_LIKE)};`)
+
+  const staleTenants = d1Rows('DB', `SELECT id FROM tenants WHERE id LIKE ${sql(E2E_TENANT_LIKE)} ORDER BY id;`)
+  for (const row of staleTenants) {
+    const tenantId = String(row?.id || '')
+    if (!tenantId) continue
+    const principalRows = d1Rows('DB', `SELECT principal_id FROM tenant_memberships WHERE tenant_id=${sql(tenantId)} ORDER BY principal_id;`)
+    cleanupMainTenant(tenantId, principalRows.map((principal) => principal?.principal_id).filter(Boolean))
+  }
+  if (staleTenants.length) console.log(JSON.stringify({ status: 'stale-fixtures-cleaned', tenant_count: staleTenants.length }))
 }
 
 async function setup() {
+  sweepStaleFixtures()
+
   const current = fixture()
   const now = Date.now()
   await mkdir(ARTIFACT_DIR, { recursive: true })
@@ -126,18 +262,15 @@ async function cleanup() {
   const tenantId = String(manifest.tenantId || '')
   const errors = []
 
-  if (userIds.length) {
-    const users = userIds.map(sql).join(',')
-    try {
-      d1Run('AUTH_DB', `DELETE FROM session WHERE userId IN (${users}); DELETE FROM account WHERE userId IN (${users}); DELETE FROM user WHERE id IN (${users});`)
-    } catch (error) {
-      errors.push(`AUTH_DB:${error instanceof Error ? error.message : String(error)}`)
-    }
+  try {
+    cleanupAuthUsers(userIds)
+  } catch (error) {
+    errors.push(`AUTH_DB:${error instanceof Error ? error.message : String(error)}`)
   }
 
   if (tenantId) {
     try {
-      d1Run('DB', `DELETE FROM tenant_module_settings WHERE tenant_id=${sql(tenantId)}; DELETE FROM tenant_memberships WHERE tenant_id=${sql(tenantId)};${principalIds.length ? ` DELETE FROM identity_principals WHERE id IN (${principalIds.map(sql).join(',')});` : ''} DELETE FROM tenants WHERE id=${sql(tenantId)};`)
+      cleanupMainTenant(tenantId, principalIds)
     } catch (error) {
       errors.push(`DB:${error instanceof Error ? error.message : String(error)}`)
     }
@@ -149,10 +282,11 @@ async function cleanup() {
   console.log(JSON.stringify({ status: 'cleaned', run_id: manifest.runId || null, tenant_id: tenantId || null }))
 }
 
-if (!['setup', 'cleanup'].includes(COMMAND)) {
-  console.error('Usage: node scripts/migration/staging-e2e-fixtures.mjs <setup|cleanup>')
+if (!['setup', 'cleanup', 'sweep'].includes(COMMAND)) {
+  console.error('Usage: node scripts/migration/staging-e2e-fixtures.mjs <setup|cleanup|sweep>')
   process.exit(2)
 }
 
 if (COMMAND === 'setup') await setup()
-else await cleanup()
+else if (COMMAND === 'cleanup') await cleanup()
+else sweepStaleFixtures()
