@@ -18,6 +18,7 @@ type MembershipRow = {
   tenant_status: string
 }
 
+type ModulePermission = true | string | Record<string, unknown>
 type AuthSession = Awaited<ReturnType<typeof getBetterAuthSession>>
 type PrincipalResolution =
   | { ok: true; session: NonNullable<AuthSession>; principal: PrincipalRow }
@@ -76,17 +77,34 @@ async function memberships(database: D1Database, principalId: string): Promise<M
   return result.results
 }
 
-function modulesFor(row: MembershipRow): string[] {
+function modulePermissionsFor(row: MembershipRow): Record<string, ModulePermission> {
   try {
-    const permissions = JSON.parse(row.module_permissions_json || '{}')
-    const modules = Object.entries(permissions)
-      .filter(([, allowed]) => allowed === true || (allowed && typeof allowed === 'object'))
-      .map(([moduleId]) => moduleId)
-      .filter((moduleId) => /^[a-z0-9][a-z0-9_-]{0,63}$/.test(moduleId))
-    return modules.length ? [...new Set(modules)] : ['petshop']
+    const parsed = JSON.parse(row.module_permissions_json || '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+
+    const entries = Object.entries(parsed).flatMap(([rawModuleId, rawPermission]) => {
+      const moduleId = validModule(rawModuleId)
+      if (!moduleId) return []
+      if (rawPermission === true) return [[moduleId, true] as const]
+      if (typeof rawPermission === 'string' && rawPermission.trim()) {
+        return [[moduleId, rawPermission.trim()] as const]
+      }
+      if (rawPermission && typeof rawPermission === 'object' && !Array.isArray(rawPermission)) {
+        return [[moduleId, rawPermission as Record<string, unknown>] as const]
+      }
+      return []
+    })
+
+    return Object.fromEntries(entries)
   } catch {
-    return ['petshop']
+    return {}
   }
+}
+
+function modulesFor(row: MembershipRow): string[] {
+  const permissions = modulePermissionsFor(row)
+  const modules = Object.keys(permissions)
+  return modules.length ? modules : ['petshop']
 }
 
 async function bootstrap(request: Request, bindings: AppApiBindings): Promise<Response> {
@@ -108,6 +126,7 @@ async function bootstrap(request: Request, bindings: AppApiBindings): Promise<Re
       slug: row.tenant_slug,
       role: row.role,
       enabled_modules: modulesFor(row),
+      module_permissions: modulePermissionsFor(row),
     })),
   })
 }
@@ -150,12 +169,12 @@ async function createTenant(request: Request, bindings: AppApiBindings): Promise
   await bindings.DB!.batch([
     bindings.DB!.prepare(`INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,'active',?4,?4)`)
       .bind(id, slug, name, now),
-    bindings.DB!.prepare(`INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'active',?3,?3,'owner','{"petshop":true}')`)
+    bindings.DB!.prepare(`INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'active',?3,?3,'owner','{"petshop":"admin_pet"}')`)
       .bind(id, resolved.principal.id, now),
     bindings.DB!.prepare(`INSERT INTO tenant_module_settings(tenant_id,module_id,store_name,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,?3,?3)`)
       .bind(id, name, now),
   ])
-  return json({ id, name, slug, role: 'owner', enabled_modules: ['petshop'] }, 201)
+  return json({ id, name, slug, role: 'owner', enabled_modules: ['petshop'], module_permissions: { petshop: 'admin_pet' } }, 201)
 }
 
 export async function handleAppApiRequest(request: Request, bindings: AppApiBindings): Promise<Response | null> {
