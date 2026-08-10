@@ -18,6 +18,7 @@ export type BetterAuthRuntimeBindings = AuthDatabaseBindings & {
 }
 
 type AuthDiagnosticSink = { code?: string }
+type MigrationOptions = Parameters<typeof getMigrations>[0]
 
 function assertBcryptPassword(password: string): void {
   if (new TextEncoder().encode(password).byteLength > BCRYPT_MAX_BYTES) {
@@ -110,11 +111,11 @@ function collectionSize(value: unknown): number {
 }
 
 async function refineSchemaDiagnostic(
-  auth: ReturnType<typeof betterAuth>,
+  options: MigrationOptions,
   currentCode: string | undefined,
 ): Promise<string> {
   try {
-    const migrations = await getMigrations(auth.options)
+    const migrations = await getMigrations(options)
     const createCount = collectionSize(migrations.toBeCreated)
     const addCount = collectionSize(migrations.toBeAdded)
     if (createCount || addCount) return `AUTH_SCHEMA_DRIFT:C${createCount}:A${addCount}`
@@ -212,14 +213,14 @@ export async function handleBetterAuthRequest(
     recordDiagnostic(bindings, diagnostics, error)
     const headers = new Headers({ 'cache-control': 'no-store' })
     if (isStaging(bindings)) {
-      headers.set(AUTH_DIAGNOSTIC_HEADER, await refineSchemaDiagnostic(auth, diagnostics.code))
+      headers.set(AUTH_DIAGNOSTIC_HEADER, await refineSchemaDiagnostic(auth.options, diagnostics.code))
     }
     return Response.json({ code: 'AUTH_INTERNAL_ERROR' }, { status: 500, headers })
   }
 
   const headers = new Headers(response.headers)
   if (isStaging(bindings) && response.status >= 500) {
-    headers.set(AUTH_DIAGNOSTIC_HEADER, await refineSchemaDiagnostic(auth, diagnostics.code))
+    headers.set(AUTH_DIAGNOSTIC_HEADER, await refineSchemaDiagnostic(auth.options, diagnostics.code))
   }
   if (origin && allowedOrigins.includes(origin)) {
     headers.set('access-control-allow-origin', origin)
