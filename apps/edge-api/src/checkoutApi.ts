@@ -35,6 +35,7 @@ type ProductRow = {
   id: string
   name: string
   price_cents: number
+  cost_cents: number | null
   status: string
   on_hand_milliunits: number | null
   reserved_milliunits: number | null
@@ -70,6 +71,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
 const MAX_ITEMS = 100
 const MAX_PAYMENTS = 10
 const MAX_QUANTITY = 1_000_000
+const DEFAULT_MAX_DISCOUNT_BASIS_POINTS = 1000
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, {
@@ -93,6 +95,12 @@ function quantityToMilliunits(value: unknown): number {
   if (!Number.isFinite(number) || number <= 0 || number > MAX_QUANTITY) return Number.NaN
   const milliunits = Math.round(number * 1000)
   return milliunits > 0 ? milliunits : Number.NaN
+}
+
+function object(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
 }
 
 export function normalizeCheckoutPaymentMethod(value: unknown): 'pix' | 'cash' | 'card' | null {
@@ -277,10 +285,30 @@ async function resolveClientId(database: D1Database, payload: CheckoutPayload): 
   return row.id
 }
 
+async function loadMaxDiscountBasisPoints(database: D1Database, payload: CheckoutPayload): Promise<number> {
+  const row = await database.prepare(`
+    SELECT data_json FROM module_settings_extensions
+    WHERE tenant_id=?1 AND module_id=?2
+    LIMIT 1
+  `).bind(payload.tenantId, payload.moduleId).first<{ data_json: string | null }>()
+
+  if (!row?.data_json) return DEFAULT_MAX_DISCOUNT_BASIS_POINTS
+  try {
+    const data = object(JSON.parse(row.data_json))
+    const basisPoints = Number(data.max_pdv_discount_basis_points)
+    if (Number.isFinite(basisPoints)) return Math.max(0, Math.min(10000, Math.round(basisPoints)))
+    const percent = Number(data.max_pdv_discount_percent)
+    if (Number.isFinite(percent)) return Math.max(0, Math.min(10000, Math.round(percent * 100)))
+  } catch {
+    return DEFAULT_MAX_DISCOUNT_BASIS_POINTS
+  }
+  return DEFAULT_MAX_DISCOUNT_BASIS_POINTS
+}
+
 async function loadProducts(database: D1Database, payload: CheckoutPayload): Promise<Map<string, ProductRow>> {
   const placeholders = payload.items.map(() => '?').join(',')
   const statement = database.prepare(`
-    SELECT p.id,p.name,p.price_cents,p.status,
+    SELECT p.id,p.name,p.price_cents,p.cost_cents,p.status,
            i.on_hand_milliunits,i.reserved_milliunits,i.version AS inventory_version
     FROM catalog_products p
     LEFT JOIN inventory_balances i
@@ -297,7 +325,7 @@ function validateProducts(payload: CheckoutPayload, products: Map<string, Produc
     if (!product || product.status !== 'active') throw new Error('PRODUCT_UNAVAILABLE')
     const onHand = Number(product.on_hand_milliunits ?? 0)
     const reserved = Number(product.reserved_milliunits ?? 0)
-    if (!Number.isInteger(product.price_cents) || product.price_cents < 0) throw new Error('PRODUCT_PRICE_INVALID')
+    if (!Number.isInteger(product.price_cents) || product.price_cents <= 0) throw new Error('PRODUCT_PRICE_INVALID')
     if (!Number.isInteger(product.inventory_version) || onHand - reserved < item.quantityMilliunits) {
       throw new Error('INSUFFICIENT_STOCK')
     }
@@ -386,6 +414,7 @@ function errorResponse(error: unknown): Response {
     PAYMENT_METHOD_REQUIRED: [400, 'Forma de pagamento obrigatoria.'],
     INVALID_TOTAL: [400, 'Total da venda invalido.'],
     DISCOUNT_EXCEEDS_SUBTOTAL: [409, 'O desconto nao pode superar o subtotal.'],
+    DISCOUNT_LIMIT_EXCEEDED: [409, 'O desconto excede o limite configurado para o PDV.'],
     CHECKOUT_CONFLICT: [409, 'Estoque ou preco mudou durante a venda. Atualize o carrinho e tente novamente.'],
   }
   const [status, message] = mappings[code] || [500, 'Falha ao concluir venda.']
@@ -415,6 +444,10 @@ async function executeCheckout(request: Request, bindings: CheckoutBindings): Pr
       sum + Math.round(item.price_cents * item.quantityMilliunits / 1000)
     ), 0)
     if (payload.discountCents > subtotalCents) throw new Error('DISCOUNT_EXCEEDS_SUBTOTAL')
+    const maxDiscountBasisPoints = await loadMaxDiscountBasisPoints(bindings.DB, payload)
+    const maxDiscountCents = Math.round(subtotalCents * maxDiscountBasisPoints / 10000)
+    if (payload.discountCents > maxDiscountCents) throw new Error('DISCOUNT_LIMIT_EXCEEDED')
+
     const totalCents = subtotalCents - payload.discountCents + payload.transportFeeCents
     const payments = normalizeCheckoutPayments(payload, totalCents)
     const saleId = crypto.randomUUID()
@@ -487,7 +520,7 @@ async function executeCheckout(request: Request, bindings: CheckoutBindings): Pr
         `).bind(
           payload.tenantId,payload.moduleId,crypto.randomUUID(),`sale:${saleId}:stock:${index}`,
           item.productId,-item.quantityMilliunits,item.on_hand_milliunits!,item.on_hand_milliunits!-item.quantityMilliunits,
-          null,saleId,now,
+          item.cost_cents,saleId,now,
         ),
       )
     })
