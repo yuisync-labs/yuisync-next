@@ -32,13 +32,13 @@ describe('native PDV checkout', () => {
     expect(normalizeCheckoutPaymentMethod('boleto')).toBeNull()
   })
 
-  it('merges duplicate cart products and keeps milliunit precision', () => {
+  it('merges duplicate cart products, keeps milliunit precision and ignores client delivery fees', () => {
     const payload = normalizeCheckoutPayload({
       ...basePayload,
       source: 'pdv',
       fulfillmentType: 'entrega',
       discount: 1.25,
-      deliveryFee: 3.5,
+      deliveryFee: 9999,
       items: [
         { productId: 'product-1', quantity: 1.25 },
         { productId: 'product-1', quantity: 0.75, upsell: true },
@@ -49,7 +49,7 @@ describe('native PDV checkout', () => {
     expect(payload.source).toBe('pos')
     expect(payload.fulfillmentType).toBe('delivery')
     expect(payload.discountCents).toBe(125)
-    expect(payload.transportFeeCents).toBe(350)
+    expect(payload).not.toHaveProperty('transportFeeCents')
     expect(payload.operationKey).toBe('pdv:sale-1')
     expect(payload.items).toEqual([
       { productId: 'product-1', quantity: 2, quantityMilliunits: 2000, upsell: true },
