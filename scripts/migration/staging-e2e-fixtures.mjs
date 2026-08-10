@@ -133,7 +133,9 @@ function tenantScopedDeleteOrder(schemaRows) {
   const incoming = new Map(scoped.map((name) => [name, 0]))
   const parents = new Map(scoped.map((name) => [
     name,
-    (referencesByTable.get(name) || []).filter((parent) => scopedSet.has(parent)),
+    // A self-FK is handled inside the table-wide tenant DELETE and is not an
+    // inter-table dependency for the cleanup topological order.
+    (referencesByTable.get(name) || []).filter((parent) => scopedSet.has(parent) && parent !== name),
   ]))
   for (const tableParents of parents.values()) {
     for (const parent of tableParents) incoming.set(parent, (incoming.get(parent) || 0) + 1)
