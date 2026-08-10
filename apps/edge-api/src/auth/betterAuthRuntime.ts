@@ -9,10 +9,14 @@ import {
 
 const BCRYPT_ROUNDS = 12
 const BCRYPT_MAX_BYTES = 72
+const AUTH_DIAGNOSTIC_HEADER = 'x-yuisync-auth-diagnostic'
 
 export type BetterAuthRuntimeBindings = AuthDatabaseBindings & {
   EDGE_AUTH_TRUSTED_ORIGINS?: string
+  APP_ENV?: string
 }
+
+type AuthDiagnosticSink = { code?: string }
 
 function assertBcryptPassword(password: string): void {
   if (new TextEncoder().encode(password).byteLength > BCRYPT_MAX_BYTES) {
@@ -29,9 +33,79 @@ function trustedOrigins(bindings: BetterAuthRuntimeBindings, requestOrigin: stri
   return [...new Set([requestOrigin, ...configured])]
 }
 
+function diagnosticText(error: unknown, depth = 0): string {
+  if (depth > 3 || error == null) return ''
+  if (typeof error === 'string') return error
+  if (error instanceof Error) {
+    const record = error as Error & { code?: unknown; status?: unknown; statusCode?: unknown; cause?: unknown }
+    return [
+      error.name,
+      record.code,
+      record.status,
+      record.statusCode,
+      error.message,
+      diagnosticText(record.cause, depth + 1),
+    ].filter(Boolean).join(' | ')
+  }
+  if (typeof error === 'object') {
+    const record = error as Record<string, unknown>
+    return [record.name, record.code, record.status, record.statusCode, record.message, diagnosticText(record.cause, depth + 1)]
+      .filter(Boolean)
+      .map(String)
+      .join(' | ')
+  }
+  return String(error)
+}
+
+function safeIdentifier(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80) || 'unknown'
+}
+
+function classifyAuthError(error: unknown): string {
+  const text = diagnosticText(error)
+  const lower = text.toLowerCase()
+  const match = (pattern: RegExp) => pattern.exec(text)?.[1]
+
+  const missingTable = match(/no such table:\s*([A-Za-z0-9_.-]+)/i)
+  if (missingTable) return `DB_NO_SUCH_TABLE:${safeIdentifier(missingTable)}`
+  const missingColumn = match(/no such column:\s*([A-Za-z0-9_.-]+)/i)
+  if (missingColumn) return `DB_NO_SUCH_COLUMN:${safeIdentifier(missingColumn)}`
+  const insertColumn = match(/has no column named\s+([A-Za-z0-9_.-]+)/i)
+  if (insertColumn) return `DB_NO_COLUMN:${safeIdentifier(insertColumn)}`
+  const notNull = match(/not null constraint failed:\s*([A-Za-z0-9_.-]+)/i)
+  if (notNull) return `DB_NOT_NULL:${safeIdentifier(notNull)}`
+  const unique = match(/unique constraint failed:\s*([A-Za-z0-9_.-]+)/i)
+  if (unique) return `DB_UNIQUE:${safeIdentifier(unique)}`
+  if (lower.includes('foreign key constraint failed')) return 'DB_FOREIGN_KEY'
+  if (lower.includes('unable to create session') || lower.includes('failed to create session')) return 'SESSION_CREATE_FAILED'
+  if (lower.includes('d1_error') || lower.includes('d1 error')) return 'D1_ERROR'
+  if (lower.includes('sqlite')) return 'SQLITE_ERROR'
+  if (lower.includes('password') && (lower.includes('hash') || lower.includes('bcrypt'))) return 'PASSWORD_HASH_ERROR'
+  if (lower.includes('database')) return 'AUTH_DATABASE_ERROR'
+
+  const record = error && typeof error === 'object' ? error as Record<string, unknown> : null
+  const code = record?.code ? safeIdentifier(String(record.code)) : ''
+  const name = error instanceof Error ? safeIdentifier(error.name) : ''
+  if (code) return `AUTH_ERROR:${code}`
+  if (name && name !== 'Error') return `AUTH_ERROR:${name}`
+  return 'AUTH_INTERNAL_ERROR'
+}
+
+function isStaging(bindings: BetterAuthRuntimeBindings): boolean {
+  return String(bindings.APP_ENV || '').toLowerCase() === 'staging'
+}
+
+function recordDiagnostic(bindings: BetterAuthRuntimeBindings, sink: AuthDiagnosticSink | undefined, error: unknown): void {
+  if (!isStaging(bindings)) return
+  const code = classifyAuthError(error)
+  if (sink && !sink.code) sink.code = code
+  console.error(JSON.stringify({ event: 'better_auth.error', diagnostic: code, environment: 'staging' }))
+}
+
 export function createBetterAuthRuntime(
   bindings: BetterAuthRuntimeBindings,
   requestOrigin: string,
+  diagnostics?: AuthDiagnosticSink,
 ) {
   const database = requireAuthDatabase(bindings)
   const secret = String(bindings.BETTER_AUTH_SECRET || '')
@@ -42,6 +116,17 @@ export function createBetterAuthRuntime(
     baseURL: requestOrigin,
     basePath: '/api/auth',
     trustedOrigins: trustedOrigins(bindings, requestOrigin),
+    logger: isStaging(bindings) ? {
+      level: 'error',
+      disableColors: true,
+      log: (level, message, ...args) => {
+        if (level !== 'error') return
+        recordDiagnostic(bindings, diagnostics, { message, cause: args[0] })
+      },
+    } : undefined,
+    onAPIError: isStaging(bindings) ? {
+      onError: (error) => recordDiagnostic(bindings, diagnostics, error),
+    } : undefined,
     emailAndPassword: {
       enabled: true,
       disableSignUp: true,
@@ -96,16 +181,28 @@ export async function handleBetterAuthRequest(
     })
   }
 
-  const auth = createBetterAuthRuntime(bindings, url.origin)
-  const response = await auth.handler(request)
+  const diagnostics: AuthDiagnosticSink = {}
+  const auth = createBetterAuthRuntime(bindings, url.origin, diagnostics)
+  let response: Response
+  try {
+    response = await auth.handler(request)
+  } catch (error) {
+    recordDiagnostic(bindings, diagnostics, error)
+    const headers = new Headers({ 'cache-control': 'no-store' })
+    if (isStaging(bindings) && diagnostics.code) headers.set(AUTH_DIAGNOSTIC_HEADER, diagnostics.code)
+    return Response.json({ code: 'AUTH_INTERNAL_ERROR' }, { status: 500, headers })
+  }
+
+  const headers = new Headers(response.headers)
+  if (isStaging(bindings) && response.status >= 500 && diagnostics.code) {
+    headers.set(AUTH_DIAGNOSTIC_HEADER, diagnostics.code)
+  }
   if (origin && allowedOrigins.includes(origin)) {
-    const headers = new Headers(response.headers)
     headers.set('access-control-allow-origin', origin)
     headers.set('access-control-allow-credentials', 'true')
     headers.append('vary', 'Origin')
-    return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
   }
-  return response
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
 }
 
 export async function getBetterAuthSession(request: Request, bindings: BetterAuthRuntimeBindings) {
