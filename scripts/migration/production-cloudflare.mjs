@@ -61,40 +61,54 @@ async function cloudflare(path, options = {}) {
   return payload
 }
 
-async function ensureD1(name) {
+async function findD1(name) {
   const listed = await cloudflare(`/d1/database?name=${encodeURIComponent(name)}&per_page=100`)
   const matches = (listed.result || []).filter((row) => row?.name === name)
   if (matches.length > 1) throw new Error(`DUPLICATE_D1_NAME:${name}`)
-  let database = matches[0]
-  let created = false
-  if (!database) {
-    const response = await cloudflare('/d1/database', {
-      method: 'POST',
-      body: JSON.stringify({ name }),
-    })
-    database = response.result
-    created = true
+  if (!matches[0]) return null
+  return { name, id: assertUuid(matches[0]?.uuid || matches[0]?.id, `D1_${name}`), created: false }
+}
+
+async function ensureD1(name) {
+  const existing = await findD1(name)
+  if (existing) return existing
+  const response = await cloudflare('/d1/database', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+  const id = assertUuid(response.result?.uuid || response.result?.id, `D1_${name}`)
+  return { name, id, created: true }
+}
+
+async function listQueues() {
+  const rows = []
+  for (let page = 1; page <= 20; page += 1) {
+    const listed = await cloudflare(`/queues?page=${page}&per_page=100`)
+    if (Array.isArray(listed.result)) rows.push(...listed.result)
+    const totalPages = Number(listed?.result_info?.total_pages || 1)
+    if (page >= totalPages) break
   }
-  const id = assertUuid(database?.uuid || database?.id, `D1_${name}`)
-  return { name, id, created }
+  return rows
+}
+
+async function findQueue(name, rows = null) {
+  const all = rows || await listQueues()
+  const matches = all.filter((row) => row?.queue_name === name)
+  if (matches.length > 1) throw new Error(`DUPLICATE_QUEUE_NAME:${name}`)
+  if (!matches[0]) return null
+  if (!matches[0]?.queue_id) throw new Error(`QUEUE_ID_MISSING:${name}`)
+  return { name, id: String(matches[0].queue_id), created: false }
 }
 
 async function ensureQueue(name) {
-  const listed = await cloudflare('/queues?page=1&per_page=100')
-  const matches = (listed.result || []).filter((row) => row?.queue_name === name)
-  if (matches.length > 1) throw new Error(`DUPLICATE_QUEUE_NAME:${name}`)
-  let queue = matches[0]
-  let created = false
-  if (!queue) {
-    const response = await cloudflare('/queues', {
-      method: 'POST',
-      body: JSON.stringify({ queue_name: name }),
-    })
-    queue = response.result
-    created = true
-  }
-  if (!queue?.queue_id) throw new Error(`QUEUE_ID_MISSING:${name}`)
-  return { name, id: String(queue.queue_id), created }
+  const existing = await findQueue(name)
+  if (existing) return existing
+  const response = await cloudflare('/queues', {
+    method: 'POST',
+    body: JSON.stringify({ queue_name: name }),
+  })
+  if (!response.result?.queue_id) throw new Error(`QUEUE_ID_MISSING:${name}`)
+  return { name, id: String(response.result.queue_id), created: true }
 }
 
 export function buildProductionWranglerConfig(baseConfig, resources, { attachDomain = false } = {}) {
@@ -146,9 +160,7 @@ export function buildProductionWranglerConfig(baseConfig, resources, { attachDom
     durable_objects: structuredClone(staging.durable_objects || { bindings: [] }),
     exports: structuredClone(staging.exports || {}),
   }
-  if (attachDomain) {
-    production.routes = [{ pattern: PRODUCTION.domain, custom_domain: true }]
-  }
+  if (attachDomain) production.routes = [{ pattern: PRODUCTION.domain, custom_domain: true }]
   config.env.production = production
   return config
 }
@@ -162,13 +174,11 @@ async function writeGithubEnv(entries) {
   )
 }
 
-async function prepare() {
-  const resources = {
-    database: await ensureD1(PRODUCTION.database),
-    authDatabase: await ensureD1(PRODUCTION.authDatabase),
-    queue: await ensureQueue(PRODUCTION.queue),
-    dlq: await ensureQueue(PRODUCTION.dlq),
+async function materialize(resources, { mode }) {
+  if (!resources.database || !resources.authDatabase || !resources.queue || !resources.dlq) {
+    throw new Error('PRODUCTION_RESOURCE_SET_INCOMPLETE')
   }
+  if (resources.database.id === resources.authDatabase.id) throw new Error('PRODUCTION_D1_COLLISION')
   if (resources.queue.id === resources.dlq.id) throw new Error('PRODUCTION_QUEUE_DLQ_COLLISION')
 
   const attachDomain = String(process.env.YUISYNC_PRODUCTION_ATTACH_DOMAIN || '').toLowerCase() === 'true'
@@ -178,6 +188,7 @@ async function prepare() {
   await mkdir(dirname(ARTIFACT), { recursive: true })
   await writeFile(ARTIFACT, `${JSON.stringify({
     schema: 'yuisync-production-cloudflare/v1',
+    mode,
     worker: PRODUCTION.worker,
     domain: PRODUCTION.domain,
     attach_domain: attachDomain,
@@ -191,13 +202,29 @@ async function prepare() {
     YUISYNC_PRODUCTION_WORKER: PRODUCTION.worker,
     YUISYNC_PRODUCTION_DOMAIN: PRODUCTION.domain,
   })
-  console.log(JSON.stringify({
-    status: 'prepared',
-    worker: PRODUCTION.worker,
-    domain: PRODUCTION.domain,
-    attach_domain: attachDomain,
-    resources,
-  }))
+  console.log(JSON.stringify({ status: mode, worker: PRODUCTION.worker, domain: PRODUCTION.domain, attach_domain: attachDomain, resources }))
+}
+
+async function prepare() {
+  return materialize({
+    database: await ensureD1(PRODUCTION.database),
+    authDatabase: await ensureD1(PRODUCTION.authDatabase),
+    queue: await ensureQueue(PRODUCTION.queue),
+    dlq: await ensureQueue(PRODUCTION.dlq),
+  }, { mode: 'prepared' })
+}
+
+async function resolveExisting() {
+  const queues = await listQueues()
+  const resources = {
+    database: await findD1(PRODUCTION.database),
+    authDatabase: await findD1(PRODUCTION.authDatabase),
+    queue: await findQueue(PRODUCTION.queue, queues),
+    dlq: await findQueue(PRODUCTION.dlq, queues),
+  }
+  const missing = Object.entries(resources).filter(([, value]) => !value).map(([key]) => key)
+  if (missing.length) throw new Error(`PRODUCTION_RESOURCES_MISSING:${missing.join(',')}`)
+  return materialize(resources, { mode: 'resolved' })
 }
 
 async function getZone() {
@@ -231,9 +258,7 @@ async function clearConflictingCname() {
   const { zone, records } = await inspectDomain()
   const conflicts = records.filter((record) => record.name === PRODUCTION.domain && record.type === 'CNAME')
   const nonCname = records.filter((record) => record.name === PRODUCTION.domain && record.type !== 'CNAME')
-  if (nonCname.length) {
-    throw new Error(`PRODUCTION_DOMAIN_HAS_NON_CNAME_RECORDS:${nonCname.map((record) => record.type).join(',')}`)
-  }
+  if (nonCname.length) throw new Error(`PRODUCTION_DOMAIN_HAS_NON_CNAME_RECORDS:${nonCname.map((record) => record.type).join(',')}`)
   if (!conflicts.length) {
     console.log(JSON.stringify({ status: 'no-conflicting-cname' }))
     return
@@ -253,9 +278,10 @@ async function clearConflictingCname() {
 
 async function main() {
   if (COMMAND === 'prepare') return prepare()
+  if (COMMAND === 'resolve') return resolveExisting()
   if (COMMAND === 'inspect-domain') return inspectDomain()
   if (COMMAND === 'clear-conflicting-cname') return clearConflictingCname()
-  throw new Error('Usage: node scripts/migration/production-cloudflare.mjs <prepare|inspect-domain|clear-conflicting-cname>')
+  throw new Error('Usage: node scripts/migration/production-cloudflare.mjs <prepare|resolve|inspect-domain|clear-conflicting-cname>')
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
