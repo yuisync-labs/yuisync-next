@@ -300,17 +300,24 @@ await record('clients_pets', async () => ({ objects: requireObjects(['clients','
 await record('catalog_services', async () => ({ objects: requireObjects(['catalog_products','services','compat_products','compat_petshop_services']) }))
 await record('inventory', async () => ({ objects: requireObjects(['inventory_balances','inventory_movements']) }))
 await record('operational_config', async () => ({ objects: requireObjects(['tenant_module_settings','module_settings_extensions']) }))
-await record('appointments', async () => ({ objects: requireObjects(['appointments','appointment_service_items','compat_appointments']) }))
+await record('appointments', async () => ({ objects: requireObjects(['appointments','appointment_services','compat_appointments']) }))
 await record('motodog', async () => ({ objects: requireObjects(['service_delivery_orders','compat_service_delivery_orders']) }))
 await record('sales_checkout', async () => ({ objects: requireObjects(['sales','sale_items','compat_sales','compat_sale_items']) }))
-await record('payments_splits', async () => ({ objects: requireObjects(['payments','sale_payment_splits','compat_sale_payment_splits']) }))
+await record('payments_splits', async () => ({ objects: requireObjects(['payments','payment_splits','compat_sale_payment_splits']) }))
 await record('chat', async () => ({ objects: requireObjects(['chat_threads','chat_messages','compat_chat_sessions','compat_chat_messages']) }))
-await record('operation_state', async () => ({ objects: requireObjects(['operation_state','operation_events']) }))
-await record('fiscal_outbox', async () => ({ objects: requireObjects(['fiscal_documents','fiscal_outbox']) }))
+await record('operation_state', async () => ({ objects: requireObjects(['operation_checkpoints','operation_effects']) }))
+await record('fiscal_outbox', async () => ({ objects: requireObjects(['fiscal_documents','effect_outbox']) }))
 await record('auth_db', async () => ({ objects: requireObjects(['user','session','account','verification'],'AUTH_DB') }))
-await record('operational_reconciliation', async () => ({ object_count: requireObjects(['migration_runs','migration_identity_map','migration_failures','reconciliation_results']).length }))
-await record('ai_lab_migration', async () => ({ objects: requireObjects(['ai_training_documents','ai_training_examples']) }))
-await record('ai_lab_reconciliation', async () => ({ object_count: requireObjects(['compat_ai_training_documents','compat_ai_training_examples']).length }))
+await record('operational_reconciliation', async () => {
+  const violations = d1Rows('DB', 'PRAGMA foreign_key_check')
+  if (violations.length) {
+    const first = violations[0] || {}
+    throw new Error(`FOREIGN_KEY_VIOLATIONS:${violations.length}:${first.table || 'unknown'}:${first.rowid ?? 'unknown'}`)
+  }
+  return { foreign_key_violations: 0 }
+})
+await record('ai_lab_migration', async () => ({ objects: requireObjects(['ai_niches','ai_companies','ai_prompt_versions','ai_training_documents','ai_playground_runs']) }))
+await record('ai_lab_reconciliation', async () => ({ objects: requireObjects(['compat_niches','compat_companies','compat_prompt_versions','compat_ai_training_documents','compat_ai_playground_runs']) }))
 await record('auth_identity_transition', authProbe)
 await record('auth_signin', authProbe)
 await record('frontend_no_supabase', async () => ({ check: run('node',['scripts/check-no-runtime-supabase.mjs']) }))
