@@ -52,42 +52,59 @@ export function classifyApexRecords(records) {
   const exact = Array.isArray(records) ? records : []
   return {
     cnames: exact.filter((record) => record?.type === 'CNAME'),
-    blockers: exact.filter((record) => record?.type !== 'CNAME'),
+    preserved: exact.filter((record) => record?.type !== 'CNAME'),
   }
 }
 
 function backupRecord(record) {
-  return {
-    type: 'CNAME',
+  const output = {
+    type: String(record?.type || ''),
     name: DOMAIN,
     content: String(record?.content || ''),
     ttl: Number(record?.ttl || 1),
-    proxied: Boolean(record?.proxied),
   }
+  if (typeof record?.proxied === 'boolean') output.proxied = record.proxied
+  if (Number.isFinite(Number(record?.priority))) output.priority = Number(record.priority)
+  return output
+}
+
+function recordKey(record) {
+  return [
+    String(record?.type || ''),
+    String(record?.content || ''),
+    String(typeof record?.proxied === 'boolean' ? record.proxied : ''),
+    String(Number.isFinite(Number(record?.priority)) ? Number(record.priority) : ''),
+  ].join(':')
 }
 
 async function backupAndClear() {
   const activeZone = await zone()
   const records = await apexRecords(activeZone.id)
-  const { cnames, blockers } = classifyApexRecords(records)
-  if (blockers.length) {
-    throw new Error(`PRODUCTION_DOMAIN_DNS_BLOCKED:${blockers.map((row) => row?.type || 'unknown').join(',')}`)
-  }
-  if (cnames.some((record) => !record?.id || !record?.content)) throw new Error('PRODUCTION_CNAME_INVALID')
+  const { cnames, preserved } = classifyApexRecords(records)
+  if (records.some((record) => !record?.id || !record?.type || !record?.content)) throw new Error('PRODUCTION_APEX_RECORD_INVALID')
 
   const backup = {
-    schema: 'yuisync-production-dns-backup/v1',
+    schema: 'yuisync-production-dns-backup/v2',
     zone_id: activeZone.id,
     hostname: DOMAIN,
-    records: cnames.map(backupRecord),
+    records: records.map(backupRecord),
+    removed_records: cnames.map(backupRecord),
   }
   await mkdir(dirname(BACKUP_PATH), { recursive: true })
   await writeFile(BACKUP_PATH, `${JSON.stringify(backup, null, 2)}\n`, { mode: 0o600 })
 
+  // Cloudflare Custom Domains explicitly conflict with an existing CNAME.
+  // Other apex records (including A/AAAA) are preserved unless Cloudflare itself
+  // changes them while attaching the Custom Domain.
   for (const record of cnames) {
     await cf(`/zones/${encodeURIComponent(activeZone.id)}/dns_records/${encodeURIComponent(String(record.id))}`, { method: 'DELETE' })
   }
-  console.log(JSON.stringify({ status: 'backed-up-and-cleared', hostname: DOMAIN, removed_cnames: cnames.length }))
+  console.log(JSON.stringify({
+    status: 'backed-up-and-cleared',
+    hostname: DOMAIN,
+    removed_cnames: cnames.length,
+    preserved_types: preserved.map((record) => record?.type || 'unknown'),
+  }))
 }
 
 async function restore() {
@@ -97,40 +114,45 @@ async function restore() {
   } catch (error) {
     throw new Error(`PRODUCTION_DNS_BACKUP_REQUIRED:${error instanceof Error ? error.message : String(error)}`)
   }
-  if (backup?.schema !== 'yuisync-production-dns-backup/v1' || backup?.hostname !== DOMAIN || !backup?.zone_id) {
+  if (backup?.schema !== 'yuisync-production-dns-backup/v2' || backup?.hostname !== DOMAIN || !backup?.zone_id || !Array.isArray(backup?.records)) {
     throw new Error('PRODUCTION_DNS_BACKUP_INVALID')
   }
 
-  const existing = await apexRecords(String(backup.zone_id))
-  if (existing.length) {
-    const expected = new Set((backup.records || []).map((record) => `${record.type}:${record.content}:${Boolean(record.proxied)}`))
-    const actual = new Set(existing.map((record) => `${record.type}:${record.content}:${Boolean(record.proxied)}`))
-    if (expected.size === actual.size && [...expected].every((value) => actual.has(value))) {
-      console.log(JSON.stringify({ status: 'dns-already-restored', hostname: DOMAIN }))
-      return
-    }
-    throw new Error(`PRODUCTION_DNS_RESTORE_CONFLICT:${existing.map((record) => record?.type || 'unknown').join(',')}`)
-  }
+  let existing = await apexRecords(String(backup.zone_id))
+  const expectedKeys = new Set(backup.records.map(recordKey))
+  let existingKeys = new Set(existing.map(recordKey))
 
-  for (const record of backup.records || []) {
+  for (const record of backup.records) {
+    const key = recordKey(record)
+    if (existingKeys.has(key)) continue
     await cf(`/zones/${encodeURIComponent(String(backup.zone_id))}/dns_records`, {
       method: 'POST',
       body: JSON.stringify(record),
     })
+    existingKeys.add(key)
   }
-  console.log(JSON.stringify({ status: 'dns-restored', hostname: DOMAIN, restored_cnames: (backup.records || []).length }))
+
+  existing = await apexRecords(String(backup.zone_id))
+  const finalKeys = new Set(existing.map(recordKey))
+  const missing = [...expectedKeys].filter((key) => !finalKeys.has(key))
+  const unexpected = [...finalKeys].filter((key) => !expectedKeys.has(key))
+  if (missing.length || unexpected.length) {
+    throw new Error(`PRODUCTION_DNS_RESTORE_CONFLICT:missing=${missing.length}:unexpected=${unexpected.length}`)
+  }
+
+  console.log(JSON.stringify({ status: 'dns-restored', hostname: DOMAIN, restored_records: backup.records.length }))
 }
 
 async function inspect() {
   const activeZone = await zone()
   const records = await apexRecords(activeZone.id)
-  const { cnames, blockers } = classifyApexRecords(records)
+  const { cnames, preserved } = classifyApexRecords(records)
   console.log(JSON.stringify({
     status: 'inspected',
     hostname: DOMAIN,
     zone_id: activeZone.id,
     cnames: cnames.map(backupRecord),
-    blocker_types: blockers.map((record) => record?.type || 'unknown'),
+    preserved_types: preserved.map((record) => record?.type || 'unknown'),
   }))
 }
 
