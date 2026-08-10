@@ -59,6 +59,33 @@ function assert(condition, code, details = {}) {
   if (!condition) throw new Error(`${code}:${JSON.stringify(details)}`)
 }
 
+function sleep(ms) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms))
+}
+
+async function waitForCheckoutRoute() {
+  const attempts = 45
+  let last = null
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const response = await fetch(`${BASE_URL}/api/petshop/checkout?deployment_probe=${Date.now()}-${attempt}`, {
+      method: 'GET',
+      headers: { 'cache-control': 'no-cache' },
+      cache: 'no-store',
+    })
+    last = {
+      attempt,
+      status: response.status,
+      url: response.url,
+      redirected: response.redirected,
+      body: await response.text().catch(() => ''),
+    }
+    if (response.status === 405) return last
+    if (response.status !== 404) throw new Error(`STAGING_PDV_ROUTE_UNEXPECTED:${JSON.stringify(last)}`)
+    if (attempt < attempts) await sleep(1000)
+  }
+  throw new Error(`STAGING_PDV_ROUTE_NOT_DEPLOYED:${JSON.stringify(last)}`)
+}
+
 const fixture = JSON.parse(await readFile(FIXTURE_PATH, 'utf8'))
 const tenantId = String(fixture?.tenantId || '')
 const runId = String(fixture?.runId || '')
@@ -68,6 +95,9 @@ const password = String(process.env.E2E_PASSWORD || '')
 assert(tenantId.startsWith('e2e-') && tenantId.endsWith('-tenant'), 'UNSAFE_FIXTURE_TENANT', { tenantId })
 assert(runId.startsWith('e2e-'), 'INVALID_FIXTURE_RUN', { runId })
 assert(email.endsWith('@staging.invalid') && password.length >= 12, 'STAGING_E2E_CREDENTIALS_REQUIRED')
+
+const routeProbe = await waitForCheckoutRoute()
+console.log(JSON.stringify({ event: 'staging.pdv.route.ready', attempt: routeProbe.attempt, status: routeProbe.status }))
 
 const productId = `${runId}-pdv-product`
 const operationKey = `${runId}-pdv-sale`
@@ -115,7 +145,7 @@ const first = await jsonResponse(await fetch(`${BASE_URL}/api/petshop/checkout`,
   headers: { 'content-type': 'application/json', cookie, origin: BASE_URL },
   body: JSON.stringify(checkoutPayload),
 }))
-assert(first.response.status === 201 && first.body?.success === true, 'STAGING_PDV_CHECKOUT_FAILED', { status: first.response.status, body: first.body })
+assert(first.response.status === 201 && first.body?.success === true, 'STAGING_PDV_CHECKOUT_FAILED', { status: first.response.status, url: first.response.url, redirected: first.response.redirected, body: first.body })
 assert(first.body?.data?.sale?.subtotal === 25, 'STAGING_PDV_SUBTOTAL_MISMATCH', first.body)
 assert(first.body?.data?.sale?.discount === 2.5, 'STAGING_PDV_DISCOUNT_MISMATCH', first.body)
 assert(first.body?.data?.sale?.delivery_fee === 12.34, 'STAGING_PDV_SERVER_DELIVERY_FEE_MISMATCH', first.body)
