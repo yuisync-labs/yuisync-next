@@ -3,7 +3,10 @@ import { applyD1Migrations } from 'cloudflare:test'
 
 const testEnv = env as EdgeEnv & {
   DB: D1Database
+  AUTH_DB: D1Database
   TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1]
+  TEST_AUTH_MIGRATIONS: Parameters<typeof applyD1Migrations>[1]
 }
 
 await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS)
+await applyD1Migrations(testEnv.AUTH_DB, testEnv.TEST_AUTH_MIGRATIONS)

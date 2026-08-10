@@ -44,11 +44,13 @@
     "typecheck:contracts": "tsc -p tsconfig.contracts.json --noEmit",
     "test:contracts": "vitest run --config vitest.contracts.config.ts",
     "check:contract-boundaries": "node scripts/check-contract-boundaries.mjs",
+    "check:no-runtime-supabase": "node scripts/check-no-runtime-supabase.mjs",
+    "check:edge-compat-surface": "node scripts/check-edge-compat-surface.mjs",
     "edge:types": "npm run types --workspace @yuisync/edge-api",
     "edge:types:check": "npm run types:check --workspace @yuisync/edge-api",
     "edge:typecheck": "npm run typecheck --workspace @yuisync/edge-api",
     "edge:test": "npm run test --workspace @yuisync/edge-api",
-    "edge:dry-run": "npm run deploy:dry-run --workspace @yuisync/edge-api",
+    "edge:dry-run": "npm run build && npm run deploy:dry-run --workspace @yuisync/edge-api",
     "edge:check": "npm run edge:types:check && npm run edge:typecheck && npm run edge:test && npm run edge:dry-run",
     "edge:dev": "npm run dev --workspace @yuisync/edge-api",
     "edge:smoke": "node scripts/smoke-edge-staging.mjs"
@@ -65,7 +67,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.1",
-    "read-excel-file": "^9.3.3",
+    "read-excel-file": "9.3.5",
     "recharts": "^3.9.2",
     "zod": "^4.4.3"
   },
@@ -97,6 +99,7 @@
     "node": "22.x"
   },
   "overrides": {
-    "undici": "7.29.0"
+    "undici": "7.29.0",
+    "nanoid": "3.3.17"
   }
 }

@@ -1,0 +1,25 @@
+name: Runtime Supabase audit
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    if: >-
+      github.event.label.name == 'runtime-supabase-audit' &&
+      github.event.pull_request.base.ref == 'architecture/cloudflare-foundation' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Inventory frontend data surface
+        run: node scripts/inventory-frontend-data-surface.mjs
+      - name: Scan frontend runtime
+        run: node scripts/check-no-runtime-supabase.mjs

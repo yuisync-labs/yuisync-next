@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react'
-import { useAuth } from '../hooks/useAuth'
+import { useAuthCtx } from '../../context/AuthContext'
 import StarField from '../components/StarField'
 import { useNavigate } from 'react-router-dom'
 
 export default function LoginPage() {
-  const { signIn } = useAuth()
+  const { signIn } = useAuthCtx()
   const navigate = useNavigate()
   const [form, setForm] = useState({ email: '', password: '' })
   const [showPw, setShowPw] = useState(false)
@@ -147,7 +147,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-muted/50 mt-6">
-          SaaS Multi-tenant • Supabase Auth
+          SaaS Multi-tenant • Better Auth
         </p>
       </div>
     </div>

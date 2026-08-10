@@ -11,7 +11,6 @@ permissions:
 
 concurrency:
   group: edge-staging-deployment
-  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -28,7 +27,7 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository
       )
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     environment:
       name: cloudflare-staging
       url: ${{ steps.deploy.outputs.deployment-url }}
@@ -52,25 +51,45 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID"
 
       - run: npm ci
+
+      - name: Require complete Edge frontend compatibility
+        run: npm run check:edge-compat-surface -- --strict
+
       - run: npm run edge:check
 
-      - name: Apply pending D1 staging migrations
+      - name: Apply main D1 staging migrations
         working-directory: apps/edge-api
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler d1 migrations apply yuisync-next-staging --env staging --remote
+        run: npx wrangler d1 migrations apply DB --env staging --remote
 
-      - name: Verify D1 foundation metadata
+      - name: Apply Better Auth D1 staging migrations
         working-directory: apps/edge-api
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: >-
-          npx wrangler d1 execute yuisync-next-staging --env staging --remote
-          --command "SELECT value FROM _yuisync_system_metadata WHERE key = 'schema_version';"
+        run: npx wrangler d1 migrations apply AUTH_DB --env staging --remote
 
-      - name: Deploy staging Worker
+      - name: Verify D1 schema version 21
+        working-directory: apps/edge-api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          RESULT="$(npx wrangler d1 execute DB --env staging --remote --json --command "SELECT value FROM _yuisync_system_metadata WHERE key = 'schema_version';")"
+          node -e "const r=JSON.parse(process.argv[1]);const rows=r?.[0]?.results||r?.results||[];if(String(rows[0]?.value)!=='21')throw new Error('Staging D1 schema is not version 21');" "$RESULT"
+
+      - name: Verify Better Auth core schema
+        working-directory: apps/edge-api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          RESULT="$(npx wrangler d1 execute AUTH_DB --env staging --remote --json --command "SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('user','session','account','verification') ORDER BY name;")"
+          node -e "const r=JSON.parse(process.argv[1]);const rows=r?.[0]?.results||r?.results||[];const a=rows.map(x=>x.name).sort().join(',');if(a!=='account,session,user,verification')throw new Error('AUTH_DB core schema is incomplete');" "$RESULT"
+
+      - name: Deploy staging Worker and SPA assets
         id: deploy
         uses: cloudflare/wrangler-action@v4
         with:
@@ -85,7 +104,19 @@ jobs:
           EDGE_STAGING_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: npm run edge:smoke -- "$EDGE_STAGING_URL"
 
-      - name: Confirm D1 and coordination readiness
+      - name: Confirm SPA is served from the Worker
+        env:
+          EDGE_STAGING_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          HEADERS="$(mktemp)"
+          BODY="$(mktemp)"
+          curl --silent --show-error --dump-header "$HEADERS" --output "$BODY" "$EDGE_STAGING_URL/"
+          grep -Eiq '^content-type:.*text/html' "$HEADERS"
+          grep -qi '<div id="root"' "$BODY"
+          rm -f "$HEADERS" "$BODY"
+
+      - name: Confirm D1, auth and coordination readiness
         env:
           EDGE_STAGING_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: |
@@ -96,20 +127,10 @@ jobs:
           node - "$BODY_FILE" <<'NODE'
           const fs = require('node:fs');
           const body = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          if (
-            body.status !== 'ready' ||
-            body.checks?.database !== 'ready' ||
-            body.checks?.coordination !== 'ready'
-          ) {
+          if (body.status !== 'ready' || body.checks?.database !== 'ready' || body.checks?.schema_version !== '21' || body.checks?.coordination !== 'ready' || body.checks?.auth_database !== 'configured') {
             throw new Error('Staging readiness is not healthy after deployment.');
           }
-          console.log(JSON.stringify({
-            status: body.status,
-            database: body.checks.database,
-            coordination: body.checks.coordination,
-            environment: body.environment,
-            database_latency_ms: body.database_latency_ms,
-          }));
+          console.log(JSON.stringify({status:body.status,database:body.checks.database,schema:body.checks.schema_version,auth_database:body.checks.auth_database,coordination:body.checks.coordination,environment:body.environment}));
           NODE
           rm -f "$BODY_FILE"
 
@@ -121,7 +142,8 @@ jobs:
           echo "## Edge staging deployment" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: \`${DEPLOYED_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: ${EDGE_STAGING_URL}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- D1 migrations: applied" >> "$GITHUB_STEP_SUMMARY"
-          echo "- D1 readiness: passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Main D1 schema: v21" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Better Auth D1: migrated" >> "$GITHUB_STEP_SUMMARY"
+          echo "- AI Lab D1: migrated" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SPA assets: served by Worker" >> "$GITHUB_STEP_SUMMARY"
           echo "- Durable Object binding readiness: passed" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Health and sanitized 404: passed" >> "$GITHUB_STEP_SUMMARY"

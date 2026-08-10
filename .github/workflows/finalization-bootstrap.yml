@@ -1,0 +1,141 @@
+name: Finalization bootstrap
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: finalization-bootstrap-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  lockfile:
+    name: Refresh reproducible lockfile
+    if: >-
+      github.event.label.name == 'finalization-bootstrap' &&
+      github.event.pull_request.base.ref == 'architecture/cloudflare-foundation' &&
+      github.event.pull_request.head.ref == 'phase/08-finalization' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - name: Refresh lockfile
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Commit lockfile when dependencies changed
+        shell: bash
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo 'Lockfile already matches workspace manifests.'
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add package-lock.json
+            git commit -m 'Refresh finalization lockfile'
+            git pull --rebase origin ${{ github.event.pull_request.head.ref }}
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
+
+  bootstrap-cloudflare:
+    name: Bootstrap staging AUTH_DB
+    needs: lockfile
+    if: needs.lockfile.result == 'success'
+    runs-on: ubuntu-latest
+    environment: cloudflare-staging
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - name: Install dependencies for guarded bootstrap
+        run: npm ci --ignore-scripts
+      - name: Require scoped Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+
+      - name: Provision or reuse staging AUTH_DB
+        run: node scripts/bootstrap-cloudflare-auth-db.mjs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Provision Better Auth secret once
+        shell: bash
+        working-directory: apps/edge-api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          set +x
+          SECRETS_JSON="$(npx wrangler secret list --env staging --format json)"
+          if node -e "const rows=JSON.parse(process.argv[1]);process.exit(rows.some((row)=>row.name==='BETTER_AUTH_SECRET')?0:1)" "$SECRETS_JSON"; then
+            echo 'BETTER_AUTH_SECRET is already configured; preserving the existing value.'
+          else
+            GENERATED_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
+            printf '%s' "$GENERATED_SECRET" | npx wrangler secret put BETTER_AUTH_SECRET --env staging
+            unset GENERATED_SECRET
+            echo 'BETTER_AUTH_SECRET was provisioned for staging.'
+          fi
+          unset SECRETS_JSON
+
+      - name: Sync optional OpenAI staging secret
+        shell: bash
+        working-directory: apps/edge-api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          set +x
+          if [ -n "${OPENAI_API_KEY:-}" ]; then
+            printf '%s' "$OPENAI_API_KEY" | npx wrangler secret put OPENAI_API_KEY --env staging
+            echo 'OPENAI_API_KEY is configured for the staging Worker.'
+          else
+            echo 'OPENAI_API_KEY is not configured in the cloudflare-staging environment; AI Lab provider smoke tests will remain gated.'
+          fi
+
+      - name: Generate Worker binding types
+        run: npm run edge:types
+
+      - name: Commit generated AUTH_DB binding
+        shell: bash
+        run: |
+          if git diff --quiet -- apps/edge-api/wrangler.jsonc apps/edge-api/worker-configuration.d.ts; then
+            echo 'AUTH_DB binding is already current.'
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add apps/edge-api/wrangler.jsonc apps/edge-api/worker-configuration.d.ts
+            git commit -m 'Bootstrap staging Better Auth database'
+            git pull --rebase origin ${{ github.event.pull_request.head.ref }}
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
+
+      - name: Verify generated config and build
+        run: |
+          npm run build
+          npm run edge:typecheck

@@ -3,7 +3,7 @@ name: Quality
 on:
   pull_request:
   push:
-    branches: [main, architecture/cloudflare-foundation]
+    branches: [main, architecture/cloudflare-foundation, "phase/**"]
   workflow_dispatch:
   schedule:
     - cron: '17 3 * * *'
@@ -13,8 +13,6 @@ permissions:
 
 concurrency:
   group: quality-${{ github.workflow }}-${{ github.ref }}
-  # New commits supersede obsolete PR runs, but a manual rerun must never
-  # cancel the attempt it is intended to recover.
   cancel-in-progress: ${{ github.run_attempt == 1 }}
 
 jobs:
@@ -60,6 +58,8 @@ jobs:
           cache: npm
           package-manager-cache: false
       - run: npm ci
+      - run: npm run check:no-runtime-supabase
+      - run: npm run check:edge-compat-surface
       - run: npm run typecheck
       - run: npm run typecheck:contracts
       - run: npm run check:contract-boundaries

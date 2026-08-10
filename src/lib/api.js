@@ -1,24 +1,11 @@
-import { supabase } from './supabase'
-
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 
-async function getAccessToken() {
-  const { data: { session } } = await supabase.auth.getSession()
-
-  if (!session?.access_token) {
-    throw new Error('Sua sessão expirou. Faça login novamente.')
-  }
-
-  return session.access_token
-}
-
 async function apiRequest(path, options = {}) {
-  const token = await getAccessToken()
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
       ...(options.headers || {}),
     },
   })
@@ -26,13 +13,29 @@ async function apiRequest(path, options = {}) {
   const payload = await response.json().catch(() => ({}))
 
   if (!response.ok) {
-    const error = new Error(payload.error?.message || payload.error || 'Erro ao processar a solicitação.')
+    const error = new Error(payload.error?.message || payload.error || payload.message || 'Erro ao processar a solicitação.')
     error.status = response.status
     error.code = payload.error?.code || payload.code || ''
     throw error
   }
 
   return payload
+}
+
+export function getAppBootstrap() {
+  return apiRequest('/app/bootstrap', { method: 'GET' })
+}
+
+export function getAppSettings({ tenantId, moduleId }) {
+  const params = new URLSearchParams({ tenant_id: tenantId, module_id: moduleId })
+  return apiRequest(`/app/settings?${params.toString()}`, { method: 'GET' })
+}
+
+export function createAppTenant(name) {
+  return apiRequest('/app/tenants', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
 }
 
 export function checkoutPetshop(payload) {
@@ -179,7 +182,6 @@ export function runPetbotDiagnosticCase({ tenantId, scenarioId, suiteId }) {
   })
 }
 
-// Mantido para chamadas antigas. O painel novo usa a suíte em casos individuais.
 export function runPetbotLiveE2E({ tenantId }) {
   return preparePetbotDiagnosticSuite({ tenantId })
 }

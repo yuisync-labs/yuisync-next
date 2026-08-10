@@ -1,102 +1,75 @@
-import { useState, useEffect } from 'react'
-import { supabase } from '../../lib/supabase'
+import { useCallback, useEffect, useState } from 'react'
+
+import { getAppBootstrap } from '../../lib/api'
+import { getAuthSession, signInWithPassword, signOutSession } from '../../lib/authApi'
 
 export function useAuth() {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
+  const [bootstrap, setBootstrap] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      if (session) fetchProfile(session.user.id)
-      else setLoading(false)
-    })
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
-      setSession(nextSession)
-
-      // TOKEN_REFRESHED happens when the tab regains focus or after a while in
-      // the background. The profile did not change, so avoid reloading the
-      // entire tenant scope and flashing the application loading screen.
-      if (nextSession && event !== 'TOKEN_REFRESHED') fetchProfile(nextSession.user.id)
-      else {
-        if (!nextSession) {
-          setProfile(null)
-          setLoading(false)
-        }
-      }
-    })
-
-    return () => subscription.unsubscribe()
-  }, [])
-
-  async function fetchProfile(userId) {
+  const refresh = useCallback(async () => {
+    setLoading(true)
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle()
-
-      if (error) throw error
-      if (!data) {
-        await supabase.auth.signOut()
-        throw new Error('Perfil da dashboard nao encontrado para este acesso.')
+      const currentSession = await getAuthSession()
+      if (!currentSession?.user?.id) {
+        setSession(null)
+        setProfile(null)
+        setBootstrap(null)
+        return null
       }
 
-      if (!data.active) {
-        await supabase.auth.signOut()
-        throw new Error('Seu acesso está desativado.')
+      const appBootstrap = await getAppBootstrap()
+      if (!appBootstrap?.profile?.active) {
+        await signOutSession().catch(() => {})
+        setSession(null)
+        setProfile(null)
+        setBootstrap(null)
+        throw new Error('Seu acesso esta desativado.')
       }
 
-      setProfile(data)
-    } catch (e) {
-      console.error('Erro ao carregar perfil:', e.message)
+      setSession(currentSession)
+      setProfile(appBootstrap.profile)
+      setBootstrap(appBootstrap)
+      return appBootstrap
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  const signIn = async (email, password) => {
-    const normalizedEmail = String(email || '').trim().toLowerCase()
-    const result = await supabase.auth.signInWithPassword({ email: normalizedEmail, password })
+  useEffect(() => {
+    refresh().catch((error) => {
+      console.error('Erro ao carregar sessao:', error?.message || error)
+      setSession(null)
+      setProfile(null)
+      setBootstrap(null)
+      setLoading(false)
+    })
+  }, [refresh])
 
-    if (result.error || !result.data.session?.user?.id) {
+  const signIn = useCallback(async (email, password) => {
+    const result = await signInWithPassword(email, password)
+    if (result.error) return result
+
+    try {
+      await refresh()
       return result
-    }
-
-    const { data: profile, error } = await supabase
-      .from('profiles')
-      .select('active')
-      .eq('id', result.data.session.user.id)
-      .maybeSingle()
-
-    if (error) {
-      await supabase.auth.signOut()
-      return { data: { user: null, session: null }, error }
-    }
-
-    if (!profile) {
-      await supabase.auth.signOut()
+    } catch (error) {
+      await signOutSession().catch(() => {})
       return {
         data: { user: null, session: null },
-        error: new Error('Conta autenticada, mas sem perfil na dashboard. Recrie ou repare este acesso no painel de usuarios.'),
+        error: error instanceof Error ? error : new Error('Conta autenticada, mas sem acesso valido ao YuiSync.'),
       }
     }
+  }, [refresh])
 
-    if (!profile.active) {
-      await supabase.auth.signOut()
-      return {
-        data: { user: null, session: null },
-        error: new Error('Seu acesso está desativado. Procure um administrador.'),
-      }
-    }
+  const signOut = useCallback(async () => {
+    await signOutSession()
+    setSession(null)
+    setProfile(null)
+    setBootstrap(null)
+  }, [])
 
-    return result
-  }
-
-  const signOut = () => supabase.auth.signOut()
-
-  return { session, profile, loading, signIn, signOut }
+  return { session, profile, bootstrap, loading, signIn, signOut, refreshAuth: refresh }
 }

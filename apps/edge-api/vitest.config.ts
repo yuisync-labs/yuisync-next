@@ -7,6 +7,7 @@ import {
 import { defineConfig } from 'vitest/config'
 
 const migrationsPath = fileURLToPath(new URL('./migrations', import.meta.url))
+const authMigrationsPath = fileURLToPath(new URL('./auth-migrations', import.meta.url))
 
 export default defineConfig({
   plugins: [
@@ -15,9 +16,10 @@ export default defineConfig({
         configPath: './wrangler.test.jsonc',
       },
       miniflare: {
-        d1Databases: ['DB'],
+        d1Databases: ['DB', 'AUTH_DB'],
         bindings: {
           TEST_MIGRATIONS: await readD1Migrations(migrationsPath),
+          TEST_AUTH_MIGRATIONS: await readD1Migrations(authMigrationsPath),
         },
       },
     })),
