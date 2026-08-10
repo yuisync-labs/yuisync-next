@@ -117,6 +117,10 @@ export function buildProductionWranglerConfig(baseConfig, resources, { attachDom
   const staging = config.env.staging
   const production = {
     name: PRODUCTION.worker,
+    // Make the isolated canary endpoint explicit. Once the Custom Domain is
+    // attached, disable workers.dev so business traffic only uses yuisync.app.
+    workers_dev: !attachDomain,
+    preview_urls: false,
     vars: {
       APP_ENV: 'production',
       SERVICE_NAME: 'yuisync-edge-api',
@@ -257,8 +261,6 @@ async function inspectDomain() {
 async function clearConflictingCname() {
   const { zone, records } = await inspectDomain()
   const conflicts = records.filter((record) => record.name === PRODUCTION.domain && record.type === 'CNAME')
-  const nonCname = records.filter((record) => record.name === PRODUCTION.domain && record.type !== 'CNAME')
-  if (nonCname.length) throw new Error(`PRODUCTION_DOMAIN_HAS_NON_CNAME_RECORDS:${nonCname.map((record) => record.type).join(',')}`)
   if (!conflicts.length) {
     console.log(JSON.stringify({ status: 'no-conflicting-cname' }))
     return
