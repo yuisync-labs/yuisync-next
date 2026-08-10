@@ -204,8 +204,8 @@ async function parseWorkbook(file) {
     throw new Error('Formato nao suportado. Envie um arquivo .xlsx ou .csv.')
   }
 
-  const { default: readXlsxFile } = await import('read-excel-file/browser')
-  const matrix = await readXlsxFile(file)
+  const { readSheet } = await import('read-excel-file/browser')
+  const matrix = await readSheet(file)
   const [headers = [], ...dataRows] = matrix
   const normalizedHeaders = headers.map((header) => cleanText(header))
 

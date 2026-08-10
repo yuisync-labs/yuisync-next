@@ -3,25 +3,67 @@ name: Quality
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, architecture/cloudflare-foundation, "phase/**"]
   workflow_dispatch:
   schedule:
     - cron: '17 3 * * *'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.run_attempt == 1 }}
+
 jobs:
-  quality:
+  security-audit:
+    name: Security audit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
+          package-manager-cache: false
       - run: npm ci
       - run: npm run audit:ci
+
+  edge-runtime:
+    name: Cloudflare edge runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run edge:check
+
+  quality:
+    name: Typecheck, tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run check:no-runtime-supabase
+      - run: npm run check:edge-compat-surface
       - run: npm run typecheck
+      - run: npm run typecheck:contracts
+      - run: npm run check:contract-boundaries
+      - run: npm run test:contracts
       - run: npm run test
       - run: npm run test:petbot
       - run: npm run test:luna:unit
@@ -67,13 +109,16 @@ jobs:
       - run: npm run build
 
   e2e:
+    name: End-to-end
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
+          package-manager-cache: false
       - run: npm ci
       - id: e2e-readiness
         name: Check E2E credentials

@@ -8,6 +8,33 @@ function isThresholdSeverity(severity, threshold) {
   return (severityRank[String(severity || 'unknown').toLowerCase()] ?? 99) >= threshold
 }
 
+function advisorySummary(vulnerability, threshold) {
+  const direct = (vulnerability?.via || [])
+    .filter((entry) => entry && typeof entry === 'object' && isThresholdSeverity(entry.severity, threshold))
+    .map((entry) => ({
+      source: entry.source ?? null,
+      name: entry.name ?? null,
+      title: entry.title ?? null,
+      url: entry.url ?? null,
+      severity: entry.severity ?? null,
+      range: entry.range ?? null,
+    }))
+  const transitive = [...new Set((vulnerability?.via || [])
+    .filter((entry) => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter(Boolean))].sort()
+  return {
+    range: vulnerability?.range ?? null,
+    fix_available: vulnerability?.fixAvailable ?? null,
+    direct_advisories: direct,
+    transitive_via: transitive,
+  }
+}
+
+function isThresholdSeverityForRule(entry, threshold) {
+  return entry && typeof entry === 'object' && isThresholdSeverity(entry.severity, threshold)
+}
+
 function assessAllowlistRule({ packageName, vulnerability, rule, today, threshold }) {
   const severity = String(vulnerability?.severity || 'unknown').toLowerCase()
   if (!rule) return { accepted: false, reason: 'not_allowlisted' }
@@ -21,7 +48,7 @@ function assessAllowlistRule({ packageName, vulnerability, rule, today, threshol
 
   if (viaOnly.length > 0) {
     const directAdvisories = (vulnerability?.via || []).filter(
-      (entry) => entry && typeof entry === 'object' && isThresholdSeverity(entry.severity, threshold),
+      (entry) => isThresholdSeverityForRule(entry, threshold),
     )
     if (directAdvisories.length > 0) {
       return { accepted: false, reason: 'direct_advisory_not_allowlisted' }
@@ -73,10 +100,20 @@ export function evaluateAuditReport(report, allowlist, { today = new Date().toIS
     })
 
     if (assessment.accepted) accepted.push(assessment.entry)
-    else blocking.push({ package: packageName, severity, reason: assessment.reason, ...(assessment.details || {}) })
+    else blocking.push({
+      package: packageName,
+      severity,
+      reason: assessment.reason,
+      ...(assessment.details || {}),
+      ...advisorySummary(vulnerability, threshold),
+    })
   }
 
   return { accepted, blocking }
+}
+
+function annotationEscape(value) {
+  return String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')
 }
 
 async function main() {
@@ -98,7 +135,16 @@ async function main() {
 
   const evaluation = evaluateAuditReport(report, allowlist)
   console.log(JSON.stringify(evaluation, null, 2))
-  if (evaluation.blocking.length) process.exit(1)
+  if (evaluation.blocking.length) {
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      for (const item of evaluation.blocking) {
+        const advisory = item.direct_advisories?.[0]
+        const detail = advisory?.title || advisory?.url || item.transitive_via?.join(', ') || item.reason
+        console.error(`::error title=${annotationEscape(`npm audit: ${item.package}`)}::${annotationEscape(`${item.severity}: ${detail}; range=${item.range || 'unknown'}`)}`)
+      }
+    }
+    process.exit(1)
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

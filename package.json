@@ -4,6 +4,9 @@
   "description": "CRM completo - Supabase + OpenAI + React",
   "type": "module",
   "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "dev": "node scripts/dev-vite.mjs",
     "api": "node server/index.js",
@@ -15,7 +18,7 @@
     "test:transactions": "node --test test/transactionalStatic.test.mjs test/agendaOperationalInfrastructure.test.mjs",
     "test:e2e": "playwright test",
     "test:tenant": "node scripts/test-tenant-isolation.mjs",
-    "test:all": "npm run typecheck && npm run test && npm run test:petbot && npm run test:luna && npm run test:transactions && npm run build",
+    "test:all": "npm run typecheck && npm run typecheck:contracts && npm run check:contract-boundaries && npm run test:contracts && npm run test && npm run test:petbot && npm run test:luna && npm run test:transactions && npm run edge:check && npm run build",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview",
@@ -37,7 +40,20 @@
     "test:luna:eval": "node scripts/run-luna-evals.mjs",
     "test:luna:eval:full": "node scripts/run-luna-evals.mjs --groups all --max-cases 500",
     "test:luna:eval:contracts": "node --test test/luna/evalPlatform.test.mjs test/luna/evalApiStatic.test.mjs",
-    "test:luna:eval:ci": "npm run test:luna:eval:contracts && npm run test:luna:eval"
+    "test:luna:eval:ci": "npm run test:luna:eval:contracts && npm run test:luna:eval",
+    "typecheck:contracts": "tsc -p tsconfig.contracts.json --noEmit",
+    "test:contracts": "vitest run --config vitest.contracts.config.ts",
+    "check:contract-boundaries": "node scripts/check-contract-boundaries.mjs",
+    "check:no-runtime-supabase": "node scripts/check-no-runtime-supabase.mjs",
+    "check:edge-compat-surface": "node scripts/check-edge-compat-surface.mjs",
+    "edge:types": "npm run types --workspace @yuisync/edge-api",
+    "edge:types:check": "npm run types:check --workspace @yuisync/edge-api",
+    "edge:typecheck": "npm run typecheck --workspace @yuisync/edge-api",
+    "edge:test": "npm run test --workspace @yuisync/edge-api",
+    "edge:dry-run": "npm run build && npm run deploy:dry-run --workspace @yuisync/edge-api",
+    "edge:check": "npm run edge:types:check && npm run edge:typecheck && npm run edge:test && npm run edge:dry-run",
+    "edge:dev": "npm run dev --workspace @yuisync/edge-api",
+    "edge:smoke": "node scripts/smoke-edge-staging.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
@@ -51,8 +67,9 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.1",
-    "read-excel-file": "^9.3.3",
-    "recharts": "^3.9.2"
+    "read-excel-file": "9.3.5",
+    "recharts": "^3.9.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
@@ -80,5 +97,9 @@
   "license": "ISC",
   "engines": {
     "node": "22.x"
+  },
+  "overrides": {
+    "undici": "7.29.0",
+    "nanoid": "3.3.17"
   }
 }

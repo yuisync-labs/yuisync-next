@@ -1,0 +1,131 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "yuisync-edge-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-05",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  "preview_urls": true,
+  "keep_vars": false,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "assets": {
+    "directory": "../../dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*",
+      "/internal/*",
+      "/health",
+      "/ready"
+    ]
+  },
+  "vars": {
+    "APP_ENV": "local",
+    "SERVICE_NAME": "yuisync-edge-api",
+    "RELEASE_CHANNEL": "local",
+    "EDGE_DATABASE_ENABLED": "false",
+    "EDGE_ASYNC_ENABLED": "false",
+    "EDGE_COORDINATION_ENABLED": "false",
+    "EDGE_BETTER_AUTH_ENABLED": "false",
+    "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
+    "EDGE_AUTH_MIGRATION_ENABLED": "false"
+  },
+  "env": {
+    "local": {
+      "name": "yuisync-edge-api-local",
+      "vars": {
+        "APP_ENV": "local",
+        "SERVICE_NAME": "yuisync-edge-api",
+        "RELEASE_CHANNEL": "local",
+        "EDGE_DATABASE_ENABLED": "false",
+        "EDGE_ASYNC_ENABLED": "false",
+        "EDGE_COORDINATION_ENABLED": "false",
+        "EDGE_BETTER_AUTH_ENABLED": "false",
+        "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
+        "EDGE_AUTH_MIGRATION_ENABLED": "false"
+      }
+    },
+    "test": {
+      "name": "yuisync-edge-api-test",
+      "vars": {
+        "APP_ENV": "test",
+        "SERVICE_NAME": "yuisync-edge-api",
+        "RELEASE_CHANNEL": "test",
+        "EDGE_DATABASE_ENABLED": "false",
+        "EDGE_ASYNC_ENABLED": "false",
+        "EDGE_COORDINATION_ENABLED": "false",
+        "EDGE_BETTER_AUTH_ENABLED": "false",
+        "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
+        "EDGE_AUTH_MIGRATION_ENABLED": "false"
+      }
+    },
+    "staging": {
+      "name": "yuisync-edge-api-staging",
+      "vars": {
+        "APP_ENV": "staging",
+        "SERVICE_NAME": "yuisync-edge-api",
+        "RELEASE_CHANNEL": "staging",
+        "EDGE_DATABASE_ENABLED": "true",
+        "EDGE_ASYNC_ENABLED": "true",
+        "EDGE_COORDINATION_ENABLED": "true",
+        "EDGE_BETTER_AUTH_ENABLED": "true",
+        "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
+        "EDGE_AUTH_MIGRATION_ENABLED": "false"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "yuisync-next-staging",
+          "database_id": "4abe6b77-3042-4960-88ef-1fdb43d488d1",
+          "migrations_dir": "migrations",
+          "migrations_table": "d1_migrations"
+        },
+        {
+          "binding": "AUTH_DB",
+          "database_name": "yuisync-auth-staging",
+          "database_id": "9157ec55-a04d-449e-a92c-710f8e39cd51",
+          "migrations_dir": "auth-migrations",
+          "migrations_table": "auth_d1_migrations"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "EVENTS_QUEUE",
+            "queue": "yuisync-events-staging"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "yuisync-events-staging",
+            "dead_letter_queue": "yuisync-events-dlq-staging",
+            "max_batch_size": 5,
+            "max_batch_timeout": 5,
+            "max_retries": 3,
+            "retry_delay": 15,
+            "max_concurrency": 2
+          }
+        ]
+      },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "COORDINATOR",
+            "class_name": "CoordinationDurableObject"
+          }
+        ]
+      },
+      "exports": {
+        "CoordinationDurableObject": {
+          "type": "durable-object",
+          "storage": "sqlite"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,127 @@
+name: Production rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      main_bookmark:
+        description: D1 production main bookmark
+        required: true
+        type: string
+      auth_bookmark:
+        description: D1 production AUTH_DB bookmark
+        required: true
+        type: string
+      worker_version_id:
+        description: Optional Worker version ID to activate before D1 restore
+        required: false
+        type: string
+      authorization:
+        description: Type AUTHORIZE_PRODUCTION_ROLLBACK
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yuisync-production-cutover
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Restore YuiSync production
+    if: inputs.authorization == 'AUTHORIZE_PRODUCTION_ROLLBACK'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PRODUCTION_MAIN_BOOKMARK: ${{ inputs.main_bookmark }}
+      PRODUCTION_AUTH_BOOKMARK: ${{ inputs.auth_bookmark }}
+      TARGET_WORKER_VERSION: ${{ inputs.worker_version_id }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+
+      - name: Validate authorization and inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test "${{ inputs.authorization }}" = 'AUTHORIZE_PRODUCTION_ROLLBACK'
+          node --input-type=module <<'NODE'
+          import { validateRollbackInput } from './scripts/migration/production-rollback.mjs'
+          const uuid = /^[0-9a-f-]{36}$/i
+          if (process.env.TARGET_WORKER_VERSION && !uuid.test(process.env.TARGET_WORKER_VERSION)) throw new Error('WORKER_VERSION_ID_INVALID')
+          if (!/^[0-9a-f-]{24,}$/i.test(process.env.PRODUCTION_MAIN_BOOKMARK || '')) throw new Error('MAIN_BOOKMARK_INVALID')
+          if (!/^[0-9a-f-]{24,}$/i.test(process.env.PRODUCTION_AUTH_BOOKMARK || '')) throw new Error('AUTH_BOOKMARK_INVALID')
+          void validateRollbackInput
+          NODE
+
+      - run: npm ci
+
+      - name: Resolve existing production resources without creating anything
+        run: node scripts/migration/production-cloudflare.mjs resolve
+
+      - name: Record current Worker deployment before rollback
+        working-directory: apps/edge-api
+        run: |
+          mkdir -p ../../.artifacts/production-rollback
+          npx wrangler deployments status --name yuisync-edge-api-production --json > ../../.artifacts/production-rollback/worker-before.json
+
+      - name: Roll back Worker version when explicitly supplied
+        id: worker-rollback
+        if: env.TARGET_WORKER_VERSION != ''
+        working-directory: apps/edge-api
+        run: >-
+          npx wrangler rollback "$TARGET_WORKER_VERSION"
+          --name yuisync-edge-api-production
+          --message "Authorized YuiSync production rollback"
+
+      - name: Restore production D1 and AUTH_DB with compensation
+        run: node scripts/migration/production-rollback.mjs restore-d1
+
+      - name: Verify live production after rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 30 https://yuisync.app/health > /tmp/rollback-health.json
+          curl --fail --silent --show-error --max-time 30 https://yuisync.app/ready > /tmp/rollback-ready.json
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const ready = JSON.parse(await readFile('/tmp/rollback-ready.json','utf8'))
+          if (ready?.status !== 'ready') throw new Error('PRODUCTION_NOT_READY_AFTER_ROLLBACK')
+          NODE
+
+      - name: Record Worker deployment after rollback
+        if: always()
+        working-directory: apps/edge-api
+        run: npx wrangler deployments status --name yuisync-edge-api-production --json > ../../.artifacts/production-rollback/worker-after.json
+
+      - name: Upload rollback evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-rollback-${{ github.run_id }}
+          path: .artifacts/production-rollback/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Rollback summary
+        if: success()
+        run: |
+          echo '## YuiSync production rollback complete' >> "$GITHUB_STEP_SUMMARY"
+          echo '- D1 main bookmark restored with compensation guard' >> "$GITHUB_STEP_SUMMARY"
+          echo '- AUTH_DB bookmark restored with compensation guard' >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$TARGET_WORKER_VERSION" ]; then echo "- Worker version: $TARGET_WORKER_VERSION" >> "$GITHUB_STEP_SUMMARY"; fi
+          echo '- https://yuisync.app readiness: passed' >> "$GITHUB_STEP_SUMMARY"
