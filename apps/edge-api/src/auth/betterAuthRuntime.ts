@@ -1,4 +1,5 @@
 import { betterAuth } from 'better-auth'
+import { getMigrations } from 'better-auth/db/migration'
 import { compare, hash } from 'bcryptjs'
 
 import {
@@ -33,28 +34,26 @@ function trustedOrigins(bindings: BetterAuthRuntimeBindings, requestOrigin: stri
   return [...new Set([requestOrigin, ...configured])]
 }
 
-function diagnosticText(error: unknown, depth = 0): string {
-  if (depth > 3 || error == null) return ''
-  if (typeof error === 'string') return error
+function diagnosticText(error: unknown, depth = 0, seen = new Set<object>()): string {
+  if (depth > 4 || error == null) return ''
+  if (typeof error === 'string' || typeof error === 'number' || typeof error === 'boolean') return String(error)
+  if (typeof error !== 'object') return ''
+  if (seen.has(error)) return ''
+  seen.add(error)
+
   if (error instanceof Error) {
-    const record = error as Error & { code?: unknown; status?: unknown; statusCode?: unknown; cause?: unknown }
-    return [
-      error.name,
-      record.code,
-      record.status,
-      record.statusCode,
-      error.message,
-      diagnosticText(record.cause, depth + 1),
-    ].filter(Boolean).join(' | ')
-  }
-  if (typeof error === 'object') {
-    const record = error as Record<string, unknown>
-    return [record.name, record.code, record.status, record.statusCode, record.message, diagnosticText(record.cause, depth + 1)]
+    const record = error as Error & Record<string, unknown>
+    return [error.name, record.code, record.status, record.statusCode, error.message, record.cause]
+      .map((value) => diagnosticText(value, depth + 1, seen))
       .filter(Boolean)
-      .map(String)
       .join(' | ')
   }
-  return String(error)
+
+  return Object.values(error as Record<string, unknown>)
+    .slice(0, 24)
+    .map((value) => diagnosticText(value, depth + 1, seen))
+    .filter(Boolean)
+    .join(' | ')
 }
 
 function safeIdentifier(value: string): string {
@@ -78,6 +77,7 @@ function classifyAuthError(error: unknown): string {
   if (unique) return `DB_UNIQUE:${safeIdentifier(unique)}`
   if (lower.includes('foreign key constraint failed')) return 'DB_FOREIGN_KEY'
   if (lower.includes('unable to create session') || lower.includes('failed to create session')) return 'SESSION_CREATE_FAILED'
+  if (lower.includes('unsupported type') || lower.includes('not supported type') || lower.includes('type date is not supported')) return 'D1_BIND_TYPE_ERROR'
   if (lower.includes('d1_error') || lower.includes('d1 error')) return 'D1_ERROR'
   if (lower.includes('sqlite')) return 'SQLITE_ERROR'
   if (lower.includes('password') && (lower.includes('hash') || lower.includes('bcrypt'))) return 'PASSWORD_HASH_ERROR'
@@ -102,6 +102,28 @@ function recordDiagnostic(bindings: BetterAuthRuntimeBindings, sink: AuthDiagnos
   console.error(JSON.stringify({ event: 'better_auth.error', diagnostic: code, environment: 'staging' }))
 }
 
+function collectionSize(value: unknown): number {
+  if (Array.isArray(value)) return value.length
+  if (value instanceof Map || value instanceof Set) return value.size
+  if (value && typeof value === 'object') return Object.keys(value as Record<string, unknown>).length
+  return 0
+}
+
+async function refineSchemaDiagnostic(
+  auth: ReturnType<typeof betterAuth>,
+  currentCode: string | undefined,
+): Promise<string> {
+  try {
+    const migrations = await getMigrations(auth.options)
+    const createCount = collectionSize(migrations.toBeCreated)
+    const addCount = collectionSize(migrations.toBeAdded)
+    if (createCount || addCount) return `AUTH_SCHEMA_DRIFT:C${createCount}:A${addCount}`
+    return `${currentCode || 'AUTH_INTERNAL_ERROR'}:SCHEMA_OK`
+  } catch (error) {
+    return `${currentCode || 'AUTH_INTERNAL_ERROR'}:SCHEMA_CHECK_${classifyAuthError(error)}`
+  }
+}
+
 export function createBetterAuthRuntime(
   bindings: BetterAuthRuntimeBindings,
   requestOrigin: string,
@@ -121,7 +143,7 @@ export function createBetterAuthRuntime(
       disableColors: true,
       log: (level, message, ...args) => {
         if (level !== 'error') return
-        recordDiagnostic(bindings, diagnostics, { message, cause: args[0] })
+        recordDiagnostic(bindings, diagnostics, { message, args })
       },
     } : undefined,
     onAPIError: isStaging(bindings) ? {
@@ -189,13 +211,15 @@ export async function handleBetterAuthRequest(
   } catch (error) {
     recordDiagnostic(bindings, diagnostics, error)
     const headers = new Headers({ 'cache-control': 'no-store' })
-    if (isStaging(bindings) && diagnostics.code) headers.set(AUTH_DIAGNOSTIC_HEADER, diagnostics.code)
+    if (isStaging(bindings)) {
+      headers.set(AUTH_DIAGNOSTIC_HEADER, await refineSchemaDiagnostic(auth, diagnostics.code))
+    }
     return Response.json({ code: 'AUTH_INTERNAL_ERROR' }, { status: 500, headers })
   }
 
   const headers = new Headers(response.headers)
-  if (isStaging(bindings) && response.status >= 500 && diagnostics.code) {
-    headers.set(AUTH_DIAGNOSTIC_HEADER, diagnostics.code)
+  if (isStaging(bindings) && response.status >= 500) {
+    headers.set(AUTH_DIAGNOSTIC_HEADER, await refineSchemaDiagnostic(auth, diagnostics.code))
   }
   if (origin && allowedOrigins.includes(origin)) {
     headers.set('access-control-allow-origin', origin)
