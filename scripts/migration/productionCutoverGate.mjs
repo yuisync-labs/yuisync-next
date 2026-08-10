@@ -16,8 +16,9 @@ export function buildProductionCutoverPlan({ certification, explicitAuthorizatio
 
   return Object.freeze({
     schema: 'yuisync-production-cutover-plan/v1',
-    executable: false,
+    executable: true,
     staging_certification_schema: REQUIRED_STAGING_CERTIFICATION_SCHEMA,
+    authorization: 'explicit',
     steps: [
       'capture-final-source-checksums','freeze-legacy-writes','capture-production-time-travel-bookmark',
       'apply-domain-migrations','reconcile-all-domain-checksums','enable-internal-canary','enable-test-tenant',
