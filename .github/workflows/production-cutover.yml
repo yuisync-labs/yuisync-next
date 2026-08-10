@@ -48,8 +48,7 @@ jobs:
           if (domain !== 'yuisync.app') throw new Error('PRODUCTION_DOMAIN_MUST_BE_YUISYNC_APP')
 
           execFileSync('git', ['fetch', 'origin', 'main'], { stdio: 'inherit' })
-          const ancestor = execFileSync('git', ['merge-base', '--is-ancestor', release, 'origin/main'], { stdio: 'ignore' })
-          void ancestor
+          execFileSync('git', ['merge-base', '--is-ancestor', release, 'origin/main'], { stdio: 'ignore' })
 
           const repo = process.env.GITHUB_REPOSITORY
           const gh = (workflow) => JSON.parse(execFileSync('gh', [
@@ -58,20 +57,27 @@ jobs:
             '-X', 'GET',
           ], { encoding: 'utf8', env: process.env }))
 
-          const quality = (gh('quality.yml').workflow_runs || []).filter((run) => run.head_sha === release && run.conclusion === 'success')
+          const quality = (gh('quality.yml').workflow_runs || [])
+            .filter((run) => run.head_sha === release && run.conclusion === 'success')
           if (!quality.length) throw new Error('QUALITY_SUCCESS_REQUIRED_FOR_RELEASE_SHA')
+
           const certs = (gh('full-staging-certification.yml').workflow_runs || [])
             .filter((run) => run.head_sha === release && run.conclusion === 'success')
             .sort((a, b) => Number(b.run_number || 0) - Number(a.run_number || 0))
           if (certs.length < 2) throw new Error(`DOUBLE_STAGING_CERTIFICATION_REQUIRED:${certs.length}`)
 
-          const output = [
+          await appendFile(process.env.GITHUB_OUTPUT, [
             `release_sha=${release}`,
             `certification_run_id=${certs[0].id}`,
             `certification_count=${certs.length}`,
-          ].join('\n') + '\n'
-          await appendFile(process.env.GITHUB_OUTPUT, output, 'utf8')
-          console.log(JSON.stringify({ status: 'authorized', release_sha: release, quality_runs: quality.length, certification_runs: certs.length, certification_run_id: certs[0].id }))
+          ].join('\n') + '\n', 'utf8')
+          console.log(JSON.stringify({
+            status: 'authorized',
+            release_sha: release,
+            quality_runs: quality.length,
+            certification_runs: certs.length,
+            certification_run_id: certs[0].id,
+          }))
           NODE
 
   cutover:
@@ -110,6 +116,17 @@ jobs:
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           test "$CERTIFICATION_COUNT" -ge 2
 
+      - name: Load production control plane from current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          CONTROL_SHA="$(git rev-parse origin/main)"
+          git show origin/main:scripts/migration/production-cloudflare.mjs > scripts/migration/production-cloudflare-control.mjs
+          git show origin/main:scripts/migration/production-dns.mjs > scripts/migration/production-dns-control.mjs
+          echo "YUISYNC_CONTROL_SHA=$CONTROL_SHA" >> "$GITHUB_ENV"
+          echo "Production control plane: $CONTROL_SHA"
+
       - run: npm ci
 
       - name: Revalidate release runtime
@@ -137,16 +154,16 @@ jobs:
           if (release?.schema !== 'yuisync-staging-release-evidence/v1' || release?.release_sha !== process.env.RELEASE_SHA) throw new Error('STAGING_RELEASE_SHA_EVIDENCE_MISMATCH')
           NODE
 
-      - name: Verify yuisync.app zone and DNS are safe to cut over
-        run: node scripts/migration/production-dns.mjs inspect
+      - name: Verify yuisync.app zone and DNS are readable
+        run: node scripts/migration/production-dns-control.mjs inspect
 
-      - name: Provision isolated production resources
-        run: node scripts/migration/production-cloudflare.mjs prepare
+      - name: Provision or resolve isolated production resources
+        run: node scripts/migration/production-cloudflare-control.mjs prepare
 
       - name: Resolve production workers.dev canary URL
         run: node scripts/migration/production-domain.mjs workers-url
 
-      - name: Require fresh empty production D1 databases
+      - name: Inspect production D1 state for idempotent resume
         working-directory: apps/edge-api
         shell: bash
         run: |
@@ -154,13 +171,19 @@ jobs:
           MAIN_JSON="$(npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> '_cf_KV' ORDER BY name;")"
           AUTH_JSON="$(npx wrangler d1 execute AUTH_DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> '_cf_KV' ORDER BY name;")"
           MAIN_JSON="$MAIN_JSON" AUTH_JSON="$AUTH_JSON" node --input-type=module <<'NODE'
+          import { appendFile } from 'node:fs/promises'
           const rows = (raw) => {
             const parsed = JSON.parse(raw)
             return (Array.isArray(parsed) ? parsed : [parsed]).flatMap((entry) => Array.isArray(entry?.results) ? entry.results : [])
           }
           const main = rows(process.env.MAIN_JSON)
           const auth = rows(process.env.AUTH_JSON)
-          if (main.length || auth.length) throw new Error(`PRODUCTION_DATABASE_NOT_EMPTY:DB=${main.map((row)=>row.name).join(',')}:AUTH=${auth.map((row)=>row.name).join(',')}`)
+          const mainEmpty = main.length === 0
+          const authEmpty = auth.length === 0
+          if (mainEmpty !== authEmpty) throw new Error(`PRODUCTION_DATABASE_PARTIAL_STATE:DB=${main.length}:AUTH=${auth.length}`)
+          const state = mainEmpty ? 'empty' : 'existing'
+          await appendFile(process.env.GITHUB_ENV, `YUISYNC_PRODUCTION_DB_STATE=${state}\n`, 'utf8')
+          console.log(JSON.stringify({ status: 'production-db-inspected', state, db_tables: main.length, auth_tables: auth.length }))
           NODE
 
       - name: Snapshot final certified staging databases
@@ -170,11 +193,17 @@ jobs:
           npx wrangler d1 export DB --env staging --remote --output=../../.artifacts/production/staging-db.sql
           npx wrangler d1 export AUTH_DB --env staging --remote --output=../../.artifacts/production/staging-auth.sql
 
-      - name: Restore certified snapshot into production
+      - name: Restore certified snapshot only into fresh production databases
         working-directory: apps/edge-api
+        shell: bash
         run: |
-          npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --file=../../.artifacts/production/staging-db.sql --yes
-          npx wrangler d1 execute AUTH_DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --file=../../.artifacts/production/staging-auth.sql --yes
+          set -euo pipefail
+          if [ "$YUISYNC_PRODUCTION_DB_STATE" = "empty" ]; then
+            npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --file=../../.artifacts/production/staging-db.sql --yes
+            npx wrangler d1 execute AUTH_DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --file=../../.artifacts/production/staging-auth.sql --yes
+          else
+            echo 'Production D1 already exists; refusing duplicate import and requiring exact reconciliation instead.'
+          fi
 
       - name: Reconcile production snapshot byte-equivalent SQL
         working-directory: apps/edge-api
@@ -187,7 +216,12 @@ jobs:
           import { readFile, writeFile } from 'node:fs/promises'
           const canonical = (text) => text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('--')).join('\n')
           const pairs = [['DB','staging-db.sql','production-db.sql'],['AUTH_DB','staging-auth.sql','production-auth.sql']]
-          const evidence = { schema:'yuisync-production-snapshot-reconciliation/v1', release_sha:process.env.RELEASE_SHA, databases:[] }
+          const evidence = {
+            schema:'yuisync-production-snapshot-reconciliation/v1',
+            release_sha:process.env.RELEASE_SHA,
+            database_state:process.env.YUISYNC_PRODUCTION_DB_STATE,
+            databases:[],
+          }
           for (const [name, beforeFile, afterFile] of pairs) {
             const before = canonical(await readFile(`.artifacts/production/${beforeFile}`,'utf8'))
             const after = canonical(await readFile(`.artifacts/production/${afterFile}`,'utf8'))
@@ -199,7 +233,7 @@ jobs:
           await writeFile('.artifacts/production/snapshot-reconciliation.json', `${JSON.stringify(evidence,null,2)}\n`)
           NODE
 
-      - name: Deploy certified SHA to production canary without domain
+      - name: Deploy certified SHA to explicit production canary
         id: canary-deploy
         working-directory: apps/edge-api
         shell: bash
@@ -237,46 +271,57 @@ jobs:
           mkdir -p ../../.artifacts/production
           npx wrangler versions list --name yuisync-edge-api-production --json > ../../.artifacts/production/worker-versions-canary.json
 
-      - name: Smoke production canary
+      - name: Smoke production canary with propagation tolerance
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --max-time 20 "$YUISYNC_PRODUCTION_WORKERS_URL/health" > /tmp/prod-health.json
+          health_status='000'
+          for attempt in $(seq 1 12); do
+            health_status="$(curl --silent --show-error --max-time 20 -o /tmp/prod-health.json -w '%{http_code}' "$YUISYNC_PRODUCTION_WORKERS_URL/health" || true)"
+            if [ "$health_status" = '200' ]; then break; fi
+            echo "Canary /health attempt $attempt returned HTTP $health_status; waiting for route propagation."
+            sleep 5
+          done
+          if [ "$health_status" != '200' ]; then
+            echo "Production canary /health did not become ready; last HTTP status: $health_status" >&2
+            cat /tmp/prod-health.json 2>/dev/null || true
+            exit 1
+          fi
           curl --fail --silent --show-error --max-time 20 "$YUISYNC_PRODUCTION_WORKERS_URL/ready" > /tmp/prod-ready.json
           curl --fail --silent --show-error --max-time 20 "$YUISYNC_PRODUCTION_WORKERS_URL/" > /dev/null
           node --input-type=module <<'NODE'
           import { readFile } from 'node:fs/promises'
+          const health = JSON.parse(await readFile('/tmp/prod-health.json','utf8'))
           const ready = JSON.parse(await readFile('/tmp/prod-ready.json','utf8'))
-          if (ready?.status !== 'ready') throw new Error('PRODUCTION_CANARY_NOT_READY')
+          if (health?.status !== 'ok' || health?.environment !== 'production') throw new Error('PRODUCTION_CANARY_HEALTH_INVALID')
+          if (ready?.status !== 'ready' || ready?.environment !== 'production') throw new Error('PRODUCTION_CANARY_NOT_READY')
           NODE
 
       - name: Prepare production canary Better Auth E2E users
         id: canary-fixtures
         env:
-          YUISYNC_E2E_BASE_URL: ${{ env.YUISYNC_PRODUCTION_WORKERS_URL }}
           YUISYNC_E2E_WRANGLER_ENV: production
-          YUISYNC_E2E_WRANGLER_CONFIG: ${{ env.YUISYNC_PRODUCTION_WRANGLER_CONFIG }}
-        run: node scripts/migration/staging-e2e-fixtures.mjs setup
+        run: |
+          export YUISYNC_E2E_BASE_URL="$YUISYNC_PRODUCTION_WORKERS_URL"
+          export YUISYNC_E2E_WRANGLER_CONFIG="$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+          node scripts/migration/staging-e2e-fixtures.mjs setup
 
       - name: Install Playwright Chromium for production canary
         run: npx playwright install --with-deps chromium
 
       - name: Run authenticated production workers.dev canary
-        env:
-          YUISYNC_E2E_BASE_URL: ${{ env.YUISYNC_PRODUCTION_WORKERS_URL }}
-        run: >-
-          npx playwright test test/e2e/authenticated-tabs.spec.js
-          --project=desktop
-          --workers=1
-          --timeout=180000
+        run: |
+          export YUISYNC_E2E_BASE_URL="$YUISYNC_PRODUCTION_WORKERS_URL"
+          npx playwright test test/e2e/authenticated-tabs.spec.js --project=desktop --workers=1 --timeout=180000
 
       - name: Clean production canary Better Auth E2E users
         if: always() && steps.canary-fixtures.outcome == 'success'
         env:
-          YUISYNC_E2E_BASE_URL: ${{ env.YUISYNC_PRODUCTION_WORKERS_URL }}
           YUISYNC_E2E_WRANGLER_ENV: production
-          YUISYNC_E2E_WRANGLER_CONFIG: ${{ env.YUISYNC_PRODUCTION_WRANGLER_CONFIG }}
-        run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
+        run: |
+          export YUISYNC_E2E_BASE_URL="$YUISYNC_PRODUCTION_WORKERS_URL"
+          export YUISYNC_E2E_WRANGLER_CONFIG="$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+          node scripts/migration/staging-e2e-fixtures.mjs cleanup
 
       - name: Capture production D1 rollback bookmarks
         working-directory: apps/edge-api
@@ -292,13 +337,21 @@ jobs:
             if (!value) return null
             if (typeof value === 'string' && /^[0-9a-f-]{24,}$/i.test(value)) return value
             if (Array.isArray(value)) { for (const item of value) { const hit=find(item); if (hit) return hit } return null }
-            if (typeof value === 'object') { for (const [key,item] of Object.entries(value)) if (/bookmark/i.test(key) && typeof item === 'string' && item) return item; for (const item of Object.values(value)) { const hit=find(item); if(hit) return hit } }
+            if (typeof value === 'object') {
+              for (const [key,item] of Object.entries(value)) if (/bookmark/i.test(key) && typeof item === 'string' && item) return item
+              for (const item of Object.values(value)) { const hit=find(item); if(hit) return hit }
+            }
             return null
           }
           const main = find(JSON.parse(await readFile('.artifacts/production/main-bookmark-raw.json','utf8')))
           const auth = find(JSON.parse(await readFile('.artifacts/production/auth-bookmark-raw.json','utf8')))
           if (!main || !auth) throw new Error('PRODUCTION_ROLLBACK_BOOKMARK_MISSING')
-          await writeFile('.artifacts/production/rollback-bookmarks.json', `${JSON.stringify({ schema:'yuisync-production-rollback-bookmarks/v1', release_sha:process.env.RELEASE_SHA, main_bookmark:main, auth_bookmark:auth },null,2)}\n`)
+          await writeFile('.artifacts/production/rollback-bookmarks.json', `${JSON.stringify({
+            schema:'yuisync-production-rollback-bookmarks/v1',
+            release_sha:process.env.RELEASE_SHA,
+            main_bookmark:main,
+            auth_bookmark:auth,
+          },null,2)}\n`)
           NODE
 
       - name: Authorize executable cutover plan
@@ -308,15 +361,24 @@ jobs:
           import { buildProductionCutoverPlan } from './scripts/migration/productionCutoverGate.mjs'
           const certification = JSON.parse(await readFile('.artifacts/staging-certification-source/certification.json','utf8'))
           const bookmarks = JSON.parse(await readFile('.artifacts/production/rollback-bookmarks.json','utf8'))
-          const plan = buildProductionCutoverPlan({ certification, explicitAuthorization:'AUTHORIZE_PRODUCTION_CUTOVER', rollbackBookmarkPresent:Boolean(bookmarks.main_bookmark && bookmarks.auth_bookmark), productionPreflight:{status:'pass'} })
+          const plan = buildProductionCutoverPlan({
+            certification,
+            explicitAuthorization:'AUTHORIZE_PRODUCTION_CUTOVER',
+            rollbackBookmarkPresent:Boolean(bookmarks.main_bookmark && bookmarks.auth_bookmark),
+            productionPreflight:{status:'pass'},
+          })
           if (plan.executable !== true) throw new Error('PRODUCTION_CUTOVER_PLAN_NOT_EXECUTABLE')
           await mkdir('.artifacts/production',{recursive:true})
-          await writeFile('.artifacts/production/cutover-plan.json', `${JSON.stringify({ ...plan, release_sha:process.env.RELEASE_SHA },null,2)}\n`)
+          await writeFile('.artifacts/production/cutover-plan.json', `${JSON.stringify({
+            ...plan,
+            release_sha:process.env.RELEASE_SHA,
+            control_sha:process.env.YUISYNC_CONTROL_SHA,
+          },null,2)}\n`)
           NODE
 
-      - name: Back up and clear reversible apex CNAME
+      - name: Back up apex DNS and clear only conflicting CNAME
         id: dns-cutover
-        run: node scripts/migration/production-dns.mjs backup-and-clear
+        run: node scripts/migration/production-dns-control.mjs backup-and-clear
 
       - name: Attach yuisync.app Custom Domain with same certified SHA
         id: domain-deploy
@@ -324,49 +386,60 @@ jobs:
         env:
           YUISYNC_PRODUCTION_ATTACH_DOMAIN: 'true'
         run: |
-          node ../../scripts/migration/production-cloudflare.mjs resolve
+          node ../../scripts/migration/production-cloudflare-control.mjs resolve
           npx wrangler deploy --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
 
       - name: Verify production domain ownership
         run: node scripts/migration/production-domain.mjs verify-attached
 
-      - name: Smoke live yuisync.app
+      - name: Smoke live yuisync.app with propagation tolerance
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --max-time 30 https://yuisync.app/health > /tmp/live-health.json
+          live_status='000'
+          for attempt in $(seq 1 12); do
+            live_status="$(curl --silent --show-error --max-time 30 -o /tmp/live-health.json -w '%{http_code}' https://yuisync.app/health || true)"
+            if [ "$live_status" = '200' ]; then break; fi
+            echo "Live /health attempt $attempt returned HTTP $live_status; waiting for Custom Domain propagation."
+            sleep 5
+          done
+          if [ "$live_status" != '200' ]; then
+            echo "yuisync.app /health did not become ready; last HTTP status: $live_status" >&2
+            cat /tmp/live-health.json 2>/dev/null || true
+            exit 1
+          fi
           curl --fail --silent --show-error --max-time 30 https://yuisync.app/ready > /tmp/live-ready.json
           curl --fail --silent --show-error --max-time 30 https://yuisync.app/ > /dev/null
           node --input-type=module <<'NODE'
           import { readFile } from 'node:fs/promises'
+          const health = JSON.parse(await readFile('/tmp/live-health.json','utf8'))
           const ready = JSON.parse(await readFile('/tmp/live-ready.json','utf8'))
-          if (ready?.status !== 'ready') throw new Error('YUISYNC_APP_NOT_READY')
+          if (health?.status !== 'ok' || health?.environment !== 'production') throw new Error('YUISYNC_APP_HEALTH_INVALID')
+          if (ready?.status !== 'ready' || ready?.environment !== 'production') throw new Error('YUISYNC_APP_NOT_READY')
           NODE
 
       - name: Prepare live-domain Better Auth E2E users
         id: live-fixtures
         env:
-          YUISYNC_E2E_BASE_URL: https://yuisync.app
           YUISYNC_E2E_WRANGLER_ENV: production
-          YUISYNC_E2E_WRANGLER_CONFIG: ${{ env.YUISYNC_PRODUCTION_WRANGLER_CONFIG }}
-        run: node scripts/migration/staging-e2e-fixtures.mjs setup
+          YUISYNC_E2E_BASE_URL: https://yuisync.app
+        run: |
+          export YUISYNC_E2E_WRANGLER_CONFIG="$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+          node scripts/migration/staging-e2e-fixtures.mjs setup
 
       - name: Run authenticated live-domain E2E
         env:
           YUISYNC_E2E_BASE_URL: https://yuisync.app
-        run: >-
-          npx playwright test test/e2e/authenticated-tabs.spec.js
-          --project=desktop
-          --workers=1
-          --timeout=180000
+        run: npx playwright test test/e2e/authenticated-tabs.spec.js --project=desktop --workers=1 --timeout=180000
 
       - name: Clean live-domain Better Auth E2E users
         if: always() && steps.live-fixtures.outcome == 'success'
         env:
-          YUISYNC_E2E_BASE_URL: https://yuisync.app
           YUISYNC_E2E_WRANGLER_ENV: production
-          YUISYNC_E2E_WRANGLER_CONFIG: ${{ env.YUISYNC_PRODUCTION_WRANGLER_CONFIG }}
-        run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
+          YUISYNC_E2E_BASE_URL: https://yuisync.app
+        run: |
+          export YUISYNC_E2E_WRANGLER_CONFIG="$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+          node scripts/migration/staging-e2e-fixtures.mjs cleanup
 
       - name: Record live Worker version
         if: success()
@@ -380,7 +453,7 @@ jobs:
           set +e
           node scripts/migration/production-domain.mjs detach
           DETACH_STATUS=$?
-          node scripts/migration/production-dns.mjs restore
+          node scripts/migration/production-dns-control.mjs restore
           DNS_STATUS=$?
           if [ "$DETACH_STATUS" -ne 0 ] || [ "$DNS_STATUS" -ne 0 ]; then
             echo 'Emergency domain restoration encountered an error.' >&2
@@ -403,9 +476,10 @@ jobs:
         run: |
           echo '## YuiSync production cutover complete' >> "$GITHUB_STEP_SUMMARY"
           echo "- Release SHA: $RELEASE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Control-plane SHA: $YUISYNC_CONTROL_SHA" >> "$GITHUB_STEP_SUMMARY"
           echo "- Successful staging certifications: $CERTIFICATION_COUNT" >> "$GITHUB_STEP_SUMMARY"
           echo '- Isolated production D1/Auth/Queue/DLQ: verified' >> "$GITHUB_STEP_SUMMARY"
           echo '- Certified staging snapshot reconciliation: exact' >> "$GITHUB_STEP_SUMMARY"
           echo '- workers.dev authenticated canary: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- D1 rollback bookmarks: captured' >> "$GITHUB_STEP_SUMMARY"
-          echo '- https://yuisync.app health/readiness/authenticated E2E: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- yuisync.app health/readiness/authenticated E2E: passed' >> "$GITHUB_STEP_SUMMARY"
