@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { handleAppApiRequest } from '../src/appApi'
 import { getBetterAuthSession, handleBetterAuthRequest } from '../src/auth/betterAuthRuntime'
+import { handleCompatApiRequest } from '../src/compatApi'
 
 const AUTH_SECRET = 'better-auth-d1-test-secret-123456789012345678901234'
 
@@ -166,6 +167,84 @@ describe('Better Auth native D1 runtime', () => {
         await database.prepare('DELETE FROM identity_principals WHERE id=?1').bind(principalId).run()
       }
       await database.prepare('DELETE FROM tenants WHERE id IN (?1,?2)').bind(tenantId, otherTenantId).run()
+    }
+  })
+
+  it('preserves the compat request body when deferred routing falls through to the base query handler', async () => {
+    const authDatabase = (env as EdgeEnv & { AUTH_DB: D1Database }).AUTH_DB
+    const database = (env as EdgeEnv & { DB: D1Database }).DB
+    const suffix = crypto.randomUUID()
+    const userId = `compat-user-${suffix}`
+    const principalId = `compat-principal-${suffix}`
+    const tenantId = `compat-tenant-${suffix}`
+    const email = `compat-${suffix}@test.invalid`
+    const password = 'ValidPassword123!'
+    const passwordHash = await hash(password, 12)
+    const now = Date.now()
+    const nowIso = new Date(now).toISOString()
+
+    await authDatabase.batch([
+      authDatabase.prepare('INSERT INTO user(id,name,email,emailVerified,image,createdAt,updatedAt) VALUES(?1,?2,?3,1,NULL,?4,?4)')
+        .bind(userId, 'Compat Body Test', email, nowIso),
+      authDatabase.prepare('INSERT INTO account(id,userId,accountId,providerId,password,createdAt,updatedAt) VALUES(?1,?2,?3,?4,?5,?6,?6)')
+        .bind(`credential:${userId}`, userId, userId, 'credential', passwordHash, nowIso),
+    ])
+    await database.batch([
+      database.prepare("INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(?1,?2,'Compat Body Tenant','active',?3,?3)")
+        .bind(tenantId, `compat-body-${suffix}`, now),
+      database.prepare("INSERT INTO identity_principals(id,provider,subject,display_name,email,status,created_at_ms,updated_at_ms) VALUES(?1,'better-auth',?2,'Compat Body Test',?3,'active',?4,?4)")
+        .bind(principalId, userId, email, now),
+      database.prepare("INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'active',?3,?3,'staff',?4)")
+        .bind(tenantId, principalId, now, JSON.stringify({ petshop: { role: 'funcionario_pet' } })),
+    ])
+
+    try {
+      const runtimeBindings = { ...bindings(), DB: database }
+      const signIn = await handleBetterAuthRequest(new Request('https://edge.test/api/auth/sign-in/email', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: 'https://edge.test',
+        },
+        body: JSON.stringify({ email, password, rememberMe: false }),
+      }), runtimeBindings)
+      expect(signIn).not.toBeNull()
+      if (!signIn) return
+      expect(signIn.status).toBe(200)
+
+      const setCookie = signIn.headers.get('set-cookie') || ''
+      const sessionCookie = setCookie.split(';')[0]
+      expect(sessionCookie).toContain('better-auth')
+
+      const response = await handleCompatApiRequest(new Request('https://edge.test/api/compat/query', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: sessionCookie,
+          'x-tenant-id': tenantId,
+          'x-module-id': 'petshop',
+        },
+        body: JSON.stringify({
+          table: 'clients',
+          action: 'select',
+          filters: [],
+          limit: 1,
+        }),
+      }), runtimeBindings)
+
+      expect(response).not.toBeNull()
+      if (!response) return
+      const responseBody = await response.json<Record<string, unknown>>()
+      expect(response.status).toBe(200)
+      expect(responseBody.code).not.toBe('INVALID_JSON')
+      expect(responseBody).toHaveProperty('data')
+    } finally {
+      await authDatabase.prepare('DELETE FROM session WHERE userId=?1').bind(userId).run()
+      await authDatabase.prepare('DELETE FROM account WHERE userId=?1').bind(userId).run()
+      await authDatabase.prepare('DELETE FROM user WHERE id=?1').bind(userId).run()
+      await database.prepare('DELETE FROM tenant_memberships WHERE tenant_id=?1').bind(tenantId).run()
+      await database.prepare('DELETE FROM identity_principals WHERE id=?1').bind(principalId).run()
+      await database.prepare('DELETE FROM tenants WHERE id=?1').bind(tenantId).run()
     }
   })
 })
