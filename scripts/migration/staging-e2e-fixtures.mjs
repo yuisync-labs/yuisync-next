@@ -10,11 +10,19 @@ const REPO_ROOT = resolve(new URL('../../', import.meta.url).pathname)
 const EDGE_DIR = resolve(REPO_ROOT, 'apps/edge-api')
 const ARTIFACT_DIR = resolve(REPO_ROOT, '.artifacts/staging-e2e')
 const MANIFEST_PATH = resolve(ARTIFACT_DIR, 'fixture.json')
-const STAGING_URL = String(process.env.YUISYNC_STAGING_URL || 'https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev').replace(/\/$/, '')
+const E2E_BASE_URL = String(
+  process.env.YUISYNC_E2E_BASE_URL ||
+  process.env.YUISYNC_STAGING_URL ||
+  'https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev',
+).replace(/\/$/, '')
+const WRANGLER_ENV = String(process.env.YUISYNC_E2E_WRANGLER_ENV || 'staging').trim()
+const WRANGLER_CONFIG = String(process.env.YUISYNC_E2E_WRANGLER_CONFIG || '').trim()
 const COMMAND = String(process.argv[2] || '').trim().toLowerCase()
 const SAFE_TABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const E2E_TENANT_LIKE = 'e2e-%-tenant'
 const E2E_EMAIL_LIKE = 'e2e-%@staging.invalid'
+
+if (!/^[A-Za-z0-9_-]+$/.test(WRANGLER_ENV)) throw new Error(`INVALID_WRANGLER_ENV:${WRANGLER_ENV}`)
 
 function sql(value) {
   if (value == null) return 'NULL'
@@ -38,15 +46,17 @@ function run(command, args, options = {}) {
 }
 
 function wrangler(args) {
-  return run('npx', ['wrangler', ...args], { cwd: EDGE_DIR })
+  const finalArgs = ['wrangler', ...args]
+  if (WRANGLER_CONFIG) finalArgs.push('--config', WRANGLER_CONFIG)
+  return run('npx', finalArgs, { cwd: EDGE_DIR })
 }
 
 function d1Run(binding, statement) {
-  wrangler(['d1', 'execute', binding, '--env', 'staging', '--remote', '--command', statement])
+  wrangler(['d1', 'execute', binding, '--env', WRANGLER_ENV, '--remote', '--command', statement])
 }
 
 function d1Rows(binding, statement) {
-  const output = wrangler(['d1', 'execute', binding, '--env', 'staging', '--remote', '--json', '--command', statement])
+  const output = wrangler(['d1', 'execute', binding, '--env', WRANGLER_ENV, '--remote', '--json', '--command', statement])
   const parsed = JSON.parse(output)
   const result = Array.isArray(parsed) ? parsed[0] : parsed
   return Array.isArray(result?.results) ? result.results : []
@@ -80,7 +90,7 @@ function fixture() {
     email: `${runId}-${user.key}@staging.invalid`,
     password: password(),
   }))
-  return { schema: 'yuisync-staging-e2e-fixture/v2', runId, tenantId, users }
+  return { schema: 'yuisync-staging-e2e-fixture/v3', runId, tenantId, users }
 }
 
 function referencedTables(createSql) {
@@ -107,9 +117,6 @@ function tenantScopedDeleteOrder(schemaRows) {
     definitions.map((row) => [row.name, referencedTables(row.sql)]),
   )
 
-  // Tenant isolation requires every application child of a tenant-scoped table
-  // to remain tenant-addressable. If a new schema violates that invariant, fail
-  // closed instead of leaving E2E rows behind or deleting data broadly.
   const unscopedChildren = definitions
     .filter((row) => !scopedSet.has(row.name) && row.name !== 'tenants' && row.name !== 'identity_principals')
     .filter((row) => referencesByTable.get(row.name)?.some((parent) => scopedSet.has(parent)))
@@ -118,8 +125,6 @@ function tenantScopedDeleteOrder(schemaRows) {
     throw new Error(`STAGING_E2E_UNSCOPED_TENANT_CHILD:${unscopedChildren.sort().join(',')}`)
   }
 
-  // Edges are child -> parent, so a topological ordering naturally deletes
-  // children before the rows they reference.
   const incoming = new Map(scoped.map((name) => [name, 0]))
   const parents = new Map(scoped.map((name) => [
     name,
@@ -186,9 +191,6 @@ function cleanupAuthUsers(userIds = []) {
 }
 
 function sweepStaleFixtures() {
-  // A failed cleanup must not poison the next certification. Sweep only the
-  // deliberately namespaced E2E identities/tenants; no production-like row can
-  // match these setup-owned identifiers.
   d1Run('AUTH_DB', `DELETE FROM session WHERE userId IN (SELECT id FROM user WHERE email LIKE ${sql(E2E_EMAIL_LIKE)}); DELETE FROM account WHERE userId IN (SELECT id FROM user WHERE email LIKE ${sql(E2E_EMAIL_LIKE)}); DELETE FROM user WHERE email LIKE ${sql(E2E_EMAIL_LIKE)};`)
 
   const staleTenants = d1Rows('DB', `SELECT id FROM tenants WHERE id LIKE ${sql(E2E_TENANT_LIKE)} ORDER BY id;`)
@@ -198,7 +200,7 @@ function sweepStaleFixtures() {
     const principalRows = d1Rows('DB', `SELECT principal_id FROM tenant_memberships WHERE tenant_id=${sql(tenantId)} ORDER BY principal_id;`)
     cleanupMainTenant(tenantId, principalRows.map((principal) => principal?.principal_id).filter(Boolean))
   }
-  if (staleTenants.length) console.log(JSON.stringify({ status: 'stale-fixtures-cleaned', tenant_count: staleTenants.length }))
+  if (staleTenants.length) console.log(JSON.stringify({ status: 'stale-fixtures-cleaned', tenant_count: staleTenants.length, wrangler_env: WRANGLER_ENV }))
 }
 
 async function setup() {
@@ -211,15 +213,16 @@ async function setup() {
     schema: current.schema,
     runId: current.runId,
     tenantId: current.tenantId,
+    wranglerEnv: WRANGLER_ENV,
     users: current.users.map(({ key, role, moduleRole, userId, principalId, email }) => ({ key, role, moduleRole, userId, principalId, email })),
   }, null, 2))
 
   const authStatements = []
   const mainStatements = [
-    `INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(${sql(current.tenantId)},${sql(current.tenantId)},'Staging E2E','active',${now},${now});`,
-    `INSERT INTO tenant_module_settings(tenant_id,module_id,store_name,created_at_ms,updated_at_ms) VALUES(${sql(current.tenantId)},'petshop','Staging E2E',${now},${now});`,
+    `INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(${sql(current.tenantId)},${sql(current.tenantId)},'Release E2E','active',${now},${now});`,
+    `INSERT INTO tenant_module_settings(tenant_id,module_id,store_name,created_at_ms,updated_at_ms) VALUES(${sql(current.tenantId)},'petshop','Release E2E',${now},${now});`,
   ]
-  const env = { E2E_BASE_URL: STAGING_URL }
+  const env = { E2E_BASE_URL: E2E_BASE_URL }
 
   for (const user of current.users) {
     const passwordHash = await hash(user.password, 12)
@@ -241,9 +244,9 @@ async function setup() {
     d1Run('AUTH_DB', authStatements.join(' '))
     d1Run('DB', mainStatements.join(' '))
     await exportEnv(env)
-    console.log(JSON.stringify({ status: 'ready', run_id: current.runId, tenant_id: current.tenantId, users: current.users.map(({ key, role, moduleRole }) => ({ key, role, module_role: moduleRole })) }))
+    console.log(JSON.stringify({ status: 'ready', run_id: current.runId, tenant_id: current.tenantId, wrangler_env: WRANGLER_ENV, base_url: E2E_BASE_URL, users: current.users.map(({ key, role, moduleRole }) => ({ key, role, module_role: moduleRole })) }))
   } catch (error) {
-    console.error(`Failed to prepare staging E2E fixtures: ${error instanceof Error ? error.message : String(error)}`)
+    console.error(`Failed to prepare E2E fixtures: ${error instanceof Error ? error.message : String(error)}`)
     process.exitCode = 1
   }
 }
@@ -253,7 +256,7 @@ async function cleanup() {
   try {
     manifest = JSON.parse(await readFile(MANIFEST_PATH, 'utf8'))
   } catch (error) {
-    console.log(`No staging E2E fixture manifest to clean: ${error instanceof Error ? error.message : String(error)}`)
+    console.log(`No E2E fixture manifest to clean: ${error instanceof Error ? error.message : String(error)}`)
     return
   }
 
@@ -279,7 +282,7 @@ async function cleanup() {
   if (errors.length) {
     throw new Error(`STAGING_E2E_CLEANUP_FAILED:${errors.join('|')}`)
   }
-  console.log(JSON.stringify({ status: 'cleaned', run_id: manifest.runId || null, tenant_id: tenantId || null }))
+  console.log(JSON.stringify({ status: 'cleaned', run_id: manifest.runId || null, tenant_id: tenantId || null, wrangler_env: WRANGLER_ENV }))
 }
 
 if (!['setup', 'cleanup', 'sweep'].includes(COMMAND)) {
