@@ -468,7 +468,7 @@ async function executeCheckout(request: Request, bindings: CheckoutBindings): Pr
             quantity_milliunits,unit_price_cents,subtotal_cents,upsell
           ) VALUES(?,?,?,?, 'product',?,NULL,?,?,?,?,?)
         `).bind(
-          payload.tenantId,payload.moduleId,saleId,index,item.productId,item.name,
+          payload.tenantId,payload.moduleId,saleId,index + 1,item.productId,item.name,
           item.quantityMilliunits,item.price_cents,subtotal,item.upsell ? 1 : 0,
         ),
         bindings.DB!.prepare(`
@@ -483,7 +483,7 @@ async function executeCheckout(request: Request, bindings: CheckoutBindings): Pr
           INSERT INTO inventory_movements(
             tenant_id,module_id,id,operation_key,product_id,movement_type,delta_milliunits,
             stock_before_milliunits,stock_after_milliunits,unit_cost_cents,reference_type,reference_id,reason,created_at_ms
-          ) VALUES(?,?,?,?,?,'sale',?,?,?,?,?,'sale',?,'pdv_checkout',?)
+          ) VALUES(?,?,?,?,?,'sale',?,?,?,?,'sale',?,'pdv_checkout',?)
         `).bind(
           payload.tenantId,payload.moduleId,crypto.randomUUID(),`sale:${saleId}:stock:${index}`,
           item.productId,-item.quantityMilliunits,item.on_hand_milliunits!,item.on_hand_milliunits!-item.quantityMilliunits,
