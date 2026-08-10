@@ -24,8 +24,11 @@ export async function handleCompatApiRequest(
   // Deferred compat probes the generic /api/compat/query and /rpc endpoints and
   // may parse the body before deciding the requested table/RPC is not one of
   // its own. Keep the original Request body untouched for the remaining
-  // fallbacks, especially the base compat runtime.
-  const deferredResponse = await handleDeferredCompatApiRequest(request.clone(), env)
+  // fallbacks, especially the base compat runtime. Cloudflare's clone() keeps
+  // host-specific Request generics, while the compatibility handlers only use
+  // the standard Request surface; narrow the clone back to that shared shape.
+  const deferredRequest = request.clone() as Request
+  const deferredResponse = await handleDeferredCompatApiRequest(deferredRequest, env)
   if (deferredResponse) return deferredResponse
   const subscriptionResponse = await handleSubscriptionCompatRpcRequest(request, env)
   if (subscriptionResponse) return subscriptionResponse
