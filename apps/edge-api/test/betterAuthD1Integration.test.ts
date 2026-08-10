@@ -24,12 +24,13 @@ describe('Better Auth native D1 runtime', () => {
     const password = 'ValidPassword123!'
     const passwordHash = await hash(password, 12)
     const now = Date.now()
+    const nowIso = new Date(now).toISOString()
 
     await database.batch([
       database.prepare('INSERT INTO user(id,name,email,emailVerified,image,createdAt,updatedAt) VALUES(?1,?2,?3,1,NULL,?4,?4)')
-        .bind(userId, 'D1 Test User', email, now),
+        .bind(userId, 'D1 Test User', email, nowIso),
       database.prepare('INSERT INTO account(id,userId,accountId,providerId,password,createdAt,updatedAt) VALUES(?1,?2,?3,?4,?5,?6,?6)')
-        .bind(`credential:${userId}`, userId, userId, 'credential', passwordHash, now),
+        .bind(`credential:${userId}`, userId, userId, 'credential', passwordHash, nowIso),
     ])
 
     try {
@@ -51,7 +52,9 @@ describe('Better Auth native D1 runtime', () => {
       const sessions = await database.prepare('SELECT id,userId,token,expiresAt,createdAt,updatedAt FROM session WHERE userId=?1').bind(userId).all()
       expect(sessions.results).toHaveLength(1)
       expect(sessions.results[0]).toEqual(expect.objectContaining({ userId }))
-      expect(Number(sessions.results[0]?.expiresAt)).toBeGreaterThan(now)
+      expect(Date.parse(String(sessions.results[0]?.expiresAt))).toBeGreaterThan(now)
+      expect(typeof sessions.results[0]?.createdAt).toBe('string')
+      expect(typeof sessions.results[0]?.updatedAt).toBe('string')
     } finally {
       await database.prepare('DELETE FROM session WHERE userId=?1').bind(userId).run()
       await database.prepare('DELETE FROM account WHERE userId=?1').bind(userId).run()
