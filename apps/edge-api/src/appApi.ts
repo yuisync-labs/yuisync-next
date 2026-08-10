@@ -18,8 +18,26 @@ type MembershipRow = {
   tenant_status: string
 }
 
+type DirectoryMembershipRow = {
+  role: string
+  status: string
+  module_permissions_json: string | null
+  tenant_status: string
+}
+
+type ManagedUserRow = {
+  principal_id: string
+  display_name: string | null
+  email: string | null
+  principal_status: string
+  membership_role: string
+  membership_status: string
+}
+
 type ModulePermission = true | string | Record<string, unknown>
 type AuthSession = Awaited<ReturnType<typeof getBetterAuthSession>>
+type SessionResolver = typeof getBetterAuthSession
+export type AppApiDependencies = { getSession?: SessionResolver }
 type PrincipalResolution =
   | { ok: true; session: NonNullable<AuthSession>; principal: PrincipalRow }
   | { ok: false; error: Response }
@@ -46,9 +64,13 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 96)
 }
 
-async function resolvePrincipal(request: Request, bindings: AppApiBindings): Promise<PrincipalResolution> {
+async function resolvePrincipal(
+  request: Request,
+  bindings: AppApiBindings,
+  getSession: SessionResolver = getBetterAuthSession,
+): Promise<PrincipalResolution> {
   if (!bindings.DB) return { ok: false, error: json({ code: 'DATABASE_NOT_CONFIGURED' }, 503) }
-  const session = await getBetterAuthSession(request, bindings)
+  const session = await getSession(request, bindings)
   const userId = validId(session?.user?.id, 255)
   if (!session || !userId) return { ok: false, error: json({ code: 'UNAUTHENTICATED' }, 401) }
 
@@ -77,9 +99,9 @@ async function memberships(database: D1Database, principalId: string): Promise<M
   return result.results
 }
 
-function modulePermissionsFor(row: MembershipRow): Record<string, ModulePermission> {
+function modulePermissionsFromJson(raw: string | null | undefined): Record<string, ModulePermission> {
   try {
-    const parsed = JSON.parse(row.module_permissions_json || '{}')
+    const parsed = JSON.parse(raw || '{}')
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
 
     const permissions: Record<string, ModulePermission> = {}
@@ -104,10 +126,30 @@ function modulePermissionsFor(row: MembershipRow): Record<string, ModulePermissi
   }
 }
 
+function modulePermissionsFor(row: MembershipRow): Record<string, ModulePermission> {
+  return modulePermissionsFromJson(row.module_permissions_json)
+}
+
 function modulesFor(row: MembershipRow): string[] {
   const permissions = modulePermissionsFor(row)
   const modules = Object.keys(permissions)
   return modules.length ? modules : ['petshop']
+}
+
+function hasModuleAccess(row: DirectoryMembershipRow, moduleId: string): boolean {
+  if (row.role === 'owner' || row.role === 'admin') return true
+  const permissions = modulePermissionsFromJson(row.module_permissions_json)
+  return Boolean(permissions[moduleId] ?? permissions['*'])
+}
+
+function operationalRole(tenantRole: string): 'admin' | 'employee' {
+  return tenantRole === 'owner' || tenantRole === 'admin' ? 'admin' : 'employee'
+}
+
+function staffType(tenantRole: string): 'gerente' | 'funcionario' {
+  return tenantRole === 'owner' || tenantRole === 'admin' || tenantRole === 'manager'
+    ? 'gerente'
+    : 'funcionario'
 }
 
 async function bootstrap(request: Request, bindings: AppApiBindings): Promise<Response> {
@@ -157,6 +199,61 @@ async function settings(request: Request, bindings: AppApiBindings): Promise<Res
   return json({ tenant_id: tenantId, module_id: moduleId, settings: row })
 }
 
+async function managedUsers(
+  request: Request,
+  bindings: AppApiBindings,
+  dependencies: AppApiDependencies,
+): Promise<Response> {
+  const resolved = await resolvePrincipal(request, bindings, dependencies.getSession)
+  if (!resolved.ok) return resolved.error
+
+  const url = new URL(request.url)
+  const tenantId = validId(url.searchParams.get('tenant_id'))
+  const moduleId = validModule(url.searchParams.get('module_id'))
+  if (!tenantId || !moduleId) return json({ code: 'INVALID_SCOPE' }, 400)
+
+  const membership = await bindings.DB!.prepare(`
+    SELECT m.role, m.status, m.module_permissions_json, t.status AS tenant_status
+    FROM tenant_memberships m
+    JOIN tenants t ON t.id = m.tenant_id
+    WHERE m.tenant_id = ?1 AND m.principal_id = ?2
+    LIMIT 1
+  `).bind(tenantId, resolved.principal.id).first<DirectoryMembershipRow>()
+
+  if (
+    !membership
+    || membership.status !== 'active'
+    || membership.tenant_status !== 'active'
+    || !hasModuleAccess(membership, moduleId)
+  ) {
+    return json({ code: 'FORBIDDEN' }, 403)
+  }
+
+  const result = await bindings.DB!.prepare(`
+    SELECT p.id AS principal_id,
+           p.display_name,
+           p.email,
+           p.status AS principal_status,
+           m.role AS membership_role,
+           m.status AS membership_status
+    FROM tenant_memberships m
+    JOIN identity_principals p ON p.id = m.principal_id
+    WHERE m.tenant_id = ?1
+    ORDER BY COALESCE(NULLIF(TRIM(p.display_name), ''), p.email, p.id), p.id
+  `).bind(tenantId).all<ManagedUserRow>()
+
+  return json({
+    profiles: result.results.map((row) => ({
+      id: row.principal_id,
+      full_name: row.display_name || row.email || '',
+      email: row.email || '',
+      role: operationalRole(row.membership_role),
+      active: row.membership_status === 'active' && row.principal_status === 'active',
+      staff_type: staffType(row.membership_role),
+    })),
+  })
+}
+
 async function createTenant(request: Request, bindings: AppApiBindings): Promise<Response> {
   const resolved = await resolvePrincipal(request, bindings)
   if (!resolved.ok) return resolved.error
@@ -180,11 +277,17 @@ async function createTenant(request: Request, bindings: AppApiBindings): Promise
   return json({ id, name, slug, role: 'owner', enabled_modules: ['petshop'], module_permissions: { petshop: { role: 'admin_pet' } } }, 201)
 }
 
-export async function handleAppApiRequest(request: Request, bindings: AppApiBindings): Promise<Response | null> {
+export async function handleAppApiRequest(
+  request: Request,
+  bindings: AppApiBindings,
+  dependencies: AppApiDependencies = {},
+): Promise<Response | null> {
   const { pathname } = new URL(request.url)
   if (pathname === '/api/app/bootstrap' && request.method === 'GET') return bootstrap(request, bindings)
   if (pathname === '/api/app/settings' && request.method === 'GET') return settings(request, bindings)
   if (pathname === '/api/app/tenants' && request.method === 'POST') return createTenant(request, bindings)
+  if (pathname === '/api/admin/users' && request.method === 'GET') return managedUsers(request, bindings, dependencies)
+  if (pathname === '/api/admin/users') return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET' })
   if (pathname.startsWith('/api/app/')) return json({ code: 'NOT_FOUND' }, 404)
   return null
 }
