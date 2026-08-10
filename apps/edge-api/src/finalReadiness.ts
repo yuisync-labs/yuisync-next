@@ -29,8 +29,8 @@ export async function handleFinalReadiness(request:Request,bindings:FinalReadine
   const dbBinding=hasD1Binding(bindings.DB)
   const main=await mainSchema(dbBinding?bindings.DB:undefined)
   const authConfig=getAuthDatabaseReadiness(bindings as never)
-  const authCore=await authSchema(bindings.AUTH_DB)
   const authEnabled=bindings.EDGE_BETTER_AUTH_ENABLED==='true'
+  const authCore=authEnabled?await authSchema(bindings.AUTH_DB):'not_configured'
   const coordinationEnabled=isEdgeCoordinationEnabled(bindings.EDGE_COORDINATION_ENABLED)
   const coordination=coordinationEnabled?(hasCoordinationBinding(bindings.COORDINATOR)?'ready':'not_configured'):'disabled'
   const migrationClosed=bindings.EDGE_OPERATIONAL_MIGRATION_ENABLED!=='true'&&bindings.EDGE_AUTH_MIGRATION_ENABLED!=='true'
