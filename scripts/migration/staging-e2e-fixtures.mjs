@@ -87,7 +87,7 @@ async function setup() {
 
   for (const user of current.users) {
     const passwordHash = await hash(user.password, 12)
-    const modulePermissions = JSON.stringify({ petshop: user.moduleRole })
+    const modulePermissions = JSON.stringify({ petshop: { role: user.moduleRole } })
     authStatements.push(
       `INSERT INTO user(id,name,email,emailVerified,image,createdAt,updatedAt) VALUES(${sql(user.userId)},${sql(user.name)},${sql(user.email)},1,NULL,${now},${now});`,
       `INSERT INTO account(id,userId,accountId,providerId,password,createdAt,updatedAt) VALUES(${sql(`credential:${user.userId}`)},${sql(user.userId)},${sql(user.userId)},'credential',${sql(passwordHash)},${now},${now});`,
