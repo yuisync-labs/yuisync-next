@@ -23,12 +23,14 @@ const resources = {
 }
 
 describe('production Cloudflare config', () => {
-  it('isolates production resources and keeps the custom domain detached during canary', () => {
+  it('isolates production resources and explicitly exposes only the workers.dev canary before cutover', () => {
     const config = buildProductionWranglerConfig(base, resources)
     const production = config.env.production
 
     expect(production.name).toBe(PRODUCTION.worker)
     expect(production.routes).toBeUndefined()
+    expect(production.workers_dev).toBe(true)
+    expect(production.preview_urls).toBe(false)
     expect(production.vars).toMatchObject({
       APP_ENV: 'production',
       RELEASE_CHANNEL: 'production',
@@ -43,9 +45,11 @@ describe('production Cloudflare config', () => {
     expect(production.queues.consumers[0].dead_letter_queue).toBe('yuisync-events-dlq-production')
   })
 
-  it('attaches only the canonical apex when explicitly requested', () => {
+  it('attaches only the canonical apex and disables workers.dev when explicitly requested', () => {
     const config = buildProductionWranglerConfig(base, resources, { attachDomain: true })
     expect(config.env.production.routes).toEqual([{ pattern: 'yuisync.app', custom_domain: true }])
+    expect(config.env.production.workers_dev).toBe(false)
+    expect(config.env.production.preview_urls).toBe(false)
   })
 
   it('refuses to reuse staging database identifiers', () => {
