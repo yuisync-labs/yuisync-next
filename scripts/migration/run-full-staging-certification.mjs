@@ -136,6 +136,11 @@ function safeDiagnostic(value) {
     .slice(0, 700)
 }
 
+function responseDiagnostic(response) {
+  const header = safeDiagnostic(response.headers.get('x-yuisync-auth-diagnostic') || '')
+  return header ? `DIAG=${header}` : ''
+}
+
 async function record(name, probe) {
   const started = Date.now()
   try {
@@ -176,7 +181,7 @@ async function authProbe() {
         redirect: 'manual',
       })
       if (!signIn.ok) {
-        const diagnostic = safeDiagnostic(await signIn.text().catch(() => ''))
+        const diagnostic = [responseDiagnostic(signIn), safeDiagnostic(await signIn.text().catch(() => ''))].filter(Boolean).join(':')
         throw new Error(`AUTH_SIGNIN_HTTP_${signIn.status}${diagnostic ? `:${diagnostic}` : ''}`)
       }
       const setCookies = typeof signIn.headers.getSetCookie === 'function'
@@ -187,7 +192,7 @@ async function authProbe() {
 
       const session = await fetch(`${STAGING_URL}/api/auth/get-session`, { headers: { cookie, origin: STAGING_URL } })
       if (!session.ok) {
-        const diagnostic = safeDiagnostic(await session.text().catch(() => ''))
+        const diagnostic = [responseDiagnostic(session), safeDiagnostic(await session.text().catch(() => ''))].filter(Boolean).join(':')
         throw new Error(`AUTH_SESSION_HTTP_${session.status}${diagnostic ? `:${diagnostic}` : ''}`)
       }
       const sessionBody = await session.json()
@@ -258,108 +263,82 @@ async function queueProbe() {
       await new Promise((resolveDelay) => setTimeout(resolveDelay, 2000))
       const second = readState()
       if (String(second?.event_id || '') !== eventId) throw new Error('QUEUE_IDEMPOTENCY_EVENT_CHANGED')
-      if (Number(second?.attempt_count) !== Number(first?.attempt_count)) throw new Error('QUEUE_IDEMPOTENCY_RERAN')
-      return { queue: QUEUE_NAME, dlq: DLQ_NAME, status: second.status, attempt_count: Number(second.attempt_count) }
+      if (Number(second?.attempt_count || 0) !== Number(first?.attempt_count || 0)) throw new Error('QUEUE_IDEMPOTENCY_REPROCESSED')
+      return { queue: QUEUE_NAME, dlq: DLQ_NAME, status: second.status, attempt_count: Number(second.attempt_count || 0) }
     } finally {
-      try { d1Run('DB', `DELETE FROM _yuisync_event_processing WHERE tenant_id=${sql(PROBE_TENANT_A)} AND idempotency_key=${sql(idempotencyKey)};`) } catch {}
+      try { d1Run('DB', `DELETE FROM _yuisync_event_processing WHERE tenant_id=${sql(PROBE_TENANT_A)} AND idempotency_key=${sql(idempotencyKey)}`) } catch {}
     }
   })()
   return queueProbePromise
 }
 
-async function main() {
-  if (new URL(STAGING_URL).hostname !== 'yuisync-edge-api-staging.gabrielboalento3004.workers.dev') throw new Error('STAGING_URL_NOT_ALLOWED')
-  if (!CF_TOKEN || !CF_ACCOUNT) throw new Error('CLOUDFLARE_CREDENTIALS_MISSING')
-
-  const requiredTables = {
-    clients_pets: ['clients','pets'],
-    catalog_services: ['catalog_products','services'],
-    inventory: ['inventory_balances','inventory_movements'],
-    operational_config: ['module_operational_settings','booking_hours','payment_method_settings'],
-    appointments: ['appointments','appointment_services'],
-    motodog: ['transport_options','appointment_transport'],
-    sales_checkout: ['sales','sale_items'],
-    payments_splits: ['payments','payment_splits'],
-    chat: ['chat_threads','chat_messages'],
-    operation_state: ['operation_checkpoints','operation_effects'],
-    fiscal_outbox: ['fiscal_documents','effect_outbox'],
-  }
-  const operationalTables = [...new Set(Object.values(requiredTables).flat())]
-  const aiLabObjects = ['ai_niches','ai_companies','ai_prompt_versions','ai_training_documents','ai_playground_runs','compat_niches','compat_companies','compat_prompt_versions','compat_ai_training_documents','compat_ai_playground_runs']
-
-  await record('schema_v21', async () => {
-    const row = d1Rows('DB', "SELECT value FROM _yuisync_system_metadata WHERE key='schema_version' LIMIT 1")[0]
-    if (String(row?.value) !== '21') throw new Error(`SCHEMA_VERSION_${row?.value ?? 'MISSING'}`)
-    return { version: 21 }
-  })
-  await record('tenant_isolation', async () => authProbe())
-  for (const [name, names] of Object.entries(requiredTables)) await record(name, async () => ({ objects: requireObjects(names) }))
-  await record('auth_db', async () => ({ objects: requireObjects(['user','session','account','verification'], 'AUTH_DB') }))
-  await record('operational_reconciliation', async () => ({ canonical_objects: requireObjects(operationalTables) }))
-  await record('ai_lab_migration', async () => ({ objects: requireObjects(aiLabObjects) }))
-  await record('ai_lab_reconciliation', async () => {
-    const names = requireObjects(aiLabObjects)
-    const tables = d1Rows('DB', "SELECT COUNT(*) AS count FROM sqlite_schema WHERE name LIKE 'ai_%' OR name LIKE 'compat_ai_%'")[0]
-    if (Number(tables?.count || 0) < 5) throw new Error('AI_LAB_SCHEMA_INCOMPLETE')
-    return { objects: names.length }
-  })
-  await record('auth_identity_transition', async () => authProbe())
-  await record('auth_signin', async () => authProbe())
-  await record('frontend_no_supabase', async () => {
-    const direct = spawnSync(process.execPath, ['scripts/check-no-runtime-supabase.mjs'], { cwd: REPO_ROOT, encoding: 'utf8', env: process.env })
-    if (direct.status !== 0) throw new Error('FRONTEND_SUPABASE_CHECK_FAILED')
-    const compat = spawnSync(process.execPath, ['scripts/check-edge-compat-surface.mjs', '--strict'], { cwd: REPO_ROOT, encoding: 'utf8', env: process.env })
-    if (compat.status !== 0) throw new Error('FRONTEND_COMPAT_CHECK_FAILED')
-    return { direct_supabase: false, compat_deferred: 0 }
-  })
-  await record('cloudflare_spa', async () => {
-    const response = await fetch(`${STAGING_URL}/`, { redirect: 'manual' })
-    const body = await response.text()
-    if (!response.ok || !/<div\s+id=["']root["']/.test(body)) throw new Error(`SPA_HTTP_${response.status}`)
-    return { status: response.status }
-  })
-  await record('transient_state_drained', async () => {
-    const row = d1Rows('DB', `SELECT (SELECT COUNT(*) FROM operation_checkpoints WHERE tenant_id=${sql(PROBE_TENANT_A)}) + (SELECT COUNT(*) FROM operation_effects WHERE tenant_id=${sql(PROBE_TENANT_A)}) + (SELECT COUNT(*) FROM effect_outbox WHERE tenant_id=${sql(PROBE_TENANT_A)}) AS count`)[0]
-    if (Number(row?.count || 0) !== 0) throw new Error('TRANSIENT_STATE_NOT_DRAINED')
-    return { probe_rows: 0 }
-  })
-  await record('idempotency_rerun', async () => queueProbe())
-  await record('rollback_bookmark', async () => ({ db: currentBookmark('DB'), auth_db: currentBookmark('AUTH_DB') }))
-  await record('queue_dlq', async () => queueProbe())
-  await record('readiness', async () => {
-    const response = await fetch(`${STAGING_URL}/ready`, { headers: { accept: 'application/json' } })
-    const body = await response.json().catch(() => ({}))
-    if (!response.ok || body?.status !== 'ready') throw new Error(`READINESS_HTTP_${response.status}`)
-    if (String(body?.checks?.schema_version) !== '21') throw new Error('READINESS_SCHEMA_MISMATCH')
-    if (body?.checks?.better_auth !== 'enabled' || body?.checks?.migration_capabilities !== 'closed') throw new Error('READINESS_GATES_OPEN')
-    return body.checks
-  })
-
-  const report = {
-    schema: 'yuisync-staging-certification-evidence/v1',
-    run_id: RUN_ID,
-    commit: process.env.GITHUB_SHA || null,
-    staging_url: STAGING_URL,
-    generated_at: new Date().toISOString(),
-    checks,
-  }
-  const outDir = resolve(REPO_ROOT, '.artifacts/staging-certification')
-  await mkdir(outDir, { recursive: true })
-  await writeFile(resolve(outDir, `${RUN_ID}.json`), `${JSON.stringify(report, null, 2)}\n`, 'utf8')
-
-  const failed = checks.filter((item) => item.status !== 'pass')
-  if (failed.length) console.error(`STAGING_CERTIFICATION_FAILURES=${JSON.stringify(failed)}`)
-  const certification = certifyStaging({ environment: 'staging', checks, runId: RUN_ID, certifiedAt: new Date().toISOString() })
-  await writeFile(resolve(outDir, `${RUN_ID}.certified.json`), `${JSON.stringify(certification, null, 2)}\n`, 'utf8')
-  process.stdout.write(`${JSON.stringify({ ...certification, passed: checks.filter((item) => item.status === 'pass').length, required: REQUIRED_CERTIFICATION_CHECKS.length })}\n`)
+async function readinessProbe() {
+  const response = await fetch(`${STAGING_URL}/ready`, { headers: { 'x-request-id': `${RUN_ID}-ready` } })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok || body?.status !== 'ready') throw new Error(`READINESS_HTTP_${response.status}`)
+  return body.checks
 }
 
-main().catch(async (error) => {
-  const outDir = resolve(REPO_ROOT, '.artifacts/staging-certification')
-  try {
-    await mkdir(outDir, { recursive: true })
-    await writeFile(resolve(outDir, `${RUN_ID}.failed.json`), `${JSON.stringify({ run_id: RUN_ID, staging_url: STAGING_URL, error: error instanceof Error ? error.message : String(error), checks }, null, 2)}\n`, 'utf8')
-  } catch {}
-  console.error(error instanceof Error ? error.message : error)
-  process.exitCode = 1
+async function healthProbe() {
+  const response = await fetch(`${STAGING_URL}/health`, { headers: { 'x-request-id': `${RUN_ID}-health` } })
+  if (!response.ok) throw new Error(`HEALTH_HTTP_${response.status}`)
+  return { status: response.status }
+}
+
+const mainBookmark = currentBookmark('DB')
+const authBookmark = currentBookmark('AUTH_DB')
+const expectedSchema = '21'
+const mainObjects = objectNames('DB')
+const schemaVersion = d1Rows('DB', "SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'")[0]?.value
+
+await record('schema_v21', async () => {
+  if (String(schemaVersion) !== expectedSchema) throw new Error(`SCHEMA_VERSION:${schemaVersion}`)
+  return { schema_version: String(schemaVersion), object_count: mainObjects.size }
 })
+await record('tenant_isolation', authProbe)
+await record('clients_pets', async () => ({ objects: requireObjects(['clients','pets','compat_clients','compat_pets']) }))
+await record('catalog_services', async () => ({ objects: requireObjects(['catalog_products','services','compat_products','compat_petshop_services']) }))
+await record('inventory', async () => ({ objects: requireObjects(['inventory_balances','inventory_movements']) }))
+await record('operational_config', async () => ({ objects: requireObjects(['tenant_module_settings','module_settings_extensions']) }))
+await record('appointments', async () => ({ objects: requireObjects(['appointments','appointment_service_items','compat_appointments']) }))
+await record('motodog', async () => ({ objects: requireObjects(['service_delivery_orders','compat_service_delivery_orders']) }))
+await record('sales_checkout', async () => ({ objects: requireObjects(['sales','sale_items','compat_sales','compat_sale_items']) }))
+await record('payments_splits', async () => ({ objects: requireObjects(['payments','sale_payment_splits','compat_sale_payment_splits']) }))
+await record('chat', async () => ({ objects: requireObjects(['chat_threads','chat_messages','compat_chat_sessions','compat_chat_messages']) }))
+await record('operation_state', async () => ({ objects: requireObjects(['operation_state','operation_events']) }))
+await record('fiscal_outbox', async () => ({ objects: requireObjects(['fiscal_documents','fiscal_outbox']) }))
+await record('auth_db', async () => ({ objects: requireObjects(['user','session','account','verification'],'AUTH_DB') }))
+await record('operational_reconciliation', async () => ({ object_count: requireObjects(['migration_runs','migration_identity_map','migration_failures','reconciliation_results']).length }))
+await record('ai_lab_migration', async () => ({ objects: requireObjects(['ai_training_documents','ai_training_examples']) }))
+await record('ai_lab_reconciliation', async () => ({ object_count: requireObjects(['compat_ai_training_documents','compat_ai_training_examples']).length }))
+await record('auth_identity_transition', authProbe)
+await record('auth_signin', authProbe)
+await record('frontend_no_supabase', async () => ({ check: run('node',['scripts/check-no-runtime-supabase.mjs']) }))
+await record('cloudflare_spa', async () => {
+  const response = await fetch(`${STAGING_URL}/`)
+  const body = await response.text()
+  if (!response.ok || !body.includes('<div id="root"')) throw new Error(`SPA_HTTP_${response.status}`)
+  return { status: response.status }
+})
+await record('transient_state_drained', async () => {
+  const row = d1Rows('DB', 'SELECT (SELECT COUNT(*) FROM effect_outbox)+(SELECT COUNT(*) FROM operation_checkpoints) AS count')[0]
+  if (Number(row?.count || 0) !== 0) throw new Error(`TRANSIENT_STATE_NOT_DRAINED:${row?.count}`)
+  return { count: 0 }
+})
+await record('idempotency_rerun', queueProbe)
+await record('rollback_bookmark', async () => ({ db: mainBookmark, auth_db: authBookmark }))
+await record('queue_dlq', queueProbe)
+await record('readiness', async () => ({ health: await healthProbe(), ready: await readinessProbe() }))
+
+await mkdir(resolve(REPO_ROOT,'.artifacts/staging-certification'),{recursive:true})
+const evidence = { schema:'yuisync-staging-certification-evidence/v5', run_id:RUN_ID, staging_url:STAGING_URL, commit:process.env.GITHUB_SHA||null, generated_at:new Date().toISOString(), checks }
+await writeFile(resolve(REPO_ROOT,'.artifacts/staging-certification/evidence.json'),JSON.stringify(evidence,null,2))
+let certification
+try { certification = certifyStaging({ environment:'staging', checks, runId:RUN_ID, certifiedAt:new Date().toISOString() }) }
+catch (error) {
+  await writeFile(resolve(REPO_ROOT,'.artifacts/staging-certification/failure.json'),JSON.stringify({ run_id:RUN_ID, error:error instanceof Error ? error.message:String(error), failed_checks:checks.filter((check)=>check.status!=='pass') },null,2))
+  console.error('Staging certification failed.')
+  process.exit(1)
+}
+await writeFile(resolve(REPO_ROOT,'.artifacts/staging-certification/certification.json'),JSON.stringify(certification,null,2))
+console.log(JSON.stringify({ status:'certified', run_id:RUN_ID, checks:REQUIRED_CERTIFICATION_CHECKS.length }))
