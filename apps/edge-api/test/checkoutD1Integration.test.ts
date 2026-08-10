@@ -38,7 +38,7 @@ async function signIn(email: string, password: string): Promise<string> {
 }
 
 describe('PDV checkout D1 integration', () => {
-  it('atomically records sale, payment and stock movement, enforces discount policy and safely replays idempotency', async () => {
+  it('atomically records sale, payment and stock movement, enforces server policies and safely replays idempotency', async () => {
     const runtime = bindings()
     const database = runtime.DB
     const authDatabase = runtime.AUTH_DB
@@ -81,9 +81,9 @@ describe('PDV checkout D1 integration', () => {
         customerName: 'Cliente Balcao',
         paymentMethod: 'pix',
         discount: 2.5,
-        deliveryFee: 1,
+        deliveryFee: 999,
         source: 'pdv',
-        fulfillmentType: 'balcao',
+        fulfillmentType: 'entrega',
         idempotencyKey: `checkout-${suffix}`,
         items: [{ productId, quantity: 2, upsell: true }],
       }
@@ -102,13 +102,14 @@ describe('PDV checkout D1 integration', () => {
       expect(firstBody.data.sale).toEqual(expect.objectContaining({
         subtotal: 25,
         discount: 2.5,
-        delivery_fee: 1,
-        total_price: 23.5,
+        delivery_fee: 8,
+        total_price: 30.5,
         status: 'concluido',
         source: 'pdv',
-        fulfillment_type: 'balcao',
+        fulfillment_type: 'entrega',
         payment_method: 'pix',
       }))
+      expect(firstBody.data.sale.notes).toContain('Taxa de entrega: R$ 8.00')
       expect(firstBody.data.transaction.replayed).toBe(false)
       expect(firstBody.data.fiscal).toEqual({ status: 'not_requested' })
 
@@ -126,7 +127,7 @@ describe('PDV checkout D1 integration', () => {
       const payments = await database.prepare('SELECT method,amount_cents,status FROM payments WHERE tenant_id=?1 AND module_id=?2 AND sale_id=?3')
         .bind(tenantId, 'petshop', saleId).all<Record<string, unknown>>()
       expect(payments.results).toEqual([
-        expect.objectContaining({ method: 'pix', amount_cents: 2350, status: 'received' }),
+        expect.objectContaining({ method: 'pix', amount_cents: 3050, status: 'received' }),
       ])
 
       const movements = await database.prepare('SELECT movement_type,delta_milliunits,stock_before_milliunits,stock_after_milliunits,unit_cost_cents,reference_type,reference_id,reason FROM inventory_movements WHERE tenant_id=?1 AND module_id=?2 AND product_id=?3')
@@ -161,7 +162,7 @@ describe('PDV checkout D1 integration', () => {
         INSERT INTO module_settings_extensions(tenant_id,module_id,data_json,version,updated_at_ms)
         VALUES(?1,'petshop',?2,1,?3)
         ON CONFLICT(tenant_id,module_id) DO UPDATE SET data_json=excluded.data_json,version=module_settings_extensions.version+1,updated_at_ms=excluded.updated_at_ms
-      `).bind(tenantId, JSON.stringify({ max_pdv_discount_percent: 5 }), Date.now()).run()
+      `).bind(tenantId, JSON.stringify({ max_pdv_discount_percent: 5, delivery_fee: 19.9 }), Date.now()).run()
 
       const rejected = await handleCheckoutApiRequest(new Request('https://edge.test/api/petshop/checkout', {
         method: 'POST',
@@ -171,6 +172,7 @@ describe('PDV checkout D1 integration', () => {
           idempotencyKey: `discount-limit-${suffix}`,
           discount: 1,
           deliveryFee: 0,
+          fulfillmentType: 'balcao',
           items: [{ productId, quantity: 1 }],
         }),
       }), runtime)
