@@ -103,6 +103,42 @@ export function isAppointmentReopenTarget(value: unknown): boolean {
   return ['scheduled', 'confirmed', 'in_progress'].includes(normalizeStatus(value))
 }
 
+export async function completedAppointmentReopenFinancialBlocker(
+  request: Request,
+  env: CompatRuntimeBindings,
+  appointmentId: string,
+): Promise<Response | null> {
+  if (!env.DB) return json({ code: 'DATABASE_NOT_CONFIGURED' }, 503)
+  const scope = requestScope(request)
+  if (!scope) return json({ code: 'INVALID_SCOPE' }, 400)
+
+  const sale = await env.DB.prepare(`
+    SELECT id,status
+    FROM sales
+    WHERE tenant_id=?1 AND module_id=?2 AND appointment_id=?3
+      AND status NOT IN ('cancelled','refunded')
+    ORDER BY created_at_ms DESC
+    LIMIT 1
+  `).bind(scope.tenantId, scope.moduleId, appointmentId).first<SaleRow>()
+
+  if (!sale?.id) return null
+
+  const payment = await env.DB.prepare(`
+    SELECT id,status
+    FROM payments
+    WHERE tenant_id=?1 AND module_id=?2 AND sale_id=?3
+      AND status IN ('authorized','received')
+    LIMIT 1
+  `).bind(scope.tenantId, scope.moduleId, sale.id).first<PaymentRow>()
+
+  return json({
+    code: payment?.id ? 'APPOINTMENT_REOPEN_REFUND_REQUIRED' : 'APPOINTMENT_REOPEN_SALE_CANCEL_REQUIRED',
+    sale_id: sale.id,
+    sale_status: sale.status,
+    payment_status: payment?.status || null,
+  }, 409)
+}
+
 export async function reopenCompletedAppointment(
   request: Request,
   env: CompatRuntimeBindings,
@@ -125,32 +161,8 @@ export async function reopenCompletedAppointment(
   if (!appointment) return { response: json({ code: 'APPOINTMENT_NOT_FOUND' }, 404) }
   if (appointment.status !== 'completed') return { reopened: false }
 
-  const sale = await env.DB.prepare(`
-    SELECT id,status
-    FROM sales
-    WHERE tenant_id=?1 AND module_id=?2 AND appointment_id=?3
-      AND status NOT IN ('cancelled','refunded')
-    ORDER BY created_at_ms DESC
-    LIMIT 1
-  `).bind(scope.tenantId, scope.moduleId, appointmentId).first<SaleRow>()
-
-  if (sale?.id) {
-    const payment = await env.DB.prepare(`
-      SELECT id,status
-      FROM payments
-      WHERE tenant_id=?1 AND module_id=?2 AND sale_id=?3
-        AND status IN ('authorized','received')
-      LIMIT 1
-    `).bind(scope.tenantId, scope.moduleId, sale.id).first<PaymentRow>()
-    return {
-      response: json({
-        code: payment?.id ? 'APPOINTMENT_REOPEN_REFUND_REQUIRED' : 'APPOINTMENT_REOPEN_SALE_CANCEL_REQUIRED',
-        sale_id: sale.id,
-        sale_status: sale.status,
-        payment_status: payment?.status || null,
-      }, 409),
-    }
-  }
+  const financialBlocker = await completedAppointmentReopenFinancialBlocker(request, env, appointmentId)
+  if (financialBlocker) return { response: financialBlocker }
 
   const benefits = parseArray(appointment.subscription_benefits_json)
   const released = releaseBenefitSnapshots(benefits)
