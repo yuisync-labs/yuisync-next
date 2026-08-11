@@ -1,5 +1,9 @@
-import type { CompatRuntimeBindings } from './compatApiRuntime.js'
+import {
+  handleCompatApiRequest as handleBaseCompatApiRequest,
+  type CompatRuntimeBindings,
+} from './compatApiRuntime.js'
 import { handleAppointmentCommandPolicy } from './appointmentBookingIdempotency'
+import { appendAppointmentOperationalAudit } from './appointmentOperationalAudit'
 import { handleSubscriptionCompatRpcRequest } from './compatSubscriptionRpc'
 
 type JsonRecord = Record<string, unknown>
@@ -34,6 +38,54 @@ function normalizedAppointmentStatus(value: unknown): string {
   } as Record<string, string>)[status] || status
 }
 
+function requestScope(request: Request): { tenantId: string; moduleId: string } | null {
+  const tenantId = text(request.headers.get('x-tenant-id'))
+  const moduleId = text(request.headers.get('x-module-id')).toLowerCase()
+  if (!tenantId || !moduleId) return null
+  return { tenantId, moduleId }
+}
+
+async function authorizedAppointmentState(
+  request: Request,
+  env: CompatRuntimeBindings,
+  appointmentId: string,
+): Promise<{ response?: Response; status?: string; version?: number }> {
+  const url = new URL(request.url)
+  url.pathname = '/api/compat/query'
+  url.search = ''
+  const headers = new Headers(request.headers)
+  headers.set('content-type', 'application/json')
+  const response = await handleBaseCompatApiRequest(new Request(url.toString(), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      table: 'appointments',
+      action: 'select',
+      filters: [{ op: 'eq', column: 'id', value: appointmentId }],
+      mode: 'maybeSingle',
+      limit: 1,
+    }),
+  }), env)
+  if (!response) return { response: json({ code: 'COMPAT_QUERY_UNAVAILABLE' }, 503) }
+  if (!response.ok) return { response }
+  const envelope = record(await response.json())
+  const appointment = record(envelope.data)
+  if (!Object.keys(appointment).length) return { response: json({ code: 'APPOINTMENT_NOT_FOUND' }, 404) }
+
+  const scope = requestScope(request)
+  if (!scope || !env.DB) return { response: json({ code: 'DATABASE_NOT_CONFIGURED' }, 503) }
+  const raw = await env.DB.prepare(`
+    SELECT version
+    FROM appointments
+    WHERE tenant_id=?1 AND module_id=?2 AND id=?3
+    LIMIT 1
+  `).bind(scope.tenantId, scope.moduleId, appointmentId).first<{ version: number }>()
+  return {
+    status: normalizedAppointmentStatus(appointment.status),
+    version: Math.max(0, Number(raw?.version || 0)),
+  }
+}
+
 export function isAppointmentCompletionTarget(value: unknown): boolean {
   return normalizedAppointmentStatus(value) === 'completed'
 }
@@ -58,6 +110,11 @@ export async function handleCompletedAppointmentCompletionCompat(
   if (!isAppointmentCompletionTarget(payload.status)) return null
   const appointmentId = text(args.p_appointment_id)
   if (!appointmentId) return json({ code: 'APPOINTMENT_ID_REQUIRED' }, 400)
+
+  // Authenticate/authorize first and retain the pre-transition version. That
+  // version becomes the idempotent audit identity for concurrent/replayed calls.
+  const before = await authorizedAppointmentState(request, env, appointmentId)
+  if (before.response) return before.response
 
   // The normal appointment command remains the single writer for the lifecycle
   // transition and commercial snapshots. Completion only coordinates the
@@ -100,12 +157,48 @@ export async function handleCompletedAppointmentCompletionCompat(
 
   const commandEnvelope = record(await command.json())
   const reconciliationEnvelope = record(await reconciliation.json())
+  const reconciliationData = record(reconciliationEnvelope.data)
+  const scope = requestScope(request)
+
+  if (scope && before.status !== 'completed') {
+    await appendAppointmentOperationalAudit(env, {
+      tenantId: scope.tenantId,
+      moduleId: scope.moduleId,
+      appointmentId,
+      eventType: 'appointment.completed',
+      transitionVersion: Number(before.version || 0),
+      title: 'Atendimento concluído',
+      description: 'O atendimento foi movido para concluído pelo fluxo operacional.',
+      metadata: {
+        from_status: before.status || null,
+        to_status: 'completed',
+      },
+    })
+  }
+
+  if (scope && reconciliationData.covered_by_subscription === true && reconciliationData.changed === true) {
+    await appendAppointmentOperationalAudit(env, {
+      tenantId: scope.tenantId,
+      moduleId: scope.moduleId,
+      appointmentId,
+      eventType: 'appointment.package_consumed',
+      transitionVersion: Number(before.version || 0),
+      title: 'Benefício de pacote consumido',
+      description: 'A conclusão do atendimento consumiu o benefício de uma assinatura ativa.',
+      metadata: {
+        subscription_id: text(reconciliationData.subscription_id) || null,
+        consumed_qty: Number(reconciliationData.consumed_qty || 0),
+        discount: Number(reconciliationData.discount || 0),
+      },
+    })
+  }
+
   return json({
     data: {
       ...record(commandEnvelope.data),
       appointment_id: appointmentId,
       completed: true,
-      package_reconciliation: record(reconciliationEnvelope.data),
+      package_reconciliation: reconciliationData,
     },
   })
 }
