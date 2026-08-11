@@ -73,6 +73,26 @@ CREATE TABLE appointment_command_registry (
 CREATE INDEX appointment_command_registry_appointment_idx
   ON appointment_command_registry(tenant_id,module_id,appointment_id);
 
+-- A completed appointment may only reopen after the linked sale has reached an
+-- explicit terminal financial state. This closes the race between checkout and
+-- reopen even when both requests pass their application-level preflight.
+CREATE TRIGGER appointments_reopen_blocks_active_sale
+BEFORE UPDATE OF status ON appointments
+FOR EACH ROW
+WHEN OLD.status='completed'
+  AND NEW.status IN ('scheduled','confirmed','in_progress')
+  AND EXISTS (
+    SELECT 1
+    FROM sales s
+    WHERE s.tenant_id=OLD.tenant_id
+      AND s.module_id=OLD.module_id
+      AND s.appointment_id=OLD.id
+      AND s.status NOT IN ('cancelled','refunded')
+  )
+BEGIN
+  SELECT RAISE(ABORT,'APPOINTMENT_REOPEN_SALE_BLOCKED');
+END;
+
 ALTER TABLE appointment_services ADD COLUMN catalog_price_cents INTEGER
   CHECK (catalog_price_cents IS NULL OR catalog_price_cents >= 0);
 ALTER TABLE appointment_services ADD COLUMN commission_basis_points INTEGER
