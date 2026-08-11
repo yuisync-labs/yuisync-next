@@ -1,0 +1,105 @@
+/* Product UI cleanup layer.
+ * Loaded after the legacy theme so we can reduce visual noise gradually
+ * while screens migrate to reusable components under src/components/ui.
+ */
+
+:root {
+  --ui-radius-control: 9px;
+  --ui-radius-card: 14px;
+  --ui-radius-modal: 16px;
+  --ui-shadow-panel: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 14px rgba(15, 23, 42, 0.04);
+}
+
+.theme-petshop {
+  --shadow-primary: none;
+  --shadow-surface: var(--ui-shadow-panel);
+}
+
+.theme-petshop.theme-dark {
+  --shadow-primary: none;
+  --shadow-surface: 0 8px 28px rgba(0, 0, 0, 0.24);
+}
+
+.rounded-xl2 {
+  border-radius: var(--ui-radius-card) !important;
+}
+
+.rounded-xl3 {
+  border-radius: var(--ui-radius-modal) !important;
+}
+
+.kpi-card {
+  border-radius: var(--ui-radius-card) !important;
+  box-shadow: none !important;
+  transition: border-color 150ms ease, background-color 150ms ease !important;
+}
+
+.kpi-card::before {
+  display: none !important;
+}
+
+.kpi-card:hover,
+.revenue-mix-card:hover {
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.revenue-mix-card-glow,
+.neon-glow {
+  display: none !important;
+}
+
+.neon-text {
+  text-shadow: none !important;
+}
+
+.btn {
+  border-radius: var(--ui-radius-control) !important;
+  box-shadow: none !important;
+}
+
+.btn-primary {
+  box-shadow: none !important;
+}
+
+.inp,
+select.inp {
+  border-radius: var(--ui-radius-control) !important;
+}
+
+.inp:focus {
+  box-shadow: 0 0 0 3px var(--primary-bg-light) !important;
+}
+
+.tbl-wrapper {
+  border-radius: var(--ui-radius-card) !important;
+  box-shadow: none !important;
+}
+
+.modal-box {
+  border-radius: var(--ui-radius-modal) !important;
+}
+
+.animate-content {
+  animation-duration: 180ms !important;
+}
+
+.ai-live-dot,
+.ai-flow-line path.recharts-area-curve,
+.ai-flow-dot,
+.revenue-pie-wrap,
+.revenue-pie-dot {
+  animation: none !important;
+  filter: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
