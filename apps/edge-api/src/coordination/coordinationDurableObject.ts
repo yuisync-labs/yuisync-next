@@ -62,6 +62,25 @@ type PersistedCoordination = Readonly<{
   state: CoordinationState
 }>
 
+export type RealtimeInvalidationEvent = Readonly<{
+  type: 'realtime.invalidate'
+  eventId: string
+  schema: 'edge'
+  eventType: 'SYNC'
+  table: string | null
+  tenantId: string
+  moduleId: string
+  source: string
+  occurredAtMs: number
+}>
+
+type RealtimeSocketAttachment = Readonly<{
+  principalId: string
+  tenantId: string
+  moduleId: string
+  connectedAtMs: number
+}>
+
 function requireSafeInteger(value: number, minimum: number): number {
   if (!Number.isSafeInteger(value) || value < minimum) {
     throw new CoordinationDurableObjectError('COORDINATION_STATE_CORRUPT')
@@ -89,6 +108,19 @@ function sameOperation(
     left.leaseExpiresAtMs === right.leaseExpiresAtMs &&
     left.completedAtMs === right.completedAtMs,
   )
+}
+
+function internalRealtimeHeader(request: Request, name: string, max: number): string | null {
+  const value = String(request.headers.get(name) || '').trim()
+  return value && value.length <= max ? value : null
+}
+
+function realtimeScope(tenantId: string, moduleId: string): CoordinationScope {
+  return {
+    tenantId,
+    resourceType: 'realtime_module',
+    resourceId: moduleId,
+  }
 }
 
 export class CoordinationDurableObject extends DurableObject<EdgeEnv> {
@@ -137,6 +169,82 @@ export class CoordinationDurableObject extends DurableObject<EdgeEnv> {
         lease_expires_at_ms INTEGER NOT NULL CHECK (lease_expires_at_ms >= 0)
       )
     `)
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url)
+    if (url.pathname !== '/realtime/connect') return new Response('Not found', { status: 404 })
+    if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
+      return new Response('Expected WebSocket', { status: 426, headers: { upgrade: 'websocket' } })
+    }
+
+    const principalId = internalRealtimeHeader(request, 'x-realtime-principal-id', 160)
+    const tenantId = internalRealtimeHeader(request, 'x-realtime-tenant-id', 160)
+    const moduleId = internalRealtimeHeader(request, 'x-realtime-module-id', 64)
+    if (!principalId || !tenantId || !moduleId) return new Response('Forbidden', { status: 403 })
+
+    this.ctx.storage.transactionSync(() => {
+      const persisted = this.loadPersistedCoordination()
+      this.bindOrValidateScope(persisted.scope, realtimeScope(tenantId, moduleId))
+    })
+
+    const pair = new WebSocketPair()
+    const [client, server] = Object.values(pair)
+    this.ctx.acceptWebSocket(server)
+    const attachment: RealtimeSocketAttachment = {
+      principalId,
+      tenantId,
+      moduleId,
+      connectedAtMs: Date.now(),
+    }
+    server.serializeAttachment(attachment)
+    server.send(JSON.stringify({
+      type: 'realtime.system',
+      event: 'SUBSCRIBED',
+      tenantId,
+      moduleId,
+    }))
+
+    return new Response(null, { status: 101, webSocket: client })
+  }
+
+  async publishRealtime(event: RealtimeInvalidationEvent): Promise<{ delivered: number }> {
+    this.ctx.storage.transactionSync(() => {
+      const persisted = this.loadPersistedCoordination()
+      this.bindOrValidateScope(persisted.scope, realtimeScope(event.tenantId, event.moduleId))
+    })
+
+    const payload = JSON.stringify(event)
+    let delivered = 0
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket.readyState !== WebSocket.OPEN) continue
+      try {
+        socket.send(payload)
+        delivered += 1
+      } catch {
+        // A closing connection is omitted from delivery accounting and will be
+        // removed by the runtime when the close handshake completes.
+      }
+    }
+    return { delivered }
+  }
+
+  async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (typeof message !== 'string') return
+    if (message === 'ping') {
+      socket.send('pong')
+      return
+    }
+    try {
+      const payload = JSON.parse(message) as { type?: unknown }
+      if (payload?.type === 'ping') socket.send(JSON.stringify({ type: 'pong', at: Date.now() }))
+    } catch {
+      // Client messages are optional; malformed messages do not affect the hub.
+    }
+  }
+
+  async webSocketClose(socket: WebSocket, code: number, reason: string): Promise<void> {
+    try { socket.close(code, reason) } catch { /* close is already in progress */ }
   }
 
   async claim(request: CoordinationClaimRequest): Promise<CoordinationClaimResult> {
