@@ -21,13 +21,9 @@ function bindings() {
 async function signIn(email: string, password: string): Promise<string> {
   const response = await handleBetterAuthRequest(new Request('https://edge.test/api/auth/sign-in/email', {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      origin: 'https://edge.test',
-    },
+    headers: { 'content-type': 'application/json', origin: 'https://edge.test' },
     body: JSON.stringify({ email, password, rememberMe: false }),
   }), bindings())
-
   expect(response).not.toBeNull()
   expect(response?.status).toBe(200)
   const cookie = response?.headers.get('set-cookie')?.split(';')[0] || ''
@@ -35,8 +31,8 @@ async function signIn(email: string, password: string): Promise<string> {
   return cookie
 }
 
-async function reconcile(cookie: string, tenantId: string, appointmentId: string): Promise<Response> {
-  const response = await handleCompatApiRequest(new Request('https://edge.test/api/compat/rpc', {
+async function completeLikeCurrentUi(cookie: string, tenantId: string, appointmentId: string): Promise<Response> {
+  const response = await handleCompatApiRequest(new Request('https://edge.test/api/compat/query', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -45,8 +41,15 @@ async function reconcile(cookie: string, tenantId: string, appointmentId: string
       'x-module-id': 'petshop',
     },
     body: JSON.stringify({
-      name: 'reconcile_petshop_completed_appointment_package',
-      args: { p_appointment_id: appointmentId },
+      table: 'appointments',
+      action: 'update',
+      payload: { status: 'concluido' },
+      filters: [
+        { op: 'eq', column: 'id', value: appointmentId },
+        { op: 'eq', column: 'module_id', value: 'petshop' },
+        { op: 'eq', column: 'tenant_id', value: tenantId },
+      ],
+      mode: 'many',
     }),
   }), bindings())
   expect(response).not.toBeNull()
@@ -54,7 +57,7 @@ async function reconcile(cookie: string, tenantId: string, appointmentId: string
 }
 
 describe('package reconciliation for existing appointments in workerd', () => {
-  it('converts an originally standalone completed appointment to the current active package exactly once', async () => {
+  it('current status-only UI path completes an originally standalone appointment with the active package exactly once', async () => {
     const authDb = (env as EdgeEnv & { AUTH_DB: D1Database }).AUTH_DB
     const db = (env as EdgeEnv & { DB: D1Database }).DB
     const suffix = crypto.randomUUID()
@@ -113,7 +116,7 @@ describe('package reconciliation for existing appointments in workerd', () => {
         subtotal_cents,transport_fee_cents,notes,version,created_at_ms,updated_at_ms,
         subscription_id,subscription_benefit_used,subscription_benefit_status,subscription_benefits_json,
         subscription_label,subscription_discount_cents
-      ) VALUES(?1,'petshop',?2,?3,?4,?5,60,'banho_tosa','completed','manual',5500,0,NULL,1,?6,?6,
+      ) VALUES(?1,'petshop',?2,?3,?4,?5,60,'banho_tosa','scheduled','manual',5500,0,NULL,1,?6,?6,
         NULL,0,NULL,'[]',NULL,0)`)
         .bind(tenantId, appointmentId, clientId, petId, scheduledAt, now),
       db.prepare(`INSERT INTO appointment_services(
@@ -127,21 +130,25 @@ describe('package reconciliation for existing appointments in workerd', () => {
     try {
       const cookie = await signIn(email, password)
 
-      const first = await reconcile(cookie, tenantId, appointmentId)
+      const first = await completeLikeCurrentUi(cookie, tenantId, appointmentId)
       const firstBody = await first.json<{
         data: {
-          changed: boolean
           appointment_id: string
-          subscription_id: string
-          covered_by_subscription: boolean
-          consumed_qty: number
-          discount: number
+          completed: boolean
+          package_reconciliation: {
+            changed: boolean
+            subscription_id: string
+            covered_by_subscription: boolean
+            consumed_qty: number
+            discount: number
+          }
         }
       }>()
       expect(first.status).toBe(200)
-      expect(firstBody.data).toMatchObject({
+      expect(firstBody.data.appointment_id).toBe(appointmentId)
+      expect(firstBody.data.completed).toBe(true)
+      expect(firstBody.data.package_reconciliation).toMatchObject({
         changed: true,
-        appointment_id: appointmentId,
         subscription_id: subscriptionId,
         covered_by_subscription: true,
         consumed_qty: 1,
@@ -149,11 +156,12 @@ describe('package reconciliation for existing appointments in workerd', () => {
       })
 
       const appointment = await db.prepare(`
-        SELECT subscription_id,subscription_benefit_used,subscription_benefit_status,
+        SELECT status,subscription_id,subscription_benefit_used,subscription_benefit_status,
                subscription_benefits_json,subscription_discount_cents
         FROM appointments
         WHERE tenant_id=?1 AND module_id='petshop' AND id=?2
       `).bind(tenantId, appointmentId).first<{
+        status:string
         subscription_id:string|null
         subscription_benefit_used:number
         subscription_benefit_status:string|null
@@ -161,6 +169,7 @@ describe('package reconciliation for existing appointments in workerd', () => {
         subscription_discount_cents:number
       }>()
       expect(appointment).toMatchObject({
+        status: 'completed',
         subscription_id: subscriptionId,
         subscription_benefit_used: 1,
         subscription_benefit_status: 'consumed',
@@ -183,10 +192,16 @@ describe('package reconciliation for existing appointments in workerd', () => {
         .bind(tenantId, appointmentId).first<{ benefit_used:number; catalog_price_cents:number }>()
       expect(serviceSnapshot).toEqual({ benefit_used: 1, catalog_price_cents: 5500 })
 
-      const replay = await reconcile(cookie, tenantId, appointmentId)
-      const replayBody = await replay.json<{ data: { changed:boolean; consumed_qty:number; covered_by_subscription:boolean } }>()
+      const replay = await completeLikeCurrentUi(cookie, tenantId, appointmentId)
+      const replayBody = await replay.json<{
+        data: {
+          completed:boolean
+          package_reconciliation:{ changed:boolean; consumed_qty:number; covered_by_subscription:boolean }
+        }
+      }>()
       expect(replay.status).toBe(200)
-      expect(replayBody.data).toMatchObject({
+      expect(replayBody.data.completed).toBe(true)
+      expect(replayBody.data.package_reconciliation).toMatchObject({
         changed: false,
         consumed_qty: 0,
         covered_by_subscription: true,
