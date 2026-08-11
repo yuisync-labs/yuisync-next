@@ -4,6 +4,28 @@ import {
 } from './compatApiRuntime.js'
 import { handleOperationalCompatRpcRequest } from './compatOperationalRpc'
 
+type ServiceRow = {
+  id: string
+  code: string
+  name: string
+  group_type: string
+  default_price_cents: number
+  default_duration_min: number
+  commission_basis_points: number
+  min_weight_kg: number | null
+  max_weight_kg: number | null
+  species_target: string | null
+  status: string
+}
+
+type PetRow = {
+  id: string
+  client_id: string
+  species: string
+  weight_kg: number | null
+  status: string
+}
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -14,7 +36,7 @@ function text(value: unknown): string {
   return String(value ?? '').trim()
 }
 
-function serviceCodes(payload: Record<string, unknown>): string[] {
+function requestedServiceCodes(payload: Record<string, unknown>): string[] {
   const raw = Array.isArray(payload.services)
     ? payload.services
     : Array.isArray(payload.service_items) ? payload.service_items : []
@@ -25,7 +47,11 @@ function serviceCodes(payload: Record<string, unknown>): string[] {
     })
     .filter(Boolean)
   if (!codes.length && text(payload.service_type)) codes.push(text(payload.service_type))
-  return [...new Set(codes)].sort()
+  return [...new Set(codes)]
+}
+
+function serviceCodes(payload: Record<string, unknown>): string[] {
+  return requestedServiceCodes(payload).sort()
 }
 
 function canonicalIntent(request: Request, payload: Record<string, unknown>): string {
@@ -75,6 +101,144 @@ async function existingAppointment(
   }), env)) || Response.json({ code: 'COMPAT_QUERY_UNAVAILABLE' }, { status: 503 })
 }
 
+async function resolveServiceSnapshots(
+  request: Request,
+  env: CompatRuntimeBindings,
+  payload: Record<string, unknown>,
+): Promise<{ serviceItems?: Record<string, unknown>[]; snapshots?: ServiceRow[]; error?: Response }> {
+  if (!env.DB) return { error: Response.json({ code: 'DATABASE_NOT_CONFIGURED' }, { status: 503 }) }
+  const tenantId = text(request.headers.get('x-tenant-id'))
+  const moduleId = text(request.headers.get('x-module-id')).toLowerCase()
+  const petId = text(payload.pet_id)
+  const codes = requestedServiceCodes(payload)
+  if (!codes.length) return { error: Response.json({ code: 'SERVICE_REQUIRED' }, { status: 400 }) }
+  if (codes.length > 10) return { error: Response.json({ code: 'TOO_MANY_SERVICES' }, { status: 400 }) }
+
+  const pet = petId
+    ? await env.DB.prepare(`
+        SELECT id,client_id,species,weight_kg,status
+        FROM pets
+        WHERE tenant_id=?1 AND module_id=?2 AND id=?3
+        LIMIT 1
+      `).bind(tenantId, moduleId, petId).first<PetRow>()
+    : null
+  if (!pet || pet.status !== 'active') {
+    return { error: Response.json({ code: 'PET_NOT_FOUND' }, { status: 404 }) }
+  }
+
+  const requestedItems = new Map(
+    (Array.isArray(payload.service_items) ? payload.service_items : Array.isArray(payload.services) ? payload.services : [])
+      .map((entry) => {
+        const item = record(entry)
+        const code = text(item.code || item.service_code || item.service_type || item.id)
+        return [code, item] as const
+      })
+      .filter(([code]) => Boolean(code)),
+  )
+
+  const snapshots: ServiceRow[] = []
+  const serviceItems: Record<string, unknown>[] = []
+  let group: string | null = null
+
+  for (const code of codes) {
+    const service = await env.DB.prepare(`
+      SELECT id,code,name,group_type,default_price_cents,default_duration_min,
+             commission_basis_points,min_weight_kg,max_weight_kg,species_target,status
+      FROM services
+      WHERE tenant_id=?1 AND module_id=?2 AND code=?3
+      LIMIT 1
+    `).bind(tenantId, moduleId, code).first<ServiceRow>()
+
+    if (!service || service.status !== 'active') {
+      return { error: Response.json({ code: 'SERVICE_NOT_FOUND', service_code: code }, { status: 404 }) }
+    }
+    if (!group) group = service.group_type
+    if (group !== service.group_type) {
+      return { error: Response.json({ code: 'MIXED_SERVICE_GROUPS' }, { status: 409 }) }
+    }
+    if (service.species_target && service.species_target !== pet.species) {
+      return { error: Response.json({
+        code: 'SERVICE_SPECIES_MISMATCH',
+        service_code: code,
+        service_species: service.species_target,
+        pet_species: pet.species,
+      }, { status: 409 }) }
+    }
+    const weight = pet.weight_kg == null ? null : Number(pet.weight_kg)
+    if (weight !== null && service.min_weight_kg !== null && weight < Number(service.min_weight_kg)) {
+      return { error: Response.json({ code: 'SERVICE_WEIGHT_MISMATCH', service_code: code }, { status: 409 }) }
+    }
+    if (weight !== null && service.max_weight_kg !== null && weight > Number(service.max_weight_kg)) {
+      return { error: Response.json({ code: 'SERVICE_WEIGHT_MISMATCH', service_code: code }, { status: 409 }) }
+    }
+
+    const requested = requestedItems.get(code) || {}
+    snapshots.push(service)
+    serviceItems.push({
+      ...requested,
+      id: service.id,
+      service_id: service.id,
+      code: service.code,
+      service_code: service.code,
+      name: service.name,
+      group_type: service.group_type,
+      unit_price: Number(service.default_price_cents || 0) / 100,
+      catalog_price: Number(service.default_price_cents || 0) / 100,
+      duration_min: Number(service.default_duration_min || 60),
+      commission_type: 'percentage',
+      commission_rate: Number(service.commission_basis_points || 0) / 100,
+      min_weight_kg: service.min_weight_kg,
+      max_weight_kg: service.max_weight_kg,
+      species_target: service.species_target,
+      benefit_used: requested.benefit_used === true,
+    })
+  }
+
+  return { serviceItems, snapshots }
+}
+
+async function persistOperationalSnapshots(
+  request: Request,
+  env: CompatRuntimeBindings,
+  appointmentId: string,
+  operationKey: string,
+  snapshots: ServiceRow[],
+): Promise<void> {
+  if (!env.DB) return
+  const tenantId = text(request.headers.get('x-tenant-id'))
+  const moduleId = text(request.headers.get('x-module-id')).toLowerCase()
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(`
+      UPDATE appointments
+      SET operation_key=?4
+      WHERE tenant_id=?1 AND module_id=?2 AND id=?3
+    `).bind(tenantId, moduleId, appointmentId, operationKey),
+  ]
+
+  snapshots.forEach((service, position) => {
+    statements.push(env.DB!.prepare(`
+      UPDATE appointment_services
+      SET catalog_price_cents=?5,
+          commission_basis_points=?6,
+          min_weight_kg=?7,
+          max_weight_kg=?8,
+          species_target=?9
+      WHERE tenant_id=?1 AND module_id=?2 AND appointment_id=?3 AND position=?4
+    `).bind(
+      tenantId,
+      moduleId,
+      appointmentId,
+      position,
+      Math.max(0, Number(service.default_price_cents || 0)),
+      Math.max(0, Math.min(10000, Number(service.commission_basis_points || 0))),
+      service.min_weight_kg,
+      service.max_weight_kg,
+      service.species_target,
+    ))
+  })
+  await env.DB.batch(statements)
+}
+
 export async function handleIdempotentAppointmentBooking(
   request: Request,
   env: CompatRuntimeBindings,
@@ -92,13 +256,13 @@ export async function handleIdempotentAppointmentBooking(
 
   const args = record(body.args)
   const payload = record(args.p_payload)
-
-  // Explicit IDs are already caller-owned idempotency keys. Preserve them.
   const explicitId = text(payload.id)
   const intentHash = await sha256(canonicalIntent(request, payload))
   const appointmentId = explicitId || deterministicAppointmentId(intentHash)
   const operationKey = text(payload.operation_key) || `appointment-booking:${intentHash}`
 
+  // The compat select is intentionally first: it authenticates and authorizes
+  // the tenant/module scope before this command reads service or pet records.
   const existing = await existingAppointment(request, env, appointmentId)
   if (!existing.ok) return existing
   const existingPayload = record(await existing.json())
@@ -113,15 +277,21 @@ export async function handleIdempotentAppointmentBooking(
     }, { headers: { 'cache-control': 'no-store' } })
   }
 
+  const resolvedServices = await resolveServiceSnapshots(request, env, payload)
+  if (resolvedServices.error) return resolvedServices.error
+
+  const nextPayload = {
+    ...payload,
+    id: appointmentId,
+    operation_key: operationKey,
+    service_items: resolvedServices.serviceItems,
+    service_group: resolvedServices.snapshots?.[0]?.group_type || payload.service_group,
+  }
   const nextBody = {
     ...body,
     args: {
       ...args,
-      p_payload: {
-        ...payload,
-        id: appointmentId,
-        operation_key: operationKey,
-      },
+      p_payload: nextPayload,
     },
   }
   const headers = new Headers(request.headers)
@@ -133,6 +303,22 @@ export async function handleIdempotentAppointmentBooking(
   }), env)
   if (!delegated) return Response.json({ code: 'APPOINTMENT_BOOKING_UNAVAILABLE' }, { status: 503 })
   if (!delegated.ok) return delegated
+
+  try {
+    await persistOperationalSnapshots(
+      request,
+      env,
+      appointmentId,
+      operationKey,
+      resolvedServices.snapshots || [],
+    )
+  } catch (error) {
+    console.error('appointment.booking.snapshot_failed', {
+      appointment_id: appointmentId,
+      error_name: error instanceof Error ? error.name : 'Error',
+    })
+    return Response.json({ code: 'APPOINTMENT_SNAPSHOT_FAILED' }, { status: 500 })
+  }
 
   const result = record(await delegated.json())
   const data = record(result.data)
