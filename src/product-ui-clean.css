@@ -108,6 +108,87 @@
   transition: background-color var(--ui-transition) !important;
 }
 
+/* Agenda used to encode service types with full-card gradients and glow. Keep
+ * the operational distinction, but reduce it to a semantic edge and neutral
+ * product surface so it behaves like the rest of the application.
+ */
+body.product-ui-active .yuisync-agenda-card-surface,
+body.product-ui-active .yuisync-resolved-card {
+  border-color: var(--border) !important;
+  border-left: 3px solid #10b981 !important;
+  background: var(--card) !important;
+  color: var(--text) !important;
+  box-shadow: none !important;
+}
+
+body.product-ui-active .yuisync-agenda-card-surface[data-yuisync-card-kind='grooming'],
+body.product-ui-active .yuisync-resolved-card[data-yuisync-card-kind='grooming'] {
+  border-color: var(--border) !important;
+  border-left-color: #3b82f6 !important;
+  background: var(--card) !important;
+  box-shadow: none !important;
+}
+
+body.product-ui-active .yuisync-agenda-card-surface[data-yuisync-card-kind='package'],
+body.product-ui-active .yuisync-resolved-card[data-yuisync-card-kind='package'] {
+  border-color: var(--border) !important;
+  border-left-color: #f59e0b !important;
+  background: var(--card) !important;
+  box-shadow: none !important;
+}
+
+body.product-ui-active .yuisync-resolved-card :is(.text-text, .text-text\/90, p, span) {
+  color: var(--text) !important;
+}
+
+body.product-ui-active .yuisync-resolved-card .text-muted {
+  color: var(--muted) !important;
+}
+
+body.product-ui-active .yuisync-resolved-card :is(.text-emerald-400, .text-emerald-300) {
+  color: #059669 !important;
+}
+
+body.product-ui-active .yuisync-package-label {
+  color: #b45309 !important;
+}
+
+body.product-ui-active .yuisync-resolved-action,
+body.product-ui-active [data-yuisync-card-kind='grooming'] .yuisync-resolved-action,
+body.product-ui-active [data-yuisync-card-kind='package'] .yuisync-resolved-action {
+  border-color: var(--border) !important;
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+body.product-ui-active .yuisync-resolved-action:hover {
+  background: var(--card) !important;
+  transform: none !important;
+}
+
+body.product-ui-active .yuisync-resolved-action.is-complete,
+body.product-ui-active [data-yuisync-card-kind='grooming'] .yuisync-resolved-action.is-complete,
+body.product-ui-active [data-yuisync-card-kind='package'] .yuisync-resolved-action.is-complete {
+  border-color: #10b981 !important;
+  background: #059669 !important;
+  color: #ffffff !important;
+}
+
+body.product-ui-active .yuisync-resolved-action.is-cancel {
+  border-color: #ef4444 !important;
+  background: #dc2626 !important;
+  color: #ffffff !important;
+}
+
+body.product-ui-active .yuisync-resolved-drag-ghost {
+  border-color: var(--border) !important;
+  background: var(--card) !important;
+  color: var(--text) !important;
+  box-shadow: var(--ui-shadow-panel) !important;
+}
+
 /* Shared controls stay compact and neutral. Semantic danger/warning/success
  * colors remain in the page markup and are not flattened here.
  */
