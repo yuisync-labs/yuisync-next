@@ -1,9 +1,9 @@
 const VARIANTS = {
   neutral: 'border-[var(--border)] bg-[var(--surface)] text-muted',
-  success: 'border-emerald-500/20 bg-emerald-500/8 text-emerald-600 dark:text-emerald-400',
-  warning: 'border-amber-500/20 bg-amber-500/8 text-amber-600 dark:text-amber-400',
-  danger: 'border-red-500/20 bg-red-500/8 text-red-600 dark:text-red-400',
-  info: 'border-[var(--primary-border)] bg-[var(--primary-bg-light)] text-primary',
+  success: 'border-[var(--ui-success-border)] bg-[var(--ui-success-bg)] text-[var(--ui-success-fg)]',
+  warning: 'border-[var(--ui-warning-border)] bg-[var(--ui-warning-bg)] text-[var(--ui-warning-fg)]',
+  danger: 'border-[var(--ui-danger-border)] bg-[var(--ui-danger-bg)] text-[var(--ui-danger-fg)]',
+  info: 'border-[var(--ui-info-border)] bg-[var(--ui-info-bg)] text-[var(--ui-info-fg)]',
 }
 
 export function StatusBadge({ variant = 'neutral', className = '', children }) {
