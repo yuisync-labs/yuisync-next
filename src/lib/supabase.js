@@ -135,17 +135,139 @@ class EdgeQueryBuilder {
   finally(callback) { return this.execute().finally(callback) }
 }
 
+function realtimeScope() {
+  const tenantId = safeStorageGet(ACTIVE_TENANT_KEY)
+  const moduleId = safeStorageGet(ACTIVE_MODULE_KEY) || activeModuleFromLocation()
+  if (!tenantId || !moduleId) return null
+  return { tenantId, moduleId }
+}
+
+function realtimeUrl() {
+  const scope = realtimeScope()
+  if (!scope) return null
+  try {
+    const origin = globalThis?.location?.origin || 'http://localhost'
+    const url = new URL(`${API_BASE}/realtime`, origin)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.searchParams.set('tenant_id', scope.tenantId)
+    url.searchParams.set('module_id', scope.moduleId)
+    return url.toString()
+  } catch {
+    return null
+  }
+}
+
 class EdgeRealtimeChannel {
-  constructor(name) { this.name = name; this.callbacks = []; this.timer = null }
-  on(_type, _filter, callback) { if (typeof callback === 'function') this.callbacks.push(callback); return this }
-  subscribe(callback) {
-    if (typeof callback === 'function') queueMicrotask(() => callback('SUBSCRIBED'))
-    this.timer = setInterval(() => {
-      this.callbacks.forEach((handler) => handler({ eventType: 'SYNC', schema: 'edge', table: null, new: null, old: null }))
-    }, 5000)
+  constructor(name) {
+    this.name = name
+    this.callbacks = []
+    this.socket = null
+    this.statusCallback = null
+    this.reconnectTimer = null
+    this.reconnectAttempt = 0
+    this.closed = false
+  }
+
+  on(type, filter, callback) {
+    if (typeof callback === 'function') this.callbacks.push({ type, filter, callback })
     return this
   }
-  unsubscribe() { if (this.timer) clearInterval(this.timer); this.timer = null; return Promise.resolve('ok') }
+
+  notify(status) {
+    if (typeof this.statusCallback === 'function') {
+      try { this.statusCallback(status) } catch { /* subscriber status handlers are isolated */ }
+    }
+  }
+
+  scheduleReconnect() {
+    if (this.closed || this.reconnectTimer) return
+    const delay = Math.min(15000, 500 * (2 ** Math.min(this.reconnectAttempt, 5)))
+    this.reconnectAttempt += 1
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      this.connect()
+    }, delay)
+  }
+
+  connect() {
+    if (this.closed || this.socket) return
+    const url = realtimeUrl()
+    if (!url || typeof globalThis?.WebSocket !== 'function') {
+      this.notify('CHANNEL_ERROR')
+      this.scheduleReconnect()
+      return
+    }
+
+    let socket
+    try {
+      socket = new globalThis.WebSocket(url)
+    } catch {
+      this.notify('CHANNEL_ERROR')
+      this.scheduleReconnect()
+      return
+    }
+    this.socket = socket
+
+    socket.onopen = () => {
+      this.reconnectAttempt = 0
+    }
+
+    socket.onmessage = (event) => {
+      if (event.data === 'pong') return
+      let payload
+      try { payload = JSON.parse(String(event.data || '')) } catch { return }
+      if (payload?.type === 'realtime.system' && payload?.event === 'SUBSCRIBED') {
+        this.notify('SUBSCRIBED')
+        return
+      }
+      if (payload?.type !== 'realtime.invalidate') return
+
+      const compatPayload = {
+        eventType: payload.eventType || 'SYNC',
+        schema: payload.schema || 'edge',
+        table: payload.table ?? null,
+        new: null,
+        old: null,
+        eventId: payload.eventId || null,
+        source: payload.source || null,
+        occurredAtMs: payload.occurredAtMs || null,
+      }
+      for (const subscription of this.callbacks) {
+        try { subscription.callback(compatPayload) } catch { /* one listener must not break the channel */ }
+      }
+    }
+
+    socket.onerror = () => {
+      this.notify('CHANNEL_ERROR')
+    }
+
+    socket.onclose = () => {
+      if (this.socket === socket) this.socket = null
+      if (this.closed) return
+      this.notify('CLOSED')
+      this.scheduleReconnect()
+    }
+  }
+
+  subscribe(callback) {
+    this.statusCallback = typeof callback === 'function' ? callback : null
+    this.closed = false
+    this.connect()
+    return this
+  }
+
+  unsubscribe() {
+    this.closed = true
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+    const socket = this.socket
+    this.socket = null
+    if (socket) {
+      try { socket.close(1000, 'client_unsubscribe') } catch { /* already closed */ }
+    }
+    this.notify('CLOSED')
+    return Promise.resolve('ok')
+  }
 }
 
 export const supabase = {
