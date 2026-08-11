@@ -39,7 +39,10 @@ describe('runtime core invariants', () => {
 
   it('documento fiscal e outbox recusam operação duplicada', async () => {
     const t='tenant-fiscal'; await seedTenant(t); await seedSale(t)
-    const fiscal=`INSERT INTO fiscal_documents(tenant_id,module_id,id,sale_id,operation_key,document_type,status,request_hash,created_at_ms,updated_at_ms) VALUES(?,'petshop',?,'sale','fiscal-op','nfe','pending',?, ?, ?)`
+    const fiscal=`INSERT INTO fiscal_documents(
+      tenant_id,module_id,id,sale_id,operation_key,document_type,provider,environment,status,
+      request_hash,schema_version,ruleset_version,readiness_json,created_at_ms,updated_at_ms
+    ) VALUES(?,'petshop',?,'sale','fiscal-op','nfe','sefaz_mg','homologation','pending',?,'test-schema','test-rules','[]',?,?)`
     const hash='a'.repeat(64)
     await db.prepare(fiscal).bind(t,'doc1',hash,now,now).run()
     await expect(db.prepare(fiscal).bind(t,'doc2',hash,now,now).run()).rejects.toThrow()
