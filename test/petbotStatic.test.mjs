@@ -189,7 +189,7 @@ test('agenda separa banho/tosa e veterinaria em abas', () => {
 
 test('ordens mantem cards ativos de hoje e historico concluido em tabela', () => {
   const page = read('src/modules/petshop/pages/OrdensEntregaPage.jsx')
-  const hook = read('src/modules/petshop/hooks/usePetshopAdvanced.js')
+  const hook = read('src/modules/petshop/hooks/usePetshopAdvancedCore.js')
 
   assert.match(page, /activeOrders/)
   assert.match(page, /completedOrders/)
