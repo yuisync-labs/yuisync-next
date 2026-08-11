@@ -31,7 +31,7 @@ test('comissao operacional usa 10 por cento para tosa e 5 para outros esteticos'
 })
 
 test('infraestrutura conecta capacidade, transporte e responsible_staff_key', async () => {
-  const [migration, freeSchedulingMigration, staffMigration, catalogMigration, agenda, appointments, advanced, commissions, settings, authContext] = await Promise.all([
+  const [migration, freeSchedulingMigration, staffMigration, catalogMigration, agenda, appointments, advanced, advancedCore, commissions, settings, authContext] = await Promise.all([
     readFile(new URL('../supabase/migrations/20260727001000_agenda_capacity_operational_commissions.sql', import.meta.url), 'utf8'),
     readFile(new URL('../supabase/migrations/20260730095500_agenda_free_overlap_visual_lanes.sql', import.meta.url), 'utf8'),
     readFile(new URL('../supabase/migrations/20260727003000_petshop_operational_staff_persistence.sql', import.meta.url), 'utf8'),
@@ -39,6 +39,7 @@ test('infraestrutura conecta capacidade, transporte e responsible_staff_key', as
     readFile(new URL('../src/modules/petshop/pages/AgendaPage.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/shared/hooks/useAppointments.js', import.meta.url), 'utf8'),
     readFile(new URL('../src/modules/petshop/hooks/usePetshopAdvanced.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/modules/petshop/hooks/usePetshopAdvancedCore.js', import.meta.url), 'utf8'),
     readFile(new URL('../src/modules/petshop/pages/EquipePage.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/shared/pages/SettingsPage.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/context/AuthContext.jsx', import.meta.url), 'utf8'),
@@ -92,11 +93,11 @@ test('infraestrutura conecta capacidade, transporte e responsible_staff_key', as
   assert.match(agenda, /FICHA DE ATENDIMENTO/)
   assert.match(agenda, /Responsavel/)
   assert.match(appointments, /transport_reference/)
-  assert.match(advanced, /calculate_petshop_operational_commissions/)
-  assert.match(advanced, /getDateBounds\(startDate\)\.start/)
-  assert.match(advanced, /getDateBounds\(endDate\)\.end/)
-  assert.doesNotMatch(advanced, /\$\{startDate\}T00:00:00\.000Z/)
-  assert.ok(advanced.includes(".is('responsible_staff_key', null)"))
+  assert.match(advancedCore, /calculate_petshop_operational_commissions/)
+  assert.match(advancedCore, /getDateBounds\(startDate\)\.start/)
+  assert.match(advancedCore, /getDateBounds\(endDate\)\.end/)
+  assert.doesNotMatch(advancedCore, /\$\{startDate\}T00:00:00\.000Z/)
+  assert.ok(advancedCore.includes(".is('responsible_staff_key', null)"))
   assert.match(commissions, /Tosa 10%/)
   assert.match(commissions, /Banho e demais servicos 5%/)
 })
