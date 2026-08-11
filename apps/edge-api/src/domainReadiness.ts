@@ -4,6 +4,7 @@ export const REQUIRED_DOMAIN_TABLES = Object.freeze([
   'appointments','appointment_services','transport_options','appointment_transport',
   'sales','sale_items','payments','payment_splits','financial_effects',
   'chat_threads','chat_messages','operation_checkpoints','operation_effects','fiscal_documents','effect_outbox',
+  'fiscal_profiles','fiscal_item_rules','fiscal_document_items','fiscal_events',
 ])
 
 export type DomainSchemaReadiness = Readonly<{
@@ -22,7 +23,7 @@ export async function checkDomainSchemaReadiness(database?: D1Database): Promise
   const missingTables = REQUIRED_DOMAIN_TABLES.filter((name) => !available.has(name))
   const schemaVersion = Number.parseInt(version?.value ?? '', 10)
   return {
-    status: missingTables.length === 0 && schemaVersion >= 15 ? 'ready' : 'not_ready',
+    status: missingTables.length === 0 && schemaVersion >= 23 ? 'ready' : 'not_ready',
     schemaVersion: Number.isFinite(schemaVersion) ? schemaVersion : null,
     missingTables,
   }

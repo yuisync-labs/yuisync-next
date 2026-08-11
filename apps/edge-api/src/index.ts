@@ -5,6 +5,7 @@ import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
 import { handleCheckoutApiRequest } from './checkoutApi'
 import { handleCompatApiRequest } from './compatApi'
 import { handleFinalReadiness } from './finalReadiness'
+import { handleFiscalApiRequest } from './fiscalApi'
 import { handleManagedUsersApiRequest } from './managedUsersApi'
 import { handleAiLabMigrationRequest } from './migration/aiLabMigrationHttp'
 import { handleAuthMigrationRequest } from './migration/authMigrationHttp'
@@ -53,6 +54,9 @@ export default {
 
     const checkoutResponse = await handleCheckoutApiRequest(request, bindings)
     if (checkoutResponse) return respond(checkoutResponse)
+
+    const fiscalResponse = await handleFiscalApiRequest(request, bindings)
+    if (fiscalResponse) return respond(fiscalResponse)
 
     const managedUsersResponse = await handleManagedUsersApiRequest(request, bindings)
     if (managedUsersResponse) return respond(managedUsersResponse)
