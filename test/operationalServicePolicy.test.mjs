@@ -174,6 +174,19 @@ test('appointment booking uses caller idempotency key as operation identity and 
   assert.match(compat, /handleAppointmentCommandPolicy/)
 })
 
+test('eligibility is checked before appointment mutation and UI preserves readable feedback', async () => {
+  const command = await read('apps/edge-api/src/appointmentBookingIdempotency.ts')
+  const adapter = await read('src/lib/supabase.js')
+  const resolveIndex = command.indexOf('const resolved = await resolveServiceSnapshots')
+  const delegateIndex = command.indexOf('const delegated = await delegateOperationalRpc', resolveIndex)
+
+  assert.ok(resolveIndex >= 0, 'booking must resolve pet/service eligibility')
+  assert.ok(delegateIndex > resolveIndex, 'eligibility resolution must happen before mutation delegation')
+  assert.match(adapter, /SERVICE_SPECIES_MISMATCH: 'Este serviço não está configurado para a espécie do pet selecionado\.'/)
+  assert.match(adapter, /SERVICE_WEIGHT_MISMATCH: 'Este serviço não atende à faixa de peso cadastrada para o pet selecionado\.'/)
+  assert.match(adapter, /compatOperationErrorMessage/)
+})
+
 test('appointment edits preserve commercial snapshots unless service or pet really changes', async () => {
   const command = await read('apps/edge-api/src/appointmentBookingIdempotency.ts')
 
