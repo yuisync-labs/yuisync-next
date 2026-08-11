@@ -75,7 +75,7 @@ export function ModuleSwitcher({ activeModule, setActiveModuleId, profile, store
               <button
                 key={m.id}
                 type="button"
-                className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-white/5 ${isSelected ? m.theme.textPrimary : 'text-text'}`}
+                className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-[var(--ui-hover)] ${isSelected ? m.theme.textPrimary : 'text-text'}`}
                 onClick={() => {
                   setActiveModuleId(m.id)
                   setOpenDrop(false)
@@ -91,7 +91,7 @@ export function ModuleSwitcher({ activeModule, setActiveModuleId, profile, store
           <div className="mt-1 border-t border-[var(--border2)] pt-1">
             <button
               type="button"
-              className="flex w-full items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-white/5"
+              className="flex w-full items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-[var(--ui-hover)] hover:text-text"
               onClick={() => {
                 setActiveModuleId(null)
                 setOpenDrop(false)
