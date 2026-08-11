@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers'
-import { evictDurableObject } from 'cloudflare:test'
+import { evictDurableObject, runInDurableObject } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -82,17 +82,31 @@ describe('CoordinationDurableObject realtime hub', () => {
     socket.accept()
     await nextMessage(socket)
 
-    await expect(stub.publishRealtime({
-      type: 'realtime.invalidate',
-      eventId: 'wrong-scope',
-      schema: 'edge',
-      eventType: 'SYNC',
-      table: null,
-      tenantId: 'tenant-realtime-b',
-      moduleId: 'petshop',
-      source: '/test',
-      occurredAtMs: 1,
-    })).rejects.toMatchObject({ code: 'COORDINATION_SCOPE_MISMATCH' })
+    const observed = await runInDurableObject(stub, async (instance: CoordinationDurableObject) => {
+      try {
+        await instance.publishRealtime({
+          type: 'realtime.invalidate',
+          eventId: 'wrong-scope',
+          schema: 'edge',
+          eventType: 'SYNC',
+          table: null,
+          tenantId: 'tenant-realtime-b',
+          moduleId: 'petshop',
+          source: '/test',
+          occurredAtMs: 1,
+        })
+        return null
+      } catch (error) {
+        const candidate = error as { name?: unknown; message?: unknown; code?: unknown }
+        return { name: candidate.name, message: candidate.message, code: candidate.code }
+      }
+    })
+
+    expect(observed).toEqual({
+      name: 'CoordinationDurableObjectError',
+      message: 'Coordination scope mismatch.',
+      code: 'COORDINATION_SCOPE_MISMATCH',
+    })
 
     socket.close(1000, 'done')
   })
