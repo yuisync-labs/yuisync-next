@@ -37,6 +37,21 @@ describe('runtime core invariants', () => {
     await expect(db.prepare(sql).bind(t,now,now).run()).rejects.toThrow()
   })
 
+  it('reserva uma única intenção por operation key de agendamento', async () => {
+    const t='tenant-appointment-command'; await seedTenant(t)
+    const fingerprintA='a'.repeat(64)
+    const fingerprintB='b'.repeat(64)
+    const sql=`INSERT INTO appointment_command_registry(
+      tenant_id,module_id,operation_key,appointment_id,operation_fingerprint,status,created_at_ms,updated_at_ms
+    ) VALUES(?,'petshop','appointment-booking:key','appointment-a',?,'reserved',?,?)`
+    await db.prepare(sql).bind(t,fingerprintA,now,now).run()
+    await expect(db.prepare(sql.replace("'appointment-a'", "'appointment-b'")).bind(t,fingerprintB,now,now).run()).rejects.toThrow()
+
+    const row = await db.prepare(`SELECT appointment_id,operation_fingerprint,status FROM appointment_command_registry WHERE tenant_id=? AND module_id='petshop' AND operation_key='appointment-booking:key'`)
+      .bind(t).first<{appointment_id:string;operation_fingerprint:string;status:string}>()
+    expect(row).toEqual({ appointment_id:'appointment-a', operation_fingerprint:fingerprintA, status:'reserved' })
+  })
+
   it('documento fiscal e outbox recusam operação duplicada', async () => {
     const t='tenant-fiscal'; await seedTenant(t); await seedSale(t)
     const fiscal=`INSERT INTO fiscal_documents(
