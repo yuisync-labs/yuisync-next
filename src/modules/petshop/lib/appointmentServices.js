@@ -9,8 +9,11 @@ const stripAccents = (value = '') => String(value || '')
 const VALID_APPOINTMENT_GROUPS = new Set(['banho_tosa', 'veterinaria'])
 const VETERINARY_PATTERN = /\b(vet|veterin|consulta|vacina|clinica|medico|exame|cirurg|ultrassom|castr|retorno|internac|curativo|vermifug|microchip|aplicacao|hemograma|radiograf|raio[ -]?x|coleta|sorolog|odontolog|anestesia|medicacao|eletrocard|ecocard|emergencia|procedimento)\w*/
 const TOSA_PATTERN = /\b(tosa|tosagem|tosar|trim|trimming|stripping|acabamento|penteado|corte (?:de|do) pelo)\w*/
+const COMMISSION_TOSA_PATTERN = /\b(tosa|tosagem|tosar|trim|trimming|stripping|corte (?:de|do) pelo)\w*/
 const BATH_PATTERN = /\b(banho|lavagem|secagem|secar)\w*/
 const GROOMING_COMPLEMENT_PATTERN = /\b(desembolo|desembarac|escovac|hidrat|higien|perfume|spa|unha|unhas|ouvido|orelhas|patas|almofad|dente|dental|pelagem)\w*/
+const CAT_PATTERN = /\b(gato|gata|gatos|gatas|felino|felina|felinos|felinas)\b/
+const DOG_PATTERN = /\b(cao|caes|cachorro|cachorra|cachorros|cachorras|canino|canina|caninos|caninas)\b/
 
 const appointmentServiceText = (service = {}) => stripAccents([
   service.code,
@@ -21,8 +24,157 @@ const appointmentServiceText = (service = {}) => stripAccents([
   service.description,
 ].filter(Boolean).join(' '))
 
+const finiteWeight = (value) => {
+  if (value === null || value === undefined || value === '') return null
+  const parsed = Number(String(value).replace(',', '.'))
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+const parseWeightFromText = (text = '') => {
+  const normalized = stripAccents(text).replace(/,/g, '.')
+  let match = normalized.match(/\b(?:de\s*)?(\d+(?:\.\d+)?)\s*(?:kg)?\s*(?:a|ate|-)\s*(\d+(?:\.\d+)?)\s*kg\b/)
+  if (match) {
+    const min = finiteWeight(match[1])
+    const max = finiteWeight(match[2])
+    if (min !== null && max !== null && max >= min) return { min, max, source: 'text' }
+  }
+
+  match = normalized.match(/\b(?:ate|no maximo|maximo)\s*(\d+(?:\.\d+)?)\s*kg\b/)
+  if (match) return { min: null, max: finiteWeight(match[1]), source: 'text' }
+
+  match = normalized.match(/\b(?:acima de|mais de|maior que)\s*(\d+(?:\.\d+)?)\s*kg\b/)
+  if (match) return { min: finiteWeight(match[1]), max: null, minExclusive: true, source: 'text' }
+
+  return null
+}
+
+const normalizeSpecies = (value = '') => {
+  const normalized = stripAccents(value)
+  if (['dog', 'cao', 'caes', 'cachorro', 'cachorra', 'canino', 'canina'].includes(normalized)) return 'dog'
+  if (['cat', 'gato', 'gata', 'felino', 'felina'].includes(normalized)) return 'cat'
+  if (['all', 'ambos', 'ambas', 'todos', 'todas', 'both'].includes(normalized)) return 'all'
+  return null
+}
+
 export function normalizeAppointmentServiceText(value = '') {
   return stripAccents(value)
+}
+
+export function defaultServiceCommissionRate(service = {}) {
+  return COMMISSION_TOSA_PATTERN.test(appointmentServiceText(service)) ? 10 : 5
+}
+
+export function serviceSpeciesTarget(service = {}) {
+  const hasOperationalTarget = Object.prototype.hasOwnProperty.call(service, 'species_target')
+    || Object.prototype.hasOwnProperty.call(service, 'speciesTarget')
+  if (hasOperationalTarget) {
+    return normalizeSpecies(service.species_target ?? service.speciesTarget) || 'all'
+  }
+
+  const explicit = normalizeSpecies(service.species ?? service.bot_metadata?.species)
+  if (explicit) return explicit
+
+  const text = appointmentServiceText(service)
+  if (CAT_PATTERN.test(text)) return 'cat'
+  if (DOG_PATTERN.test(text)) return 'dog'
+
+  // Compatibilidade com o catálogo comercial antigo: os serviços de porte
+  // "Banho/Tosa Pet" eram cadastrados para cães mesmo sem escrever "cão".
+  if (/\b(banho|tosa|tosagem|tosar)\w*/.test(text)
+    && /\bpet\b/.test(text)
+    && /\bporte\b/.test(text)) return 'dog'
+
+  return null
+}
+
+export function serviceFitsPetSpecies(service = {}, petSpecies = null) {
+  const normalizedPetSpecies = normalizeSpecies(petSpecies)
+  if (!normalizedPetSpecies || normalizedPetSpecies === 'all') return true
+  const target = serviceSpeciesTarget(service)
+  return !target || target === 'all' || target === normalizedPetSpecies
+}
+
+export function serviceSpeciesLabel(service = {}, { genericLabel = 'Cães e gatos' } = {}) {
+  const target = serviceSpeciesTarget(service)
+  if (target === 'dog') return 'Somente cães'
+  if (target === 'cat') return 'Somente gatos'
+  return genericLabel
+}
+
+export function serviceWeightRange(service = {}) {
+  const explicitMin = finiteWeight(
+    service.min_weight_kg
+    ?? service.minWeightKg
+    ?? service.weight_min_kg
+    ?? service.weightMinKg,
+  )
+  const explicitMax = finiteWeight(
+    service.max_weight_kg
+    ?? service.maxWeightKg
+    ?? service.weight_max_kg
+    ?? service.weightMaxKg,
+  )
+
+  if (explicitMin !== null || explicitMax !== null) {
+    return {
+      min: explicitMin,
+      max: explicitMax,
+      minExclusive: false,
+      source: 'configured',
+    }
+  }
+
+  const text = appointmentServiceText(service)
+  const parsedText = parseWeightFromText(text)
+  if (parsedText) return parsedText
+
+  // Fallback para catálogos antigos que codificam o porte apenas no nome.
+  // A faixa explícita configurada na aba Serviços sempre tem prioridade.
+  if (/\bporte\s*(?:mini|micro)|\b(?:mini|micro)\s*porte\b/.test(text)) {
+    return { min: null, max: 5, minExclusive: false, source: 'name' }
+  }
+  if (/\bporte\s*pequen|\bpequen\w*\s*porte\b/.test(text)) {
+    return { min: null, max: 9.99, minExclusive: false, source: 'name' }
+  }
+  if (/\bporte\s*medi|\bmedi\w*\s*porte\b/.test(text)) {
+    return { min: 10, max: 19.99, minExclusive: false, source: 'name' }
+  }
+  if (/\bporte\s*grande|\bgrande\s*porte\b/.test(text)) {
+    return { min: 20, max: 39.99, minExclusive: false, source: 'name' }
+  }
+  if (/\bporte\s*(?:gigante|extra\s*grande)|\b(?:gigante|extra\s*grande)\s*porte\b/.test(text)) {
+    return { min: 40, max: null, minExclusive: false, source: 'name' }
+  }
+
+  return null
+}
+
+export function serviceFitsPetWeight(service = {}, weightKg = null) {
+  const weight = finiteWeight(weightKg)
+  if (weight === null) return true
+  const range = serviceWeightRange(service)
+  if (!range) return true
+
+  if (range.min !== null) {
+    if (range.minExclusive ? weight <= range.min : weight < range.min) return false
+  }
+  if (range.max !== null && weight > range.max) return false
+  return true
+}
+
+export function serviceWeightRangeLabel(service = {}, { genericLabel = 'Todos os pesos' } = {}) {
+  const range = serviceWeightRange(service)
+  if (!range) return genericLabel
+
+  const fmt = (value) => Number(value).toLocaleString('pt-BR', { maximumFractionDigits: 2 })
+  if (range.min !== null && range.max !== null) {
+    return range.minExclusive
+      ? `mais de ${fmt(range.min)} até ${fmt(range.max)} kg`
+      : `${fmt(range.min)} a ${fmt(range.max)} kg`
+  }
+  if (range.max !== null) return `até ${fmt(range.max)} kg`
+  if (range.min !== null) return `${range.minExclusive ? 'mais de' : 'a partir de'} ${fmt(range.min)} kg`
+  return genericLabel
 }
 
 export function appointmentServiceKind(service = {}) {
