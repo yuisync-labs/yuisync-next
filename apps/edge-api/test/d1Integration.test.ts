@@ -9,11 +9,11 @@ describe('D1 integration in workerd', () => {
   it('aplica todas as migrations no banco isolado de testes', async () => {
     const row = await testEnv.DB.prepare('SELECT value FROM _yuisync_system_metadata WHERE key = ?')
       .bind('schema_version').first<{ value: string }>()
-    expect(row).toEqual({ value: '23' })
+    expect(row).toEqual({ value: '24' })
 
     const required = [
       'clients','pets','catalog_products','services','inventory_balances','inventory_movements',
-      'module_operational_settings','appointments','appointment_services','transport_options','appointment_transport',
+      'module_operational_settings','appointments','appointment_services','appointment_command_registry','transport_options','appointment_transport',
       'sales','sale_items','payments','payment_splits','financial_effects','chat_threads','chat_messages',
       'operation_checkpoints','operation_effects','fiscal_documents','effect_outbox',
       'fiscal_profiles','fiscal_item_rules','fiscal_document_items','fiscal_events',
@@ -26,6 +26,17 @@ describe('D1 integration in workerd', () => {
 
     const views = await testEnv.DB.prepare(`SELECT name FROM sqlite_schema WHERE type='view' ORDER BY name`).all<{name:string}>()
     expect(new Set(views.results.map((view)=>view.name)).has('petshop_growth_exec_daily')).toBe(true)
+
+    const appointmentColumns = await testEnv.DB.prepare(`PRAGMA table_info(appointments)`).all<{ name:string }>()
+    const appointmentColumnNames = new Set(appointmentColumns.results.map((column)=>column.name))
+    expect(appointmentColumnNames.has('operation_key')).toBe(true)
+    expect(appointmentColumnNames.has('operation_fingerprint')).toBe(true)
+
+    const serviceColumns = await testEnv.DB.prepare(`PRAGMA table_info(services)`).all<{ name:string }>()
+    const serviceColumnNames = new Set(serviceColumns.results.map((column)=>column.name))
+    expect(serviceColumnNames.has('min_weight_kg')).toBe(true)
+    expect(serviceColumnNames.has('max_weight_kg')).toBe(true)
+    expect(serviceColumnNames.has('species_target')).toBe(true)
 
     const membershipColumns = await testEnv.DB.prepare(`PRAGMA table_info(tenant_memberships)`).all<{ name:string }>()
     const membershipColumnNames = new Set(membershipColumns.results.map((column)=>column.name))
