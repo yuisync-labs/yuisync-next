@@ -5,6 +5,7 @@ import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
 import { handleCheckoutApiRequest } from './checkoutApi'
 import { handleCompatApiRequest } from './compatApi'
 import { handleFinalReadiness } from './finalReadiness'
+import { handleManagedUsersApiRequest } from './managedUsersApi'
 import { handleAiLabMigrationRequest } from './migration/aiLabMigrationHttp'
 import { handleAuthMigrationRequest } from './migration/authMigrationHttp'
 import { handleClientsPetsMigrationRequest } from './migration/clientsPetsMigrationHttp'
@@ -41,6 +42,9 @@ export default {
 
     const checkoutResponse = await handleCheckoutApiRequest(request, bindings)
     if (checkoutResponse) return checkoutResponse
+
+    const managedUsersResponse = await handleManagedUsersApiRequest(request, bindings)
+    if (managedUsersResponse) return managedUsersResponse
 
     const compatResponse = await handleCompatApiRequest(request, bindings)
     if (compatResponse) return compatResponse
