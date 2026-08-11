@@ -19,8 +19,8 @@ export { CoordinationDurableObject } from './coordination/coordinationDurableObj
 export default {
   async fetch(request: Request, env: EdgeEnv, context: ExecutionContext): Promise<Response> {
     const bindings = env as EdgeAppEnvironment['Bindings']
-    const mutationProbe = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)
-      ? request.clone()
+    const mutationProbe: Request | null = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)
+      ? request.clone() as Request
       : null
     const respond = (response: Response): Response => {
       if (mutationProbe) scheduleRealtimeInvalidation(mutationProbe, response.clone(), bindings, context)
