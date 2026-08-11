@@ -1,5 +1,5 @@
 import app from './app'
-import { handleAdminUsersApiRequest } from './adminUsersApi'
+import { handleAdminUsersRoute } from './adminUsersRoute'
 import { handleAiLabApiRequest } from './aiLabApi'
 import { handleAppApiRequest } from './appApi'
 import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
@@ -43,7 +43,7 @@ export default {
     const checkoutResponse = await handleCheckoutApiRequest(request, bindings)
     if (checkoutResponse) return checkoutResponse
 
-    const adminUsersResponse = await handleAdminUsersApiRequest(request, bindings)
+    const adminUsersResponse = await handleAdminUsersRoute(request, bindings)
     if (adminUsersResponse) return adminUsersResponse
 
     const compatResponse = await handleCompatApiRequest(request, bindings)
