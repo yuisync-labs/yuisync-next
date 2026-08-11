@@ -1,23 +1,130 @@
 /* Product UI cleanup layer.
- * Loaded after the legacy theme so we can reduce visual noise gradually
- * while screens migrate to reusable components under src/components/ui.
+ * Loaded after the legacy theme. New UI should use src/components/ui directly;
+ * ProductPageSurface keeps older authenticated screens visually consistent while
+ * they are incrementally migrated away from page-local card recipes.
  */
 
 :root {
   --ui-radius-control: 9px;
   --ui-radius-card: 14px;
   --ui-radius-modal: 16px;
+  --ui-border: var(--border);
+  --ui-border-subtle: var(--border2);
   --ui-shadow-panel: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 14px rgba(15, 23, 42, 0.04);
+  --ui-transition: 150ms ease;
 }
 
-.theme-petshop {
+.theme-petshop,
+.theme-system {
   --shadow-primary: none;
   --shadow-surface: var(--ui-shadow-panel);
 }
 
-.theme-petshop.theme-dark {
+.theme-petshop.theme-dark,
+.theme-system.theme-dark {
   --shadow-primary: none;
   --shadow-surface: 0 8px 28px rgba(0, 0, 0, 0.24);
+}
+
+.product-ui-scope {
+  min-height: 100%;
+  isolation: isolate;
+}
+
+/* Authenticated legacy surface bridge. The selectors are intentionally scoped
+ * to ProductPageSurface so the public landing/checkout/booking UI is untouched.
+ */
+.product-ui-scope :is(.rounded-xl, .rounded-2xl, .rounded-xl2) {
+  border-radius: var(--ui-radius-card) !important;
+}
+
+.product-ui-scope :is(.rounded-3xl, .rounded-xl3, .modal-box) {
+  border-radius: var(--ui-radius-modal) !important;
+}
+
+.product-ui-scope :is(button, input, select, textarea).rounded-xl,
+.product-ui-scope :is(button, input, select, textarea).rounded-2xl {
+  border-radius: var(--ui-radius-control) !important;
+}
+
+.product-ui-scope :is(.bg-card, .bg-surface).border,
+.product-ui-scope :is(.bg-card, .bg-surface).border-2,
+.product-ui-scope .tbl-wrapper,
+.product-ui-scope .kpi-card {
+  box-shadow: none !important;
+}
+
+.product-ui-scope button.bg-card.border,
+.product-ui-scope button.bg-surface.border,
+.product-ui-scope [role='button'].bg-card.border,
+.product-ui-scope [role='button'].bg-surface.border {
+  transform: none !important;
+  transition: border-color var(--ui-transition), background-color var(--ui-transition), color var(--ui-transition) !important;
+}
+
+.product-ui-scope button.bg-card.border:hover,
+.product-ui-scope button.bg-surface.border:hover,
+.product-ui-scope [role='button'].bg-card.border:hover,
+.product-ui-scope [role='button'].bg-surface.border:hover {
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.product-ui-scope [class*='shadow-['][class~='bg-card'],
+.product-ui-scope [class*='shadow-['][class~='bg-surface'],
+.product-ui-scope [class~='shadow-lg'][class~='bg-card'],
+.product-ui-scope [class~='shadow-xl'][class~='bg-card'],
+.product-ui-scope [class~='shadow-2xl'][class~='bg-card'] {
+  box-shadow: none !important;
+}
+
+.product-ui-scope [class*='hover:shadow-']:hover,
+.product-ui-scope [class*='hover:-translate-']:hover,
+.product-ui-scope [class*='hover:scale-']:hover {
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.product-ui-scope .page-title {
+  letter-spacing: -0.02em;
+}
+
+.product-ui-scope .section-title {
+  letter-spacing: -0.01em;
+}
+
+.product-ui-scope .badge,
+.product-ui-scope [class~='rounded-full'][class*='text-'][class*='px-'] {
+  box-shadow: none !important;
+}
+
+.product-ui-scope :is(.tbl-wrapper, table) {
+  box-shadow: none !important;
+}
+
+.product-ui-scope .tbl tbody tr {
+  transition: background-color var(--ui-transition) !important;
+}
+
+/* Shared controls stay compact and neutral. Semantic danger/warning/success
+ * colors remain in the page markup and are not flattened here.
+ */
+.btn {
+  border-radius: var(--ui-radius-control) !important;
+  box-shadow: none !important;
+}
+
+.btn-primary {
+  box-shadow: none !important;
+}
+
+.inp,
+select.inp {
+  border-radius: var(--ui-radius-control) !important;
+}
+
+.inp:focus {
+  box-shadow: 0 0 0 3px var(--primary-bg-light) !important;
 }
 
 .rounded-xl2 {
@@ -31,7 +138,7 @@
 .kpi-card {
   border-radius: var(--ui-radius-card) !important;
   box-shadow: none !important;
-  transition: border-color 150ms ease, background-color 150ms ease !important;
+  transition: border-color var(--ui-transition), background-color var(--ui-transition) !important;
 }
 
 .kpi-card::before {
@@ -51,24 +158,6 @@
 
 .neon-text {
   text-shadow: none !important;
-}
-
-.btn {
-  border-radius: var(--ui-radius-control) !important;
-  box-shadow: none !important;
-}
-
-.btn-primary {
-  box-shadow: none !important;
-}
-
-.inp,
-select.inp {
-  border-radius: var(--ui-radius-control) !important;
-}
-
-.inp:focus {
-  box-shadow: 0 0 0 3px var(--primary-bg-light) !important;
 }
 
 .tbl-wrapper {
