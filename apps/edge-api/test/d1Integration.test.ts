@@ -9,7 +9,7 @@ describe('D1 integration in workerd', () => {
   it('aplica todas as migrations no banco isolado de testes', async () => {
     const row = await testEnv.DB.prepare('SELECT value FROM _yuisync_system_metadata WHERE key = ?')
       .bind('schema_version').first<{ value: string }>()
-    expect(row).toEqual({ value: '21' })
+    expect(row).toEqual({ value: '22' })
 
     const required = [
       'clients','pets','catalog_products','services','inventory_balances','inventory_movements',
