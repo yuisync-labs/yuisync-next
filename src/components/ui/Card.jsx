@@ -1,10 +1,10 @@
 const CARD_TONES = {
   neutral: 'border-[var(--border)] bg-card',
   subtle: 'border-[var(--border2)] bg-surface',
-  success: 'border-emerald-500/25 bg-card',
-  warning: 'border-amber-500/25 bg-card',
-  danger: 'border-red-500/25 bg-card',
-  info: 'border-[var(--primary-border)] bg-card',
+  success: 'border-[var(--ui-success-border)] bg-card',
+  warning: 'border-[var(--ui-warning-border)] bg-card',
+  danger: 'border-[var(--ui-danger-border)] bg-card',
+  info: 'border-[var(--ui-info-border)] bg-card',
 }
 
 function joinClasses(...classes) {
@@ -15,7 +15,7 @@ export function cardClasses({ tone = 'neutral', interactive = false, className =
   return joinClasses(
     'rounded-[14px] border',
     CARD_TONES[tone] || CARD_TONES.neutral,
-    interactive && 'transition-colors duration-150 hover:border-slate-400/60',
+    interactive && 'transition-colors duration-150 hover:border-[var(--ui-border-hover)]',
     className,
   )
 }
