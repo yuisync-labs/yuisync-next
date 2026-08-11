@@ -185,6 +185,9 @@ test('eligibility is checked before appointment mutation and UI preserves readab
   assert.match(adapter, /SERVICE_SPECIES_MISMATCH: 'Este serviço não está configurado para a espécie do pet selecionado\.'/)
   assert.match(adapter, /SERVICE_WEIGHT_MISMATCH: 'Este serviço não atende à faixa de peso cadastrada para o pet selecionado\.'/)
   assert.match(adapter, /compatOperationErrorMessage/)
+  assert.match(adapter, /export const fmtDateTime/)
+  assert.match(adapter, /export const fmtTime/)
+  assert.match(adapter, /export const fmtCurrency/)
 })
 
 test('appointment edits preserve commercial snapshots unless service or pet really changes', async () => {
