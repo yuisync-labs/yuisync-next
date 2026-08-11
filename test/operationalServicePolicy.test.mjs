@@ -99,7 +99,7 @@ test('current catalog commission is fallback only for legacy rows without snapsh
   assert.equal(line.commission, 4)
 })
 
-test('v24 schema stores operational policy and immutable appointment snapshots', async () => {
+test('v24 schema stores operational policy, immutable snapshots and command identity', async () => {
   const migration = await read('apps/edge-api/migrations/0024_operational_service_policy.sql')
 
   assert.match(migration, /ALTER TABLE services ADD COLUMN min_weight_kg REAL/)
@@ -107,6 +107,8 @@ test('v24 schema stores operational policy and immutable appointment snapshots',
   assert.match(migration, /ALTER TABLE services ADD COLUMN species_target TEXT/)
   assert.match(migration, /ALTER TABLE appointment_services ADD COLUMN commission_basis_points INTEGER/)
   assert.match(migration, /ALTER TABLE appointment_services ADD COLUMN catalog_price_cents INTEGER/)
+  assert.match(migration, /ALTER TABLE appointments ADD COLUMN operation_fingerprint TEXT/)
+  assert.match(migration, /CREATE TABLE appointment_command_registry/)
   assert.match(migration, /appointments_scope_operation_key_unique/)
   assert.match(migration, /SET value='24'/)
 })
@@ -123,16 +125,22 @@ test('service rules use a native API instead of writing operational rules from J
   assert.match(api, /species_target/)
 })
 
-test('appointment booking is deduplicated by canonical intent outside Agenda JSX', async () => {
+test('appointment booking uses caller idempotency key as operation identity and intent as fingerprint', async () => {
   const command = await read('apps/edge-api/src/appointmentBookingIdempotency.ts')
   const compat = await read('apps/edge-api/src/compatApi.ts')
+  const hook = await read('src/shared/hooks/useAppointments.js')
 
+  assert.match(hook, /idempotency_key: payload\.idempotency_key \|\| crypto\.randomUUID\(\)/)
+  assert.match(command, /const callerKey = text\(payload\.idempotency_key\) \|\| text\(payload\.operation_key\)/)
+  assert.match(command, /scopedOperationIdentityHash/)
   assert.match(command, /canonicalIntent/)
-  assert.match(command, /crypto\.subtle\.digest\('SHA-256'/)
-  assert.match(command, /deterministicAppointmentId/)
-  assert.match(command, /existingAppointment/)
+  assert.match(command, /operation_fingerprint/)
+  assert.match(command, /reserveBookingOperation/)
+  assert.match(command, /INSERT OR IGNORE INTO appointment_command_registry/)
+  assert.match(command, /IDEMPOTENCY_KEY_REUSED/)
   assert.match(command, /idempotent: true/)
-  assert.match(command, /resolveServiceSnapshots/)
+  assert.match(command, /completeBookingOperation/)
+  assert.match(command, /PET_CLIENT_MISMATCH/)
   assert.match(command, /SERVICE_SPECIES_MISMATCH/)
   assert.match(command, /SERVICE_WEIGHT_MISMATCH/)
   assert.match(command, /persistOperationalSnapshots/)
