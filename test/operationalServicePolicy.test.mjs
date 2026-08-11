@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import {
+  appointmentServiceEligibility,
   defaultServiceCommissionRate,
   serviceFitsPetSpecies,
   serviceFitsPetWeight,
@@ -43,6 +44,32 @@ test('explicit species and weight policy is reusable outside Agenda JSX', () => 
   })
   assert.equal(serviceFitsPetWeight(dogSmall, 8), true)
   assert.equal(serviceFitsPetWeight(dogSmall, 12), false)
+})
+
+test('agenda eligibility returns one domain result with a human-readable reason', () => {
+  const dogSmall = {
+    name: 'Banho pequeno',
+    species_target: 'dog',
+    min_weight_kg: 0,
+    max_weight_kg: 10,
+  }
+
+  assert.deepEqual(appointmentServiceEligibility(dogSmall, { species: 'dog', weight_kg: 8 }), {
+    eligible: true,
+    speciesEligible: true,
+    weightEligible: true,
+    reason: '',
+  })
+
+  const wrongSpecies = appointmentServiceEligibility(dogSmall, { species: 'cat', weight_kg: 8 })
+  assert.equal(wrongSpecies.eligible, false)
+  assert.equal(wrongSpecies.speciesEligible, false)
+  assert.match(wrongSpecies.reason, /Somente cães/)
+
+  const wrongWeight = appointmentServiceEligibility(dogSmall, { species: 'dog', weight_kg: 12 })
+  assert.equal(wrongWeight.eligible, false)
+  assert.equal(wrongWeight.weightEligible, false)
+  assert.match(wrongWeight.reason, /0 a 10 kg/)
 })
 
 test('historical appointment commission snapshot wins over current catalog rate', () => {
