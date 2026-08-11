@@ -226,3 +226,19 @@ test('status-only completion is promoted to command plus idempotent package reco
   assert.match(compat, /handleCompletedAppointmentCompletionQueryCompat/)
   assert.match(compat, /handleCompletedAppointmentCompletionCompat/)
 })
+
+test('appointment lifecycle writes use the existing system_update_logs audit trail', async () => {
+  const migration = await read('apps/edge-api/migrations/0021_deferred_compat_surface.sql')
+  const audit = await read('apps/edge-api/src/appointmentOperationalAudit.ts')
+  const completion = await read('apps/edge-api/src/appointmentCompletionCompat.ts')
+  const reopen = await read('apps/edge-api/src/appointmentReopenPolicy.ts')
+
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS system_update_logs/)
+  assert.match(audit, /INSERT OR IGNORE INTO system_update_logs/)
+  assert.match(audit, /appointment-command/)
+  assert.match(audit, /transition_version/)
+  assert.match(completion, /eventType: 'appointment\.completed'/)
+  assert.match(completion, /eventType: 'appointment\.package_consumed'/)
+  assert.match(reopen, /eventType: 'appointment\.reopened'/)
+  assert.match(reopen, /eventType: 'appointment\.package_released'/)
+})
