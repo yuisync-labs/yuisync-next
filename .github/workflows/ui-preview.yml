@@ -69,10 +69,15 @@ jobs:
           TENANTS="$(npx wrangler d1 execute DB --env staging --remote --json --command "SELECT t.id, COALESCE(s.store_name,t.name) AS name FROM tenants t LEFT JOIN tenant_module_settings s ON s.tenant_id=t.id AND s.module_id='petshop' WHERE t.status='active' AND t.id NOT LIKE 'e2e-%' ORDER BY CASE WHEN lower(COALESCE(s.store_name,t.name,'')) LIKE '%quatro%patas%' THEN 0 ELSE 1 END, t.updated_at_ms DESC LIMIT 1;")"
           TENANT_ID="$(node -e "const r=JSON.parse(process.argv[1]);const rows=r?.[0]?.results||r?.results||[];process.stdout.write(String(rows[0]?.id||''));" "$TENANTS")"
           TENANT_NAME="$(node -e "const r=JSON.parse(process.argv[1]);const rows=r?.[0]?.results||r?.results||[];process.stdout.write(String(rows[0]?.name||''));" "$TENANTS")"
-          test -n "$TENANT_ID"
-          case "$TENANT_ID" in (*[!A-Za-z0-9_-]*) echo "Unsafe tenant id" >&2; exit 1;; esac
 
           NOW="$(node -e 'process.stdout.write(String(Date.now()))')"
+          if [ -z "$TENANT_ID" ]; then
+            TENANT_ID='preview-ui-tenant'
+            TENANT_NAME='YuiSync Preview'
+            npx wrangler d1 execute DB --env staging --remote --command "INSERT OR IGNORE INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES('${TENANT_ID}','preview-ui','${TENANT_NAME}','active',${NOW},${NOW}); UPDATE tenants SET name='${TENANT_NAME}',status='active',updated_at_ms=${NOW} WHERE id='${TENANT_ID}'; INSERT OR IGNORE INTO tenant_module_settings(tenant_id,module_id,store_name,created_at_ms,updated_at_ms) VALUES('${TENANT_ID}','petshop','${TENANT_NAME}',${NOW},${NOW}); UPDATE tenant_module_settings SET store_name='${TENANT_NAME}',updated_at_ms=${NOW} WHERE tenant_id='${TENANT_ID}' AND module_id='petshop';"
+          fi
+          case "$TENANT_ID" in (*[!A-Za-z0-9_-]*) echo "Unsafe tenant id" >&2; exit 1;; esac
+
           USER_ID='01ace5f8-f964-42ac-be13-8a4d2f76966f'
           PRINCIPAL_ID='c189017f-7cbb-48bb-aaae-819a0c0d59fe'
           EMAIL='preview.gabriel@yuisync.invalid'
