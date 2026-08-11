@@ -3,6 +3,7 @@ import {
   handleCompatApiRequest as handleBaseCompatApiRequest,
   type CompatRuntimeBindings,
 } from './compatApiRuntime.js'
+import { handleAppointmentCommandPolicy } from './appointmentBookingIdempotency'
 import {
   DEFERRED_COMPAT_RPC_NAMES,
   DEFERRED_COMPAT_TABLE_NAMES,
@@ -109,10 +110,6 @@ export function normalizeBaseCompatQueryBody(value: unknown): CompatQueryBody {
   body.filters = rewriteFilters(table, body.filters)
   body.orders = rewriteOrders(table, body.orders)
 
-  // The base runtime always prepends tenant_id/module_id to scoped upsert
-  // conflict targets. Legacy Supabase callers often include those same fields,
-  // which produced an invalid duplicated SQLite ON CONFLICT target. Strip only
-  // the implicit scope keys and preserve any real caller-selected key(s).
   if (typeof body.conflict === 'string') {
     body.conflict = body.conflict
       .split(',')
@@ -168,10 +165,6 @@ async function normalizeOptionalSingletonResponse(
   const objectPayload = asObject(payload)
   if (objectPayload.code !== 'ROW_NOT_SINGLE' || Number(objectPayload.count) !== 0) return response
 
-  // Billing configuration is optional for a freshly provisioned tenant. The
-  // legacy UI already treats a missing record as default settings; return the
-  // nullable singleton contract without surfacing a failed HTTP request in the
-  // browser console.
   return Response.json(
     { data: null, count: 0 },
     { status: 200, headers: { 'cache-control': 'no-store' } },
@@ -182,17 +175,13 @@ export async function handleCompatApiRequest(
   request: Request,
   env: CompatRuntimeBindings,
 ): Promise<Response | null> {
-  // Deferred compat probes the generic /api/compat/query and /rpc endpoints and
-  // may parse the body before deciding the requested table/RPC is not one of
-  // its own. Keep the original Request body untouched for the remaining
-  // fallbacks, especially the base compat runtime. Cloudflare's clone() keeps
-  // host-specific Request generics, while the compatibility handlers only use
-  // the standard Request surface; narrow the clone back to that shared shape.
   const deferredRequest = request.clone() as Request
   const deferredResponse = await handleDeferredCompatApiRequest(deferredRequest, env)
   if (deferredResponse) return deferredResponse
   const subscriptionResponse = await handleSubscriptionCompatRpcRequest(request, env)
   if (subscriptionResponse) return subscriptionResponse
+  const appointmentCommandResponse = await handleAppointmentCommandPolicy(request, env)
+  if (appointmentCommandResponse) return appointmentCommandResponse
   const operationalResponse = await handleOperationalCompatRpcRequest(request, env)
   if (operationalResponse) return operationalResponse
 

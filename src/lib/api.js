@@ -45,6 +45,17 @@ export function checkoutPetshop(payload) {
   }).then((response) => response.data)
 }
 
+export function updatePetshopServiceRules(serviceId, { tenantId, moduleId = 'petshop', ...rules }) {
+  return apiRequest(`/petshop/services/${encodeURIComponent(serviceId)}/rules`, {
+    method: 'PATCH',
+    headers: {
+      'x-tenant-id': tenantId,
+      'x-module-id': moduleId,
+    },
+    body: JSON.stringify(rules),
+  }).then((response) => response.service)
+}
+
 export function requestChatReply(sessionId, message, options = {}) {
   return apiRequest('/chat/respond', {
     method: 'POST',

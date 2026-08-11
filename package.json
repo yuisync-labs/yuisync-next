@@ -15,7 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:petbot": "node scripts/run-node-tests.mjs test/petbotAgent.test.mjs test/petbotAgentV3.test.mjs test/petbotFlowMatrix.test.mjs test/petbotModes.test.mjs test/petbotSemantics.test.mjs test/petbotStatic.test.mjs test/serverlessChatIngestionStatic.test.mjs test/petshopOperations.test.mjs test/prePr61Static.test.mjs test/prePr61Agent.test.mjs",
-    "test:transactions": "node --test test/transactionalStatic.test.mjs test/agendaOperationalInfrastructure.test.mjs",
+    "test:transactions": "node --test test/transactionalStatic.test.mjs test/agendaOperationalInfrastructure.test.mjs test/operationalServicePolicy.test.mjs",
     "test:e2e": "playwright test",
     "test:tenant": "node scripts/test-tenant-isolation.mjs",
     "test:all": "npm run typecheck && npm run typecheck:contracts && npm run check:contract-boundaries && npm run test:contracts && npm run test && npm run test:petbot && npm run test:luna && npm run test:transactions && npm run edge:check && npm run build",

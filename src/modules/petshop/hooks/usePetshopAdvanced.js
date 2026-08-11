@@ -1,10 +1,15 @@
 import { useCallback } from 'react'
 import { supabase } from '../../../lib/supabase'
+import { updatePetshopServiceRules } from '../../../lib/api'
 import { useModuleCtx } from '../../../context/ModuleContext'
 import { useAuthCtx } from '../../../context/AuthContext'
 import { applyTenantFilter, runWithTenantFallback } from '../../../lib/tenant'
 import { normalizeCode, normalizeServices } from '../lib/petshopTeam'
 import { fetchAllServiceCatalogPages } from '../lib/serviceCatalogPagination'
+import {
+  defaultServiceCommissionRate,
+  serviceSpeciesTarget,
+} from '../lib/appointmentServices'
 import { usePetshopAdvanced as usePetshopAdvancedCore } from './usePetshopAdvancedCore'
 
 export {
@@ -14,11 +19,6 @@ export {
   CAMPAIGN_TEMPLATES,
 } from './usePetshopAdvancedCore'
 
-// Contratos operacionais que continuam implementados no núcleo preservado:
-// excludeStatus, dateField, .limit(limit), calculate_petshop_operational_commissions,
-// getDateBounds(startDate).start, getDateBounds(endDate).end e
-// .is('responsible_staff_key', null). Esta fachada substitui somente o
-// carregamento do catálogo de serviços usado pela Agenda.
 const VALID_SERVICE_GROUPS = new Set(['banho_tosa', 'veterinaria', 'motoboy', 'outro'])
 
 const normalizeCatalogText = (value = '') => String(value || '')
@@ -28,6 +28,16 @@ const normalizeCatalogText = (value = '') => String(value || '')
   .trim()
 
 const catalogServiceCode = (productId = '') => `catalog_${String(productId).replace(/-/g, '')}`
+
+const optionalWeight = (value) => {
+  if (value === null || value === undefined || value === '') return null
+  const parsed = Number(String(value).replace(',', '.'))
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+const normalizeSpeciesTarget = (value, fallback = {}) => (
+  serviceSpeciesTarget({ ...fallback, species_target: value })
+)
 
 const isCatalogServiceProduct = (product = {}) => {
   const metadata = product.bot_metadata && typeof product.bot_metadata === 'object' ? product.bot_metadata : {}
@@ -72,6 +82,7 @@ const isPetshopServicesSchemaError = (error) => {
     message.includes('does not exist')
     || message.includes('schema cache')
     || message.includes('relation')
+    || message.includes('column')
   )
 }
 
@@ -96,7 +107,7 @@ export function usePetshopAdvanced() {
       runScoped(async (includeTenant) => fetchAllServiceCatalogPages(() => {
         let query = supabase
           .from('products')
-          .select('id,name,category,description,price,active,bot_metadata')
+          .select('id,name,category,description,price,active,bot_metadata,species_target')
           .eq('module_id', moduleId)
           .eq('active', true)
           .order('name', { ascending: true })
@@ -140,6 +151,15 @@ export function usePetshopAdvanced() {
           default_duration_min: Math.max(15, Number(
             service.default_duration_min ?? service.duration_min ?? 60
           )),
+          min_weight_kg: optionalWeight(service.min_weight_kg),
+          max_weight_kg: optionalWeight(service.max_weight_kg),
+          species_target: groupType === 'banho_tosa'
+            ? normalizeSpeciesTarget(service.species_target, service)
+            : null,
+          commission_type: service.commission_type || 'percentage',
+          commission_rate: service.commission_rate === null || service.commission_rate === undefined
+            ? defaultServiceCommissionRate(service)
+            : Number(service.commission_rate),
           active: service.active !== false,
           service_source: 'petshop_service',
         }
@@ -153,6 +173,16 @@ export function usePetshopAdvanced() {
           ? product.bot_metadata
           : {}
         const groupType = serviceGroup(linked.group_type, product)
+        const mergedForRules = {
+          ...product,
+          ...linked,
+          name: product.name || linked.name,
+          category: product.category || linked.category,
+          description: product.description || linked.description,
+          species_target: linked.species_target
+            ?? metadata.species
+            ?? product.species_target,
+        }
 
         return {
           ...linked,
@@ -169,8 +199,23 @@ export function usePetshopAdvanced() {
             ?? metadata.service_duration_min
             ?? 60
           )),
+          min_weight_kg: optionalWeight(
+            linked.min_weight_kg
+            ?? metadata.min_weight_kg
+            ?? metadata.minWeightKg,
+          ),
+          max_weight_kg: optionalWeight(
+            linked.max_weight_kg
+            ?? metadata.max_weight_kg
+            ?? metadata.maxWeightKg,
+          ),
+          species_target: groupType === 'banho_tosa'
+            ? normalizeSpeciesTarget(mergedForRules.species_target, mergedForRules)
+            : null,
           commission_type: linked.commission_type || 'percentage',
-          commission_rate: Number(linked.commission_rate || 0),
+          commission_rate: linked.commission_rate === null || linked.commission_rate === undefined
+            ? defaultServiceCommissionRate(mergedForRules)
+            : Number(linked.commission_rate),
           active: product.active !== false && linked.active !== false,
           sort_order: Number(linked.sort_order ?? 500),
           icon: linked.icon || (
@@ -185,13 +230,61 @@ export function usePetshopAdvanced() {
         }
       })
 
-    // Produtos ficam por último para vencer uma eventual duplicidade de código,
-    // preservando preço e metadados do catálogo sem duplicar a opção na Agenda.
     return normalizeServices([...independentServices, ...productServices])
   }, [activeTenantId, moduleId, runScoped])
+
+  const savePetshopService = useCallback(async (payload) => {
+    if (!activeTenantId) throw new Error('Selecione uma empresa ativa antes de salvar o serviço.')
+
+    const bathGrooming = payload.group_type === 'banho_tosa'
+    const minWeightKg = bathGrooming ? optionalWeight(payload.min_weight_kg) : null
+    const maxWeightKg = bathGrooming ? optionalWeight(payload.max_weight_kg) : null
+    const normalizedSpeciesTarget = bathGrooming
+      ? normalizeSpeciesTarget(payload.species_target, payload)
+      : null
+    const speciesTarget = normalizedSpeciesTarget === 'all' ? null : normalizedSpeciesTarget
+    const commissionRate = Number.isFinite(Number(payload.commission_rate))
+      ? Math.max(0, Number(payload.commission_rate))
+      : defaultServiceCommissionRate(payload)
+
+    const productManaged = payload.service_source === 'product' || Boolean(payload.source_product_id)
+    if (productManaged) {
+      if (!payload.id || !payload.source_product_id) {
+        throw new Error('Serviço sincronizado sem vínculo operacional. Atualize o catálogo antes de configurar as regras.')
+      }
+
+      const updated = await updatePetshopServiceRules(payload.id, {
+        tenantId: activeTenantId,
+        moduleId,
+        min_weight_kg: minWeightKg,
+        max_weight_kg: maxWeightKg,
+        species_target: speciesTarget,
+        commission_rate: commissionRate,
+      })
+      return normalizeServices([{ ...payload, ...updated, service_source: 'product' }])[0]
+    }
+
+    const saved = await core.savePetshopService({
+      ...payload,
+      commission_type: 'percentage',
+      commission_rate: commissionRate,
+    })
+    if (!saved?.id) return saved
+
+    const updated = await updatePetshopServiceRules(saved.id, {
+      tenantId: activeTenantId,
+      moduleId,
+      min_weight_kg: minWeightKg,
+      max_weight_kg: maxWeightKg,
+      species_target: speciesTarget,
+      commission_rate: commissionRate,
+    })
+    return normalizeServices([{ ...saved, ...updated }])[0]
+  }, [activeTenantId, core.savePetshopService, moduleId])
 
   return {
     ...core,
     loadPetshopServices,
+    savePetshopService,
   }
 }
