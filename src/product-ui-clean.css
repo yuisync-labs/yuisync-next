@@ -10,8 +10,86 @@
   --ui-radius-modal: 16px;
   --ui-border: var(--border);
   --ui-border-subtle: var(--border2);
+  --ui-border-hover: var(--muted2);
+  --ui-hover: rgba(255, 255, 255, 0.05);
+  --ui-table-head: rgba(255, 255, 255, 0.04);
   --ui-shadow-panel: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 14px rgba(15, 23, 42, 0.04);
   --ui-transition: 150ms ease;
+
+  --ui-success-fg: #6ee7b7;
+  --ui-success-bg: rgba(16, 185, 129, 0.14);
+  --ui-success-border: rgba(110, 231, 183, 0.3);
+  --ui-success-solid: #047857;
+  --ui-warning-fg: #fcd34d;
+  --ui-warning-bg: rgba(245, 158, 11, 0.14);
+  --ui-warning-border: rgba(252, 211, 77, 0.3);
+  --ui-danger-fg: #fca5a5;
+  --ui-danger-bg: rgba(239, 68, 68, 0.14);
+  --ui-danger-border: rgba(252, 165, 165, 0.3);
+  --ui-danger-solid: #dc2626;
+  --ui-info-fg: var(--primary);
+  --ui-info-bg: var(--primary-bg-light);
+  --ui-info-border: var(--primary-border);
+}
+
+/* Product color-mode contrast is controlled by the YuiSync toggle (.theme-dark),
+ * never by Tailwind's OS-level dark media variant. These overrides intentionally
+ * affect authenticated PetShop surfaces only.
+ */
+body.product-ui-active .theme-petshop {
+  --muted2: #64748b;
+  --border: #cbd5e1;
+  --border2: #e2e8f0;
+  --primary-hover: #10b981;
+  --primary-bg-light: rgba(5, 150, 105, 0.12);
+  --primary-border: rgba(5, 150, 105, 0.32);
+
+  --ui-border-hover: #94a3b8;
+  --ui-hover: #f1f5f9;
+  --ui-table-head: #f8fafc;
+
+  --ui-success-fg: #047857;
+  --ui-success-bg: rgba(5, 150, 105, 0.1);
+  --ui-success-border: rgba(4, 120, 87, 0.32);
+  --ui-success-solid: #047857;
+  --ui-warning-fg: #92400e;
+  --ui-warning-bg: rgba(245, 158, 11, 0.12);
+  --ui-warning-border: rgba(180, 83, 9, 0.3);
+  --ui-danger-fg: #b91c1c;
+  --ui-danger-bg: rgba(220, 38, 38, 0.09);
+  --ui-danger-border: rgba(185, 28, 28, 0.28);
+  --ui-danger-solid: #dc2626;
+  --ui-info-fg: #047857;
+  --ui-info-bg: rgba(5, 150, 105, 0.1);
+  --ui-info-border: rgba(4, 120, 87, 0.3);
+}
+
+body.product-ui-active .theme-petshop.theme-dark {
+  --muted: #b6c3d4;
+  --muted2: #8a9bb2;
+  --border: #3a4a63;
+  --border2: #26354d;
+  --primary-bg-light: rgba(56, 189, 248, 0.16);
+  --primary-border: rgba(56, 189, 248, 0.42);
+
+  --ui-border-hover: #52627a;
+  --ui-hover: #17243a;
+  --ui-table-head: #162238;
+
+  --ui-success-fg: #6ee7b7;
+  --ui-success-bg: rgba(16, 185, 129, 0.16);
+  --ui-success-border: rgba(110, 231, 183, 0.32);
+  --ui-success-solid: #047857;
+  --ui-warning-fg: #fcd34d;
+  --ui-warning-bg: rgba(245, 158, 11, 0.16);
+  --ui-warning-border: rgba(252, 211, 77, 0.32);
+  --ui-danger-fg: #fca5a5;
+  --ui-danger-bg: rgba(239, 68, 68, 0.16);
+  --ui-danger-border: rgba(252, 165, 165, 0.32);
+  --ui-danger-solid: #dc2626;
+  --ui-info-fg: #7dd3fc;
+  --ui-info-bg: rgba(56, 189, 248, 0.16);
+  --ui-info-border: rgba(125, 211, 252, 0.34);
 }
 
 .theme-petshop,
@@ -100,12 +178,89 @@
   box-shadow: none !important;
 }
 
+/* Legacy semantic components now use the same light/dark tokens as the new
+ * primitives, preventing pale Tailwind colors from becoming illegible in day mode.
+ */
+body.product-ui-active .theme-petshop .badge-green,
+body.product-ui-active .theme-petshop .btn-success {
+  border-color: var(--ui-success-border) !important;
+  background-color: var(--ui-success-bg) !important;
+  color: var(--ui-success-fg) !important;
+}
+
+body.product-ui-active .theme-petshop .badge-amber {
+  border-color: var(--ui-warning-border) !important;
+  background-color: var(--ui-warning-bg) !important;
+  color: var(--ui-warning-fg) !important;
+}
+
+body.product-ui-active .theme-petshop .badge-red,
+body.product-ui-active .theme-petshop .btn-danger {
+  border-color: var(--ui-danger-border) !important;
+  background-color: var(--ui-danger-bg) !important;
+  color: var(--ui-danger-fg) !important;
+}
+
+body.product-ui-active .theme-petshop .badge-blue {
+  border-color: var(--ui-info-border) !important;
+  background-color: var(--ui-info-bg) !important;
+  color: var(--ui-info-fg) !important;
+}
+
+body.product-ui-active .theme-petshop .badge-purple {
+  border-color: var(--border) !important;
+  background-color: var(--surface) !important;
+  color: var(--text) !important;
+}
+
+body.product-ui-active .theme-petshop .badge-gray {
+  border-color: var(--border) !important;
+  background-color: var(--surface) !important;
+  color: var(--muted) !important;
+}
+
 :is(.product-ui-scope, body.product-ui-active) :is(.tbl-wrapper, table) {
   box-shadow: none !important;
 }
 
-:is(.product-ui-scope, body.product-ui-active) .tbl tbody tr {
+body.product-ui-active .theme-petshop .tbl th {
+  border-color: var(--border) !important;
+  background-color: var(--ui-table-head) !important;
+  color: var(--muted) !important;
+}
+
+body.product-ui-active .theme-petshop .tbl td {
+  border-color: var(--border2) !important;
+}
+
+body.product-ui-active .theme-petshop .tbl tbody tr {
   transition: background-color var(--ui-transition) !important;
+}
+
+body.product-ui-active .theme-petshop .tbl tbody tr:hover td {
+  background-color: var(--ui-hover) !important;
+}
+
+/* Inputs use the stronger boundary token; separators remain on border2. */
+body.product-ui-active .theme-petshop .inp,
+body.product-ui-active .theme-petshop select.inp {
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+
+body.product-ui-active .theme-petshop .inp::placeholder {
+  color: var(--muted2) !important;
+  opacity: 1;
+}
+
+body.product-ui-active .theme-petshop select.inp option {
+  background: var(--surface);
+  color: var(--text);
+}
+
+body.product-ui-active .theme-petshop :is(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 /* Agenda used to encode service types with full-card gradients and glow. Keep
@@ -146,11 +301,11 @@ body.product-ui-active .yuisync-resolved-card .text-muted {
 }
 
 body.product-ui-active .yuisync-resolved-card :is(.text-emerald-400, .text-emerald-300) {
-  color: #059669 !important;
+  color: var(--ui-success-fg) !important;
 }
 
 body.product-ui-active .yuisync-package-label {
-  color: #b45309 !important;
+  color: var(--ui-warning-fg) !important;
 }
 
 body.product-ui-active .yuisync-resolved-action,
@@ -164,21 +319,21 @@ body.product-ui-active [data-yuisync-card-kind='package'] .yuisync-resolved-acti
 }
 
 body.product-ui-active .yuisync-resolved-action:hover {
-  background: var(--card) !important;
+  background: var(--ui-hover) !important;
   transform: none !important;
 }
 
 body.product-ui-active .yuisync-resolved-action.is-complete,
 body.product-ui-active [data-yuisync-card-kind='grooming'] .yuisync-resolved-action.is-complete,
 body.product-ui-active [data-yuisync-card-kind='package'] .yuisync-resolved-action.is-complete {
-  border-color: #10b981 !important;
-  background: #059669 !important;
+  border-color: var(--ui-success-solid) !important;
+  background: var(--ui-success-solid) !important;
   color: #ffffff !important;
 }
 
 body.product-ui-active .yuisync-resolved-action.is-cancel {
-  border-color: #ef4444 !important;
-  background: #dc2626 !important;
+  border-color: var(--ui-danger-solid) !important;
+  background: var(--ui-danger-solid) !important;
   color: #ffffff !important;
 }
 
