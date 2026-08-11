@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
-import { LogOut, ChevronRight, Star, Building2, RefreshCw, Moon, Sun } from 'lucide-react'
+import { LogOut, Star, Building2, RefreshCw, Moon, Sun } from 'lucide-react'
 import { ModuleSwitcher } from './ModuleSwitcher'
+import { Card } from './ui'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useAuthCtx } from '../context/AuthContext'
 
@@ -27,7 +28,7 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
 
     return (
       <div className="mb-6 last:mb-0">
-        <p className="text-[10px] font-bold text-muted/40 uppercase tracking-[0.2em] px-2.5 mb-2.5">{title}</p>
+        <p className="mb-2 px-2.5 text-[11px] font-semibold text-muted/60">{title}</p>
         <div className="space-y-0.5">
           {visibleItems.map(({ id, label, icon: ItemIcon }) => {
             const targetPath = `/${activeModule.id}/${id}`
@@ -38,16 +39,15 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
                 key={id}
                 to={targetPath}
                 onClick={() => setOpen(false)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-semibold text-sm transition-all duration-150 border border-transparent
+                className={`flex w-full items-center gap-3 rounded-[10px] border px-3 py-2.5 text-sm font-medium transition-colors duration-150
                   ${isActive
                     ? `${activeModule.theme.bgLight} ${activeModule.theme.text} ${activeModule.theme.border}`
-                    : 'text-muted hover:bg-white/5 hover:text-text'
+                    : 'border-transparent text-muted hover:bg-white/5 hover:text-text'
                   }
                 `}
               >
-                <ItemIcon size={17} />
+                <ItemIcon size={16} strokeWidth={1.8} />
                 <span>{label}</span>
-                {isActive && <ChevronRight size={13} className="ml-auto opacity-60" />}
               </NavLink>
             )
           })}
@@ -71,17 +71,16 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
   return (
     <>
       {open && (
-        <div className="fixed inset-0 bg-black/60 z-40 lg:hidden" onClick={() => setOpen(false)} />
+        <div className="fixed inset-0 z-40 bg-black/60 lg:hidden" onClick={() => setOpen(false)} />
       )}
       <aside
         className={`
-        fixed lg:relative inset-y-0 left-0 z-50
-        w-60 flex flex-col h-full bg-surface border-r border-[var(--border2)]
-        transition-transform duration-300
+        fixed inset-y-0 left-0 z-50 flex h-full w-60 flex-col border-r border-[var(--border)] bg-surface
+        transition-transform duration-300 lg:relative
         ${open ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}
       >
-        <div className="px-3 py-4 border-b border-[var(--border2)]">
+        <div className="border-b border-[var(--border2)] px-3 py-4">
           <ModuleSwitcher
             activeModule={activeModule}
             setActiveModuleId={setActiveModuleId}
@@ -90,7 +89,7 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
           />
         </div>
 
-        <nav className="flex-1 px-2.5 py-4 overflow-y-auto custom-scrollbar">
+        <nav className="custom-scrollbar flex-1 overflow-y-auto px-2.5 py-4">
           {navGroups.map((group, index) => (
             <React.Fragment key={`${group.title || 'group'}-${index}`}>
               {renderNavGroup(group.title, group.items || [])}
@@ -99,22 +98,22 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
           {!activeModule.navSections && activeModule.adminNav && renderNavGroup('Administracao', activeModule.adminNav)}
         </nav>
 
-        <div className="px-2.5 py-3 border-t border-[var(--border2)] space-y-2.5">
+        <div className="space-y-2.5 border-t border-[var(--border2)] px-2.5 py-3">
           <div className="flex items-end gap-2">
             {isAdminGlobal && (
-              <div className="flex-1 min-w-0">
-                <p className="text-[9px] text-muted uppercase tracking-[0.16em] font-bold mb-1 flex items-center gap-1">
-                  <Building2 size={10} />
-                  Instancia Ativa
+              <div className="min-w-0 flex-1">
+                <p className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-muted">
+                  <Building2 size={11} />
+                  Instância ativa
                 </p>
                 <div className="relative">
                   <select
-                    className="w-full bg-black/20 border border-[var(--border2)] rounded-lg text-xs font-semibold text-text px-2.5 py-2 outline-none"
+                    className="inp !py-2 !pr-8 !text-xs !font-medium"
                     value={activeTenantId || ''}
                     disabled={tenantLoading || switchingTenant || tenants.length === 0}
                     onChange={(event) => handleGlobalTenantChange(event.target.value)}
                   >
-                    {tenants.length === 0 && <option value="">Sem instancias</option>}
+                    {tenants.length === 0 && <option value="">Sem instâncias</option>}
                     {tenants.map((tenant) => (
                       <option key={tenant.id} value={tenant.id}>
                         {tenant.name}
@@ -122,40 +121,46 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
                     ))}
                   </select>
                   {(tenantLoading || switchingTenant) && (
-                    <RefreshCw size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted animate-spin" />
+                    <RefreshCw size={12} className="absolute right-2 top-1/2 -translate-y-1/2 animate-spin text-muted" />
                   )}
                 </div>
               </div>
             )}
-            <button type="button" onClick={onToggleDarkMode} className="w-10 h-10 flex-shrink-0 rounded-xl border border-[var(--border)] bg-[var(--card)] text-primary hover:border-[var(--primary-border)] hover:bg-[var(--primary-bg-light)] transition-colors flex items-center justify-center" aria-label={darkMode ? 'Ativar modo claro' : 'Ativar modo noturno'} title={darkMode ? 'Ativar modo claro' : 'Ativar modo noturno'}>
-              {darkMode ? <Sun size={17} /> : <Moon size={17} />}
+            <button
+              type="button"
+              onClick={onToggleDarkMode}
+              className="btn btn-ghost btn-icon h-10 w-10 shrink-0 justify-center !px-0"
+              aria-label={darkMode ? 'Ativar modo claro' : 'Ativar modo noturno'}
+              title={darkMode ? 'Ativar modo claro' : 'Ativar modo noturno'}
+            >
+              {darkMode ? <Sun size={16} /> : <Moon size={16} />}
             </button>
           </div>
 
-          <div className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl bg-white/3">
+          <Card tone="subtle" className="flex items-center gap-2.5 p-2.5">
             <div
-              className={`w-7 h-7 rounded-lg ${activeModule.theme.bgLight} flex items-center justify-center text-xs font-bold ${activeModule.theme.text} flex-shrink-0`}
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${activeModule.theme.bgLight} text-xs font-semibold ${activeModule.theme.text}`}
             >
               {(profile?.full_name || profile?.email || '?')[0].toUpperCase()}
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-text truncate">
-                {profile?.full_name || profile?.email || 'Usuario'}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-semibold text-text">
+                {profile?.full_name || profile?.email || 'Usuário'}
               </p>
-              <p className="text-[10px] text-muted truncate">
+              <p className="truncate text-[10px] text-muted">
                 {isAdminGlobal ? (
                   <span className="flex items-center gap-1">
-                    <Star size={10} className="fill-amber-400 text-amber-400" /> Admin Global
+                    <Star size={10} className="text-amber-500" /> Admin global
                   </span>
                 ) : (
-                  activeModule.roles?.find((r) => r.id === userModuleRole)?.label || 'Acesso Restrito'
+                  activeModule.roles?.find((r) => r.id === userModuleRole)?.label || 'Acesso restrito'
                 )}
               </p>
             </div>
-            <button onClick={onLogout} className="text-muted hover:text-red-400 transition-colors" title="Sair">
+            <button onClick={onLogout} className="text-muted transition-colors hover:text-red-500" title="Sair" aria-label="Sair">
               <LogOut size={14} />
             </button>
-          </div>
+          </Card>
         </div>
       </aside>
     </>
