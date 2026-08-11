@@ -1,0 +1,92 @@
+name: Landing preview
+
+on:
+  push:
+    branches:
+      - design/landing-v2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: landing-preview-staging
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Deploy landing preview to staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment:
+      name: cloudflare-staging
+      url: ${{ steps.deploy.outputs.deployment-url }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+
+      - name: Require scoped Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+
+      - run: npm ci
+
+      - name: Validate Edge compatibility
+        run: npm run check:edge-compat-surface -- --strict
+
+      - name: Validate Edge runtime and build SPA
+        run: npm run edge:check
+
+      - name: Confirm landing build contains V2 copy
+        run: |
+          grep -Rqs "Seu petshop" dist
+          grep -Rqs "yuisync.app" dist
+
+      - name: Deploy staging Worker and SPA assets
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          workingDirectory: apps/edge-api
+          command: deploy --env staging
+
+      - name: Confirm preview SPA is reachable
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          HEADERS="$(mktemp)"
+          BODY="$(mktemp)"
+          curl --silent --show-error --fail --dump-header "$HEADERS" --output "$BODY" "$PREVIEW_URL/"
+          grep -Eiq '^content-type:.*text/html' "$HEADERS"
+          grep -qi '<div id="root"' "$BODY"
+          rm -f "$HEADERS" "$BODY"
+
+      - name: Confirm staging runtime remains healthy
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          curl --silent --show-error --fail "$PREVIEW_URL/ready" > /tmp/ready.json
+          node -e "const fs=require('node:fs');const b=JSON.parse(fs.readFileSync('/tmp/ready.json','utf8'));if(b.status!=='ready')throw new Error('Staging runtime is not ready');console.log(JSON.stringify({status:b.status,environment:b.environment,schema:b.checks?.schema_version}));"
+
+      - name: Record preview URL
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          echo "## YuiSync Landing V2 Preview" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: ${PREVIEW_URL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Scope: public landing + brand asset only" >> "$GITHUB_STEP_SUMMARY"
