@@ -12,6 +12,7 @@ import { SystemSupportPriorityAlert } from '../components/SystemSupportPriorityA
 import { RouteErrorBoundary } from '../components/RouteErrorBoundary'
 import { LoadingState } from '../components/PageState'
 import { PerformanceModeButton } from '../components/PerformanceModeButton'
+import { ProductPageSurface } from '../components/ui'
 import { PetshopOperationsEnhancer } from '../modules/petshop/components/PetshopOperationsEnhancer'
 import { AgendaCardLayoutEnhancer } from '../modules/petshop/components/AgendaCardLayoutEnhancer'
 import { PackageRecurringScheduleEnhancer } from '../modules/petshop/components/PackageRecurringScheduleEnhancer'
@@ -172,7 +173,9 @@ function AppLayout() {
         <main className="flex-1 overflow-y-auto">
           <RouteErrorBoundary key={location.pathname}>
             <Suspense fallback={<LoadingState label="Abrindo area..." />}>
-              <PageComponent setPage={setPage} />
+              <ProductPageSurface moduleId={activeModuleId} pageId={currentPath}>
+                <PageComponent setPage={setPage} />
+              </ProductPageSurface>
             </Suspense>
           </RouteErrorBoundary>
         </main>
