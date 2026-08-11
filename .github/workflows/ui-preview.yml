@@ -1,0 +1,100 @@
+name: Product UI preview
+
+on:
+  push:
+    branches:
+      - design/product-ui-cleanup
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: product-ui-preview
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Build and deploy UI preview
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: cloudflare-staging
+      url: ${{ steps.deploy.outputs.deployment-url }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+
+      - name: Require scoped Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+
+      - run: npm ci
+
+      - name: Validate Edge compatibility
+        run: npm run check:edge-compat-surface -- --strict
+
+      - name: Validate UI branch and build SPA
+        run: npm run edge:check
+
+      - name: Deploy preview Worker and SPA assets
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          workingDirectory: apps/edge-api
+          command: deploy --env staging
+
+      - name: Verify preview SPA
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          HEADERS="$(mktemp)"
+          BODY="$(mktemp)"
+          curl --silent --show-error --fail --dump-header "$HEADERS" --output "$BODY" "$PREVIEW_URL/"
+          grep -Eiq '^content-type:.*text/html' "$HEADERS"
+          grep -qi '<div id="root"' "$BODY"
+          rm -f "$HEADERS" "$BODY"
+
+      - name: Verify preview readiness
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          BODY_FILE="$(mktemp)"
+          curl --silent --show-error --fail "$PREVIEW_URL/ready" > "$BODY_FILE"
+          node - "$BODY_FILE" <<'NODE'
+          const fs = require('node:fs');
+          const body = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (body.status !== 'ready' || body.checks?.database !== 'ready' || body.checks?.schema_version !== '22' || body.checks?.coordination !== 'ready' || body.checks?.auth_database !== 'configured') {
+            throw new Error('UI preview staging readiness is not healthy.');
+          }
+          console.log(JSON.stringify({ status: body.status, schema: body.checks.schema_version, environment: body.environment }));
+          NODE
+          rm -f "$BODY_FILE"
+
+      - name: Record preview summary
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
+          PREVIEW_SHA: ${{ github.sha }}
+        run: |
+          echo "## Product UI preview" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${PREVIEW_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: ${PREVIEW_URL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Target: Cloudflare staging only" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Production: untouched" >> "$GITHUB_STEP_SUMMARY"
+          echo "- D1 migrations: not modified by this workflow" >> "$GITHUB_STEP_SUMMARY"
