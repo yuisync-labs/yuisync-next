@@ -209,3 +209,19 @@ test('completed appointment reopen is transactional, package-aware and financial
   assert.match(compat, /handleCompletedAppointmentReopenQueryCompat/)
   assert.match(compat, /handleCompletedAppointmentReopenCompat/)
 })
+
+test('status-only completion is promoted to command plus idempotent package reconciliation', async () => {
+  const rpcCompat = await read('apps/edge-api/src/appointmentCompletionCompat.ts')
+  const queryCompat = await read('apps/edge-api/src/appointmentCompletionQueryCompat.ts')
+  const compat = await read('apps/edge-api/src/compatApi.ts')
+
+  assert.match(rpcCompat, /handleAppointmentCommandPolicy/)
+  assert.match(rpcCompat, /reconcile_petshop_completed_appointment_package/)
+  assert.match(rpcCompat, /appointment_completed: true/)
+  assert.match(rpcCompat, /retry_safe: true/)
+  assert.match(rpcCompat, /package_reconciliation/)
+  assert.match(queryCompat, /payload: \{ status: 'concluido' \}/)
+  assert.match(queryCompat, /handleCompletedAppointmentCompletionCompat/)
+  assert.match(compat, /handleCompletedAppointmentCompletionQueryCompat/)
+  assert.match(compat, /handleCompletedAppointmentCompletionCompat/)
+})
