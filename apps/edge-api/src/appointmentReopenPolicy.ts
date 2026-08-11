@@ -1,9 +1,11 @@
 import type { CompatRuntimeBindings } from './compatApiRuntime.js'
+import { appendAppointmentOperationalAudit } from './appointmentOperationalAudit'
 
 type JsonRecord = Record<string, unknown>
 
 type AppointmentLifecycleRow = {
   status: string
+  version: number
   subscription_id: string | null
   subscription_benefit_used: number
   subscription_benefit_status: string | null
@@ -152,7 +154,7 @@ export async function reopenCompletedAppointment(
   if (!isAppointmentReopenTarget(targetStatus)) return { reopened: false }
 
   const appointment = await env.DB.prepare(`
-    SELECT status,subscription_id,subscription_benefit_used,
+    SELECT status,version,subscription_id,subscription_benefit_used,
            subscription_benefit_status,subscription_benefits_json
     FROM appointments
     WHERE tenant_id=?1 AND module_id=?2 AND id=?3
@@ -283,6 +285,36 @@ export async function reopenCompletedAppointment(
 
   if (!reopened || reopened.status !== markerStatus || Number(reopened.updated_at_ms) !== now) {
     return { response: json({ code: 'APPOINTMENT_REOPEN_CONCURRENT_CHANGE' }, 409) }
+  }
+
+  await appendAppointmentOperationalAudit(env, {
+    tenantId: scope.tenantId,
+    moduleId: scope.moduleId,
+    appointmentId,
+    eventType: 'appointment.reopened',
+    transitionVersion: Number(appointment.version || 0),
+    title: 'Atendimento reaberto',
+    description: 'O atendimento concluído voltou ao fluxo operacional.',
+    metadata: {
+      from_status: 'completed',
+      to_status: markerStatus,
+    },
+  })
+
+  if (hadPackageContext) {
+    await appendAppointmentOperationalAudit(env, {
+      tenantId: scope.tenantId,
+      moduleId: scope.moduleId,
+      appointmentId,
+      eventType: 'appointment.package_released',
+      transitionVersion: Number(appointment.version || 0),
+      title: 'Benefício de pacote devolvido',
+      description: 'A reabertura devolveu ao pacote o benefício consumido pelo atendimento.',
+      metadata: {
+        subscription_id: appointment.subscription_id,
+        released_services: Object.fromEntries(released.usageCounts),
+      },
+    })
   }
 
   return {
