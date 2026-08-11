@@ -177,6 +177,24 @@ export function serviceWeightRangeLabel(service = {}, { genericLabel = 'Todos os
   return genericLabel
 }
 
+export function appointmentServiceEligibility(service = {}, pet = {}) {
+  const species = pet?.species ?? pet?.pet_species ?? null
+  const weightKg = pet?.weight_kg ?? pet?.weightKg ?? null
+  const speciesEligible = serviceFitsPetSpecies(service, species)
+  const weightEligible = serviceFitsPetWeight(service, weightKg)
+  const reasons = []
+
+  if (!speciesEligible) reasons.push(serviceSpeciesLabel(service))
+  if (!weightEligible) reasons.push(`Faixa de peso: ${serviceWeightRangeLabel(service)}`)
+
+  return {
+    eligible: speciesEligible && weightEligible,
+    speciesEligible,
+    weightEligible,
+    reason: reasons.join(' · '),
+  }
+}
+
 export function appointmentServiceKind(service = {}) {
   const text = appointmentServiceText(service)
   const declared = stripAccents(service.group_type || service.groupType || service.service_group || '')
