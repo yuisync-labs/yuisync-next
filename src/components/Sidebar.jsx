@@ -28,7 +28,7 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
 
     return (
       <div className="mb-6 last:mb-0">
-        <p className="mb-2 px-2.5 text-[11px] font-semibold text-muted/60">{title}</p>
+        <p className="mb-2 px-2.5 text-[11px] font-semibold text-[var(--muted2)]">{title}</p>
         <div className="space-y-0.5">
           {visibleItems.map(({ id, label, icon: ItemIcon }) => {
             const targetPath = `/${activeModule.id}/${id}`
@@ -42,7 +42,7 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
                 className={`flex w-full items-center gap-3 rounded-[10px] border px-3 py-2.5 text-sm font-medium transition-colors duration-150
                   ${isActive
                     ? `${activeModule.theme.bgLight} ${activeModule.theme.text} ${activeModule.theme.border}`
-                    : 'border-transparent text-muted hover:bg-white/5 hover:text-text'
+                    : 'border-transparent text-muted hover:bg-[var(--ui-hover)] hover:text-text'
                   }
                 `}
               >
