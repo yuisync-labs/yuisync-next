@@ -4,8 +4,38 @@ const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const ACTIVE_TENANT_KEY = '@yui_active_tenant'
 const ACTIVE_MODULE_KEY = '@app_module'
 
+const OPERATION_ERROR_MESSAGES = Object.freeze({
+  SERVICE_REQUIRED: 'Selecione pelo menos um serviço para o agendamento.',
+  SERVICE_NOT_FOUND: 'Um dos serviços selecionados não está mais disponível. Atualize a agenda e tente novamente.',
+  MIXED_SERVICE_GROUPS: 'Não é possível combinar serviços de áreas diferentes no mesmo agendamento.',
+  SERVICE_SPECIES_MISMATCH: 'Este serviço não está configurado para a espécie do pet selecionado.',
+  SERVICE_WEIGHT_MISMATCH: 'Este serviço não atende à faixa de peso cadastrada para o pet selecionado.',
+  PET_NOT_FOUND: 'O pet selecionado não foi encontrado ou não está ativo.',
+  PET_CLIENT_MISMATCH: 'O pet selecionado não pertence ao cliente informado.',
+  IDEMPOTENCY_KEY_REUSED: 'Esta tentativa de salvar já foi usada com outros dados. Atualize a agenda e tente novamente.',
+  APPOINTMENT_ID_CONFLICT: 'O identificador deste agendamento já pertence a outra operação. Atualize a agenda e tente novamente.',
+  APPOINTMENT_REOPEN_EDIT_SEPARATELY: 'Reabra o atendimento primeiro. Depois altere o pet ou os serviços em uma nova edição.',
+  APPOINTMENT_REOPEN_REFUND_REQUIRED: 'Este atendimento possui pagamento recebido. Faça o estorno financeiro antes de reabri-lo.',
+  APPOINTMENT_REOPEN_SALE_CANCEL_REQUIRED: 'Este atendimento possui uma venda ativa. Cancele a venda antes de reabri-lo.',
+  APPOINTMENT_REOPEN_CONCURRENT_CHANGE: 'O atendimento mudou enquanto era reaberto. Atualize a agenda e tente novamente.',
+  APPOINTMENT_REOPEN_FAILED: 'Não foi possível reabrir o atendimento. Atualize a agenda e tente novamente.',
+  APPOINTMENT_COMPLETION_PACKAGE_RECONCILIATION_UNAVAILABLE: 'O atendimento foi concluído, mas o pacote ainda não foi atualizado. Tente concluir novamente; a repetição é segura.',
+  APPOINTMENT_COMPLETION_PACKAGE_RECONCILIATION_FAILED: 'O atendimento foi concluído, mas a atualização do pacote não terminou. Tente concluir novamente; a repetição é segura.',
+  APPOINTMENT_SNAPSHOT_FAILED: 'O atendimento foi salvo, mas não foi possível confirmar o snapshot operacional. Atualize a agenda antes de continuar.',
+})
+
+export function compatOperationErrorMessage(payload = {}) {
+  const explicitMessage = payload?.message || payload?.error?.message
+  if (explicitMessage) return String(explicitMessage)
+
+  const code = String(payload?.code || payload?.error?.code || '').trim()
+  if (code && OPERATION_ERROR_MESSAGES[code]) return OPERATION_ERROR_MESSAGES[code]
+  if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error.trim()
+  return code || 'Falha na operação de dados.'
+}
+
 function asError(payload, status) {
-  const error = new Error(payload?.message || payload?.error?.message || payload?.error || payload?.code || 'Falha na operacao de dados.')
+  const error = new Error(compatOperationErrorMessage(payload))
   error.code = payload?.code || payload?.error?.code || ''
   error.status = status
   error.details = payload?.details || null
@@ -317,15 +347,3 @@ export const fmtDate = (iso) => {
   if (!iso) return '—'
   return new Date(iso).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric' })
 }
-
-export const fmtDateTime = (iso) => {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
-}
-
-export const fmtTime = (iso) => {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' })
-}
-
-export const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL' }).format(v ?? 0)
