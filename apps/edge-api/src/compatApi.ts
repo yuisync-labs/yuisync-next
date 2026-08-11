@@ -5,6 +5,7 @@ import {
 } from './compatApiRuntime.js'
 import { handleAppointmentCommandPolicy } from './appointmentBookingIdempotency'
 import { handleCompletedAppointmentReopenCompat } from './appointmentReopenCompat'
+import { handleCompletedAppointmentReopenQueryCompat } from './appointmentReopenQueryCompat'
 import {
   DEFERRED_COMPAT_RPC_NAMES,
   DEFERRED_COMPAT_TABLE_NAMES,
@@ -176,6 +177,8 @@ export async function handleCompatApiRequest(
   request: Request,
   env: CompatRuntimeBindings,
 ): Promise<Response | null> {
+  const directReopenResponse = await handleCompletedAppointmentReopenQueryCompat(request, env)
+  if (directReopenResponse) return directReopenResponse
   const deferredRequest = request.clone() as Request
   const deferredResponse = await handleDeferredCompatApiRequest(deferredRequest, env)
   if (deferredResponse) return deferredResponse
