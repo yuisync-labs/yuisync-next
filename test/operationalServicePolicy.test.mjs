@@ -122,3 +122,19 @@ test('service rules use a native API instead of writing operational rules from J
   assert.match(api, /commission_basis_points/)
   assert.match(api, /species_target/)
 })
+
+test('appointment booking is deduplicated by canonical intent outside Agenda JSX', async () => {
+  const command = await read('apps/edge-api/src/appointmentBookingIdempotency.ts')
+  const compat = await read('apps/edge-api/src/compatApi.ts')
+
+  assert.match(command, /canonicalIntent/)
+  assert.match(command, /crypto\.subtle\.digest\('SHA-256'/)
+  assert.match(command, /deterministicAppointmentId/)
+  assert.match(command, /existingAppointment/)
+  assert.match(command, /idempotent: true/)
+  assert.match(command, /resolveServiceSnapshots/)
+  assert.match(command, /SERVICE_SPECIES_MISMATCH/)
+  assert.match(command, /SERVICE_WEIGHT_MISMATCH/)
+  assert.match(command, /persistOperationalSnapshots/)
+  assert.match(compat, /handleIdempotentAppointmentBooking/)
+})
