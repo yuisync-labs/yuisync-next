@@ -48,9 +48,30 @@ WHERE module_id = 'petshop'
   AND commission_basis_points = 0;
 
 ALTER TABLE appointments ADD COLUMN operation_key TEXT;
+ALTER TABLE appointments ADD COLUMN operation_fingerprint TEXT
+  CHECK (operation_fingerprint IS NULL OR length(operation_fingerprint) = 64);
 CREATE UNIQUE INDEX IF NOT EXISTS appointments_scope_operation_key_unique
   ON appointments(tenant_id,module_id,operation_key)
   WHERE operation_key IS NOT NULL;
+
+-- Operation identity is independent from appointment content. The caller key is
+-- hashed/scoped by the command layer; the fingerprint proves that a retry is the
+-- same intent instead of a reused key carrying different data.
+CREATE TABLE appointment_command_registry (
+  tenant_id TEXT NOT NULL,
+  module_id TEXT NOT NULL,
+  operation_key TEXT NOT NULL,
+  appointment_id TEXT NOT NULL,
+  operation_fingerprint TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'reserved',
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (tenant_id,module_id,operation_key),
+  CHECK (length(operation_fingerprint) = 64),
+  CHECK (status IN ('reserved','completed'))
+) STRICT;
+CREATE INDEX appointment_command_registry_appointment_idx
+  ON appointment_command_registry(tenant_id,module_id,appointment_id);
 
 ALTER TABLE appointment_services ADD COLUMN catalog_price_cents INTEGER
   CHECK (catalog_price_cents IS NULL OR catalog_price_cents >= 0);
@@ -150,7 +171,7 @@ SELECT
   CASE a.status WHEN 'scheduled' THEN 'agendado' WHEN 'confirmed' THEN 'confirmado' WHEN 'in_progress' THEN 'em_andamento'
     WHEN 'completed' THEN 'concluido' WHEN 'cancelled' THEN 'cancelado' WHEN 'blocked' THEN 'bloqueado'
     WHEN 'available' THEN 'disponivel' ELSE a.status END AS status,
-  a.notes,a.source,a.operation_key,
+  a.notes,a.source,a.operation_key,a.operation_fingerprint,
   a.employee_id,a.groomer_id,a.responsible_staff_key,a.responsible_staff_name,a.delivery_staff_key,a.delivery_staff_name,
   t.option_id AS transport_mode,o.label AS transport_label,t.pickup_address AS transport_address,
   NULL AS transport_neighborhood,NULL AS transport_city,t.pickup_reference AS transport_reference,
