@@ -6,6 +6,7 @@ const normalizeText = (value = '') => String(value || '')
 
 const transportPattern = /\b(motodog|moto\s*dog|transporte|entrega|delivery|frete|buscar|levar)\b/
 const genericBathTosaPattern = /^(banho[_\s-]*tosa|banho e tosa)$/
+const anyGroomingCommissionPattern = /\b(tosa|tosagem|tosar|trim|trimming|stripping)\w*/
 
 const itemText = (item = {}) => normalizeText([
   item.code,
@@ -30,8 +31,39 @@ const itemCategory = (item = {}, appointment = {}) => {
   return 'other'
 }
 
+const serviceCode = (value = {}) => String(value.code || value.service_type || value.value || '').trim()
+
+// Historical policy: a snapshot persisted on the appointment always wins.
+// Current catalog rate is used only to hydrate legacy rows that have no snapshot.
+const configuredCommissionPercent = (item = {}) => {
+  if (item.commission_rate !== null && item.commission_rate !== undefined && item.commission_rate !== '') {
+    const rate = Number(item.commission_rate)
+    if (Number.isFinite(rate) && rate >= 0) return rate
+  }
+  return anyGroomingCommissionPattern.test(itemText(item)) ? 10 : 5
+}
+
+const enrichItemsFromCatalog = (items = [], services = []) => {
+  const byCode = new Map((services || []).map((service) => [serviceCode(service), service]))
+  return (items || []).map((item) => {
+    const catalog = byCode.get(serviceCode(item))
+    if (!catalog) return item
+    return {
+      ...item,
+      commission_type: item.commission_type || catalog.commission_type || 'percentage',
+      commission_rate: item.commission_rate ?? catalog.commission_rate,
+      catalog_price: item.catalog_price ?? catalog.default_price ?? catalog.price,
+    }
+  })
+}
+
 export function hydrateLegacyCommissionAppointment(appointment = {}, services = []) {
-  if (Array.isArray(appointment.service_items) && appointment.service_items.length) return appointment
+  if (Array.isArray(appointment.service_items) && appointment.service_items.length) {
+    return {
+      ...appointment,
+      service_items: enrichItemsFromCatalog(appointment.service_items, services),
+    }
+  }
 
   const rawType = normalizeText(appointment.service_type || '')
   if (!genericBathTosaPattern.test(rawType)) return appointment
@@ -54,6 +86,9 @@ export function hydrateLegacyCommissionAppointment(appointment = {}, services = 
       service_type: selected.code,
       group_type: selected.group_type || 'banho_tosa',
       unit_price: appointmentPrice,
+      catalog_price: selected.default_price ?? appointmentPrice,
+      commission_type: selected.commission_type || 'percentage',
+      commission_rate: selected.commission_rate,
       source_product_id: selected.source_product_id || null,
       inferred_from_legacy_price: true,
     }],
@@ -81,6 +116,7 @@ export function appointmentCommissionLines(appointment = {}) {
         group_type: appointment.service_group || 'banho_tosa',
         unit_price: 0,
         catalog_price: benefit.catalog_price,
+        commission_rate: benefit.commission_rate,
         subscription_benefit_used: true,
         package_covered: true,
       }))
@@ -104,11 +140,11 @@ export function appointmentCommissionLines(appointment = {}) {
     const code = String(item.code || item.service_type || item.value || '').trim()
     const benefitKey = String(item.benefit_key || '').trim()
     const matchingBenefit = serviceBenefits.find((benefit) => {
-      const serviceCode = String(benefit?.service_code || '').trim()
+      const benefitServiceCode = String(benefit?.service_code || '').trim()
       const key = String(benefit?.key || benefit?.benefit_key || '').trim()
-      return (code && serviceCode === code)
+      return (code && benefitServiceCode === code)
         || (benefitKey && key === benefitKey)
-        || (eligible.length === 1 && serviceBenefits.length === 1 && !serviceCode)
+        || (eligible.length === 1 && serviceBenefits.length === 1 && !benefitServiceCode)
     })
     const packageCovered = item.package_covered === true
       || item.subscription_benefit_used === true
@@ -136,7 +172,11 @@ export function appointmentCommissionLines(appointment = {}) {
         : eligible.length === 1
           ? Number(appointment.price || 0)
           : 0
-    const rate = ['machine_grooming', 'scissor_grooming'].includes(category) ? 0.10 : 0.05
+    const commissionPercent = configuredCommissionPercent({
+      ...item,
+      commission_rate: item.commission_rate ?? matchingBenefit?.commission_rate,
+    })
+    const rate = commissionPercent / 100
     const rawLabel = item.name || item.label || item.code || item.value || appointment.service_type || 'Servico estetico'
     const legacyGeneric = genericBathTosaPattern.test(normalizeText(item.service_type || item.code || appointment.service_type || ''))
     const baseLabel = legacyGeneric && category === 'bath' ? 'Banho (registro antigo)' : rawLabel
@@ -148,6 +188,7 @@ export function appointmentCommissionLines(appointment = {}) {
       revenue: Math.max(0, revenue),
       commission: Math.max(0, revenue) * rate,
       rate,
+      commission_rate: commissionPercent,
       package_covered: packageCovered,
       package_plan_name: item.package_plan_name || appointment.package_plan_name || '',
     }
