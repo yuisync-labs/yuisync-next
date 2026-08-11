@@ -136,5 +136,16 @@ test('appointment booking is deduplicated by canonical intent outside Agenda JSX
   assert.match(command, /SERVICE_SPECIES_MISMATCH/)
   assert.match(command, /SERVICE_WEIGHT_MISMATCH/)
   assert.match(command, /persistOperationalSnapshots/)
-  assert.match(compat, /handleIdempotentAppointmentBooking/)
+  assert.match(compat, /handleAppointmentCommandPolicy/)
+})
+
+test('appointment edits preserve commercial snapshots unless service or pet really changes', async () => {
+  const command = await read('apps/edge-api/src/appointmentBookingIdempotency.ts')
+
+  assert.match(command, /sameCodeSet/)
+  assert.match(command, /const petChanged/)
+  assert.match(command, /const serviceChanged/)
+  assert.match(command, /preserveCommercialSnapshot/)
+  assert.match(command, /nextPayload\.price = existing\.price/)
+  assert.match(command, /snapshot_policy: preserveCommercialSnapshot \? 'preserved' : 'refreshed'/)
 })
