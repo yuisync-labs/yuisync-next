@@ -134,6 +134,28 @@ jobs:
           NODE
           rm -f "$BODY_FILE"
 
+      - name: Prepare disposable authenticated staging fixture
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          YUISYNC_E2E_BASE_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: node scripts/migration/staging-e2e-fixtures.mjs setup
+
+      - name: Certify transactional PDV checkout on real staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          YUISYNC_E2E_BASE_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: node scripts/migration/staging-pdv-checkout.mjs
+
+      - name: Clean disposable staging fixture
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          YUISYNC_E2E_BASE_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
+
       - name: Record deployment summary
         env:
           EDGE_STAGING_URL: ${{ steps.deploy.outputs.deployment-url }}
@@ -147,3 +169,4 @@ jobs:
           echo "- AI Lab D1: migrated" >> "$GITHUB_STEP_SUMMARY"
           echo "- SPA assets: served by Worker" >> "$GITHUB_STEP_SUMMARY"
           echo "- Durable Object binding readiness: passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Transactional PDV checkout: authenticated remote D1 smoke passed" >> "$GITHUB_STEP_SUMMARY"
