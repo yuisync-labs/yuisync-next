@@ -8,10 +8,10 @@ function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null
 
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-card px-3 py-2 shadow-sm">
+    <Card tone="neutral" className="px-3 py-2">
       <p className="text-[11px] font-medium text-muted">{label}</p>
       <p className="mt-0.5 text-sm font-semibold text-text">{formatHours(payload[0].value)}</p>
-    </div>
+    </Card>
   )
 }
 
