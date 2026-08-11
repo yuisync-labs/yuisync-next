@@ -11,6 +11,7 @@ import { handleAiLabMigrationRequest } from './migration/aiLabMigrationHttp'
 import { handleAuthMigrationRequest } from './migration/authMigrationHttp'
 import { handleClientsPetsMigrationRequest } from './migration/clientsPetsMigrationHttp'
 import { handleOperationalMigrationRequest } from './migration/operationalMigrationHttp'
+import { handlePetshopServicesApiRequest } from './petshopServicesApi'
 import { handleAsyncQueue } from './queueHandler'
 import { handleRealtimeApiRequest, scheduleRealtimeInvalidation } from './realtimeApi'
 import type { EdgeAppEnvironment } from './types'
@@ -60,6 +61,9 @@ export default {
 
     const managedUsersResponse = await handleManagedUsersApiRequest(request, bindings)
     if (managedUsersResponse) return respond(managedUsersResponse)
+
+    const petshopServicesResponse = await handlePetshopServicesApiRequest(request, bindings)
+    if (petshopServicesResponse) return respond(petshopServicesResponse)
 
     const compatResponse = await handleCompatApiRequest(request, bindings)
     if (compatResponse) return respond(compatResponse)
