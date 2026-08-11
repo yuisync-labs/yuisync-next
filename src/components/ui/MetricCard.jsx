@@ -6,19 +6,19 @@ const TONE_STYLES = {
     value: 'text-text',
   },
   success: {
-    icon: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+    icon: 'bg-[var(--ui-success-bg)] text-[var(--ui-success-fg)]',
     value: 'text-text',
   },
   warning: {
-    icon: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+    icon: 'bg-[var(--ui-warning-bg)] text-[var(--ui-warning-fg)]',
     value: 'text-text',
   },
   danger: {
-    icon: 'bg-red-500/10 text-red-600 dark:text-red-400',
+    icon: 'bg-[var(--ui-danger-bg)] text-[var(--ui-danger-fg)]',
     value: 'text-text',
   },
   info: {
-    icon: 'bg-[var(--primary-bg-light)] text-primary',
+    icon: 'bg-[var(--ui-info-bg)] text-[var(--ui-info-fg)]',
     value: 'text-text',
   },
 }
