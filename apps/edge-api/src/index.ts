@@ -11,6 +11,7 @@ import { handleAuthMigrationRequest } from './migration/authMigrationHttp'
 import { handleClientsPetsMigrationRequest } from './migration/clientsPetsMigrationHttp'
 import { handleOperationalMigrationRequest } from './migration/operationalMigrationHttp'
 import { handleAsyncQueue } from './queueHandler'
+import { handleRealtimeApiRequest, scheduleRealtimeInvalidation } from './realtimeApi'
 import type { EdgeAppEnvironment } from './types'
 
 export { CoordinationDurableObject } from './coordination/coordinationDurableObject'
@@ -18,41 +19,51 @@ export { CoordinationDurableObject } from './coordination/coordinationDurableObj
 export default {
   async fetch(request: Request, env: EdgeEnv, context: ExecutionContext): Promise<Response> {
     const bindings = env as EdgeAppEnvironment['Bindings']
+    const mutationProbe: Request | null = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)
+      ? request.clone() as Request
+      : null
+    const respond = (response: Response): Response => {
+      if (mutationProbe) scheduleRealtimeInvalidation(mutationProbe, response.clone(), bindings, context)
+      return response
+    }
 
     const readinessResponse = await handleFinalReadiness(request, bindings)
-    if (readinessResponse) return readinessResponse
+    if (readinessResponse) return respond(readinessResponse)
 
     const authMigrationResponse = await handleAuthMigrationRequest(request, bindings)
-    if (authMigrationResponse) return authMigrationResponse
+    if (authMigrationResponse) return respond(authMigrationResponse)
 
     const clientsPetsMigrationResponse = await handleClientsPetsMigrationRequest(request, bindings)
-    if (clientsPetsMigrationResponse) return clientsPetsMigrationResponse
+    if (clientsPetsMigrationResponse) return respond(clientsPetsMigrationResponse)
 
     const aiLabMigrationResponse = await handleAiLabMigrationRequest(request, bindings)
-    if (aiLabMigrationResponse) return aiLabMigrationResponse
+    if (aiLabMigrationResponse) return respond(aiLabMigrationResponse)
 
     const operationalMigrationResponse = await handleOperationalMigrationRequest(request, bindings)
-    if (operationalMigrationResponse) return operationalMigrationResponse
+    if (operationalMigrationResponse) return respond(operationalMigrationResponse)
+
+    const realtimeResponse = await handleRealtimeApiRequest(request, bindings)
+    if (realtimeResponse) return realtimeResponse
 
     const authResponse = await handleBetterAuthRequest(request, bindings)
-    if (authResponse) return authResponse
+    if (authResponse) return respond(authResponse)
 
     const aiLabResponse = await handleAiLabApiRequest(request, bindings)
-    if (aiLabResponse) return aiLabResponse
+    if (aiLabResponse) return respond(aiLabResponse)
 
     const checkoutResponse = await handleCheckoutApiRequest(request, bindings)
-    if (checkoutResponse) return checkoutResponse
+    if (checkoutResponse) return respond(checkoutResponse)
 
     const managedUsersResponse = await handleManagedUsersApiRequest(request, bindings)
-    if (managedUsersResponse) return managedUsersResponse
+    if (managedUsersResponse) return respond(managedUsersResponse)
 
     const compatResponse = await handleCompatApiRequest(request, bindings)
-    if (compatResponse) return compatResponse
+    if (compatResponse) return respond(compatResponse)
 
     const appApiResponse = await handleAppApiRequest(request, bindings)
-    if (appApiResponse) return appApiResponse
+    if (appApiResponse) return respond(appApiResponse)
 
-    return app.fetch(request, env, context)
+    return respond(await app.fetch(request, env, context))
   },
   queue: handleAsyncQueue,
 }
