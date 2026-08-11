@@ -129,7 +129,7 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
             <button
               type="button"
               onClick={onToggleDarkMode}
-              className="btn btn-ghost btn-icon h-10 w-10 shrink-0 justify-center !px-0"
+              className="btn btn-ghost btn-icon w-10 h-10 shrink-0 justify-center !px-0"
               aria-label={darkMode ? 'Ativar modo claro' : 'Ativar modo noturno'}
               title={darkMode ? 'Ativar modo claro' : 'Ativar modo noturno'}
             >
