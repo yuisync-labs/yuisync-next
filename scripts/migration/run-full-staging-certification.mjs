@@ -287,11 +287,11 @@ async function healthProbe() {
 
 const mainBookmark = currentBookmark('DB')
 const authBookmark = currentBookmark('AUTH_DB')
-const expectedSchema = '21'
+const expectedSchema = '22'
 const mainObjects = objectNames('DB')
 const schemaVersion = d1Rows('DB', "SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'")[0]?.value
 
-await record('schema_v21', async () => {
+await record('schema_v22', async () => {
   if (String(schemaVersion) !== expectedSchema) throw new Error(`SCHEMA_VERSION:${schemaVersion}`)
   return { schema_version: String(schemaVersion), object_count: mainObjects.size }
 })
