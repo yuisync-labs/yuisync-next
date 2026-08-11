@@ -3,7 +3,7 @@ import {
   handleCompatApiRequest as handleBaseCompatApiRequest,
   type CompatRuntimeBindings,
 } from './compatApiRuntime.js'
-import { handleIdempotentAppointmentBooking } from './appointmentBookingIdempotency'
+import { handleAppointmentCommandPolicy } from './appointmentBookingIdempotency'
 import {
   DEFERRED_COMPAT_RPC_NAMES,
   DEFERRED_COMPAT_TABLE_NAMES,
@@ -180,8 +180,8 @@ export async function handleCompatApiRequest(
   if (deferredResponse) return deferredResponse
   const subscriptionResponse = await handleSubscriptionCompatRpcRequest(request, env)
   if (subscriptionResponse) return subscriptionResponse
-  const idempotentBookingResponse = await handleIdempotentAppointmentBooking(request, env)
-  if (idempotentBookingResponse) return idempotentBookingResponse
+  const appointmentCommandResponse = await handleAppointmentCommandPolicy(request, env)
+  if (appointmentCommandResponse) return appointmentCommandResponse
   const operationalResponse = await handleOperationalCompatRpcRequest(request, env)
   if (operationalResponse) return operationalResponse
 
