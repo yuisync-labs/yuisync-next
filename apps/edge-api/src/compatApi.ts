@@ -4,6 +4,8 @@ import {
   type CompatRuntimeBindings,
 } from './compatApiRuntime.js'
 import { handleAppointmentCommandPolicy } from './appointmentBookingIdempotency'
+import { handleCompletedAppointmentCompletionCompat } from './appointmentCompletionCompat'
+import { handleCompletedAppointmentCompletionQueryCompat } from './appointmentCompletionQueryCompat'
 import { handleCompletedAppointmentReopenCompat } from './appointmentReopenCompat'
 import { handleCompletedAppointmentReopenQueryCompat } from './appointmentReopenQueryCompat'
 import {
@@ -177,6 +179,8 @@ export async function handleCompatApiRequest(
   request: Request,
   env: CompatRuntimeBindings,
 ): Promise<Response | null> {
+  const directCompletionResponse = await handleCompletedAppointmentCompletionQueryCompat(request, env)
+  if (directCompletionResponse) return directCompletionResponse
   const directReopenResponse = await handleCompletedAppointmentReopenQueryCompat(request, env)
   if (directReopenResponse) return directReopenResponse
   const deferredRequest = request.clone() as Request
@@ -184,6 +188,8 @@ export async function handleCompatApiRequest(
   if (deferredResponse) return deferredResponse
   const subscriptionResponse = await handleSubscriptionCompatRpcRequest(request, env)
   if (subscriptionResponse) return subscriptionResponse
+  const appointmentCompletionResponse = await handleCompletedAppointmentCompletionCompat(request, env)
+  if (appointmentCompletionResponse) return appointmentCompletionResponse
   const appointmentReopenResponse = await handleCompletedAppointmentReopenCompat(request, env)
   if (appointmentReopenResponse) return appointmentReopenResponse
   const appointmentCommandResponse = await handleAppointmentCommandPolicy(request, env)
