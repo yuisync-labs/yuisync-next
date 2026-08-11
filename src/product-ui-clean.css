@@ -31,78 +31,80 @@
   isolation: isolate;
 }
 
-/* Authenticated legacy surface bridge. The selectors are intentionally scoped
- * to ProductPageSurface so the public landing/checkout/booking UI is untouched.
+/* Authenticated legacy surface bridge. ProductPageSurface scopes normal route
+ * content and also marks body.product-ui-active so React portals, shell menus,
+ * support overlays and authenticated modals inherit the exact same treatment.
+ * Public landing/checkout/booking routes never receive the body marker.
  */
-.product-ui-scope :is(.rounded-xl, .rounded-2xl, .rounded-xl2) {
+:is(.product-ui-scope, body.product-ui-active) :is(.rounded-xl, .rounded-2xl, .rounded-xl2) {
   border-radius: var(--ui-radius-card) !important;
 }
 
-.product-ui-scope :is(.rounded-3xl, .rounded-xl3, .modal-box) {
+:is(.product-ui-scope, body.product-ui-active) :is(.rounded-3xl, .rounded-xl3, .modal-box) {
   border-radius: var(--ui-radius-modal) !important;
 }
 
-.product-ui-scope :is(button, input, select, textarea).rounded-xl,
-.product-ui-scope :is(button, input, select, textarea).rounded-2xl {
+:is(.product-ui-scope, body.product-ui-active) :is(button, input, select, textarea).rounded-xl,
+:is(.product-ui-scope, body.product-ui-active) :is(button, input, select, textarea).rounded-2xl {
   border-radius: var(--ui-radius-control) !important;
 }
 
-.product-ui-scope :is(.bg-card, .bg-surface).border,
-.product-ui-scope :is(.bg-card, .bg-surface).border-2,
-.product-ui-scope .tbl-wrapper,
-.product-ui-scope .kpi-card {
+:is(.product-ui-scope, body.product-ui-active) :is(.bg-card, .bg-surface).border,
+:is(.product-ui-scope, body.product-ui-active) :is(.bg-card, .bg-surface).border-2,
+:is(.product-ui-scope, body.product-ui-active) .tbl-wrapper,
+:is(.product-ui-scope, body.product-ui-active) .kpi-card {
   box-shadow: none !important;
 }
 
-.product-ui-scope button.bg-card.border,
-.product-ui-scope button.bg-surface.border,
-.product-ui-scope [role='button'].bg-card.border,
-.product-ui-scope [role='button'].bg-surface.border {
+:is(.product-ui-scope, body.product-ui-active) button.bg-card.border,
+:is(.product-ui-scope, body.product-ui-active) button.bg-surface.border,
+:is(.product-ui-scope, body.product-ui-active) [role='button'].bg-card.border,
+:is(.product-ui-scope, body.product-ui-active) [role='button'].bg-surface.border {
   transform: none !important;
   transition: border-color var(--ui-transition), background-color var(--ui-transition), color var(--ui-transition) !important;
 }
 
-.product-ui-scope button.bg-card.border:hover,
-.product-ui-scope button.bg-surface.border:hover,
-.product-ui-scope [role='button'].bg-card.border:hover,
-.product-ui-scope [role='button'].bg-surface.border:hover {
+:is(.product-ui-scope, body.product-ui-active) button.bg-card.border:hover,
+:is(.product-ui-scope, body.product-ui-active) button.bg-surface.border:hover,
+:is(.product-ui-scope, body.product-ui-active) [role='button'].bg-card.border:hover,
+:is(.product-ui-scope, body.product-ui-active) [role='button'].bg-surface.border:hover {
   transform: none !important;
   box-shadow: none !important;
 }
 
-.product-ui-scope [class*='shadow-['][class~='bg-card'],
-.product-ui-scope [class*='shadow-['][class~='bg-surface'],
-.product-ui-scope [class~='shadow-lg'][class~='bg-card'],
-.product-ui-scope [class~='shadow-xl'][class~='bg-card'],
-.product-ui-scope [class~='shadow-2xl'][class~='bg-card'] {
+:is(.product-ui-scope, body.product-ui-active) [class*='shadow-['][class~='bg-card'],
+:is(.product-ui-scope, body.product-ui-active) [class*='shadow-['][class~='bg-surface'],
+:is(.product-ui-scope, body.product-ui-active) [class~='shadow-lg'][class~='bg-card'],
+:is(.product-ui-scope, body.product-ui-active) [class~='shadow-xl'][class~='bg-card'],
+:is(.product-ui-scope, body.product-ui-active) [class~='shadow-2xl'][class~='bg-card'] {
   box-shadow: none !important;
 }
 
-.product-ui-scope [class*='hover:shadow-']:hover,
-.product-ui-scope [class*='hover:-translate-']:hover,
-.product-ui-scope [class*='hover:scale-']:hover {
+:is(.product-ui-scope, body.product-ui-active) [class*='hover:shadow-']:hover,
+:is(.product-ui-scope, body.product-ui-active) [class*='hover:-translate-']:hover,
+:is(.product-ui-scope, body.product-ui-active) [class*='hover:scale-']:hover {
   transform: none !important;
   box-shadow: none !important;
 }
 
-.product-ui-scope .page-title {
+:is(.product-ui-scope, body.product-ui-active) .page-title {
   letter-spacing: -0.02em;
 }
 
-.product-ui-scope .section-title {
+:is(.product-ui-scope, body.product-ui-active) .section-title {
   letter-spacing: -0.01em;
 }
 
-.product-ui-scope .badge,
-.product-ui-scope [class~='rounded-full'][class*='text-'][class*='px-'] {
+:is(.product-ui-scope, body.product-ui-active) .badge,
+:is(.product-ui-scope, body.product-ui-active) [class~='rounded-full'][class*='text-'][class*='px-'] {
   box-shadow: none !important;
 }
 
-.product-ui-scope :is(.tbl-wrapper, table) {
+:is(.product-ui-scope, body.product-ui-active) :is(.tbl-wrapper, table) {
   box-shadow: none !important;
 }
 
-.product-ui-scope .tbl tbody tr {
+:is(.product-ui-scope, body.product-ui-active) .tbl tbody tr {
   transition: background-color var(--ui-transition) !important;
 }
 
