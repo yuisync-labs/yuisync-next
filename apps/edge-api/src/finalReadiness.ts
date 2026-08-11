@@ -14,7 +14,7 @@ export type FinalReadinessBindings={
 
 async function mainSchema(database:D1Database|undefined){
   if(!database)return{status:'not_configured',version:null}
-  try{const row=await database.prepare("SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'").first<{value:string}>();return{status:String(row?.value)==='22'?'ready':'wrong_version',version:row?.value??null}}
+  try{const row=await database.prepare("SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'").first<{value:string}>();return{status:String(row?.value)==='23'?'ready':'wrong_version',version:row?.value??null}}
   catch{return{status:'unavailable',version:null}}
 }
 async function authSchema(database:D1Database|undefined){
