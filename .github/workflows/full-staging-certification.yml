@@ -16,9 +16,18 @@ jobs:
     name: Certify real Cloudflare staging
     if: >-
       github.event.label.name == 'architecture' &&
-      github.event.pull_request.base.ref == 'architecture/cloudflare-foundation' &&
-      github.event.pull_request.head.ref == 'phase/08-finalization' &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        (
+          github.event.pull_request.base.ref == 'architecture/cloudflare-foundation' &&
+          github.event.pull_request.head.ref == 'phase/08-finalization'
+        ) ||
+        (
+          github.event.pull_request.number == 36 &&
+          github.event.pull_request.base.ref == 'main' &&
+          github.event.pull_request.head.ref == 'codex/realtime-websocket'
+        )
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: cloudflare-staging
@@ -73,6 +82,9 @@ jobs:
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
+
+      - name: Certify authenticated realtime WebSocket
+        run: node scripts/migration/staging-realtime-websocket.mjs
 
       - name: Run real staging browser E2E
         run: >-
@@ -133,10 +145,11 @@ jobs:
         if: success()
         run: |
           echo '## Full Cloudflare staging certification' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Schema: v5 / runtime schema v21' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Schema: v5 / runtime schema v22' >> "$GITHUB_STEP_SUMMARY"
           echo '- Required checks: 26/26' >> "$GITHUB_STEP_SUMMARY"
           echo '- Evidence release SHA: ${{ github.event.pull_request.head.sha }}' >> "$GITHUB_STEP_SUMMARY"
           echo '- Browser E2E: real Worker + Better Auth + admin/manager/member' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Realtime WebSocket: authenticated tenant-scoped mutation invalidation passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Better Auth sign-in: real remote probe' >> "$GITHUB_STEP_SUMMARY"
           echo '- Tenant isolation: real authenticated remote probe' >> "$GITHUB_STEP_SUMMARY"
           echo '- Queue: real canary + idempotent rerun' >> "$GITHUB_STEP_SUMMARY"
