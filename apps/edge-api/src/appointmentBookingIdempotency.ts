@@ -26,6 +26,13 @@ type PetRow = {
   status: string
 }
 
+type BookingRegistryRow = {
+  operation_key: string
+  appointment_id: string
+  operation_fingerprint: string
+  status: 'reserved' | 'completed'
+}
+
 type SnapshotItem = Record<string, unknown> & {
   code?: unknown
   service_code?: unknown
@@ -101,6 +108,17 @@ function canonicalIntent(request: Request, payload: Record<string, unknown>): st
   })
 }
 
+function payloadScopeMismatch(request: Request, payload: Record<string, unknown>): boolean {
+  const headerTenant = text(request.headers.get('x-tenant-id'))
+  const headerModule = text(request.headers.get('x-module-id')).toLowerCase()
+  const payloadTenant = text(payload.tenant_id)
+  const payloadModule = text(payload.module_id).toLowerCase()
+  return Boolean(
+    (payloadTenant && headerTenant && payloadTenant !== headerTenant)
+    || (payloadModule && headerModule && payloadModule !== headerModule)
+  )
+}
+
 async function sha256(value: string): Promise<string> {
   const bytes = new TextEncoder().encode(value)
   const digest = await crypto.subtle.digest('SHA-256', bytes)
@@ -109,6 +127,17 @@ async function sha256(value: string): Promise<string> {
 
 function deterministicAppointmentId(hash: string): string {
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`
+}
+
+async function scopedOperationIdentityHash(
+  request: Request,
+  callerKey: string,
+): Promise<string> {
+  return sha256(JSON.stringify({
+    tenant_id: text(request.headers.get('x-tenant-id')),
+    module_id: text(request.headers.get('x-module-id')).toLowerCase(),
+    caller_key: callerKey,
+  }))
 }
 
 async function existingAppointment(
@@ -134,6 +163,60 @@ async function existingAppointment(
   }), env)) || Response.json({ code: 'COMPAT_QUERY_UNAVAILABLE' }, { status: 503 })
 }
 
+async function reserveBookingOperation(
+  request: Request,
+  env: CompatRuntimeBindings,
+  operationKey: string,
+  appointmentId: string,
+  fingerprint: string,
+): Promise<{ row?: BookingRegistryRow; error?: Response }> {
+  if (!env.DB) return { error: Response.json({ code: 'DATABASE_NOT_CONFIGURED' }, { status: 503 }) }
+  const tenantId = text(request.headers.get('x-tenant-id'))
+  const moduleId = text(request.headers.get('x-module-id')).toLowerCase()
+  const now = Date.now()
+
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO appointment_command_registry(
+      tenant_id,module_id,operation_key,appointment_id,operation_fingerprint,status,created_at_ms,updated_at_ms
+    ) VALUES(?1,?2,?3,?4,?5,'reserved',?6,?6)
+  `).bind(tenantId, moduleId, operationKey, appointmentId, fingerprint, now).run()
+
+  const row = await env.DB.prepare(`
+    SELECT operation_key,appointment_id,operation_fingerprint,status
+    FROM appointment_command_registry
+    WHERE tenant_id=?1 AND module_id=?2 AND operation_key=?3
+    LIMIT 1
+  `).bind(tenantId, moduleId, operationKey).first<BookingRegistryRow>()
+
+  if (!row) {
+    return { error: Response.json({ code: 'IDEMPOTENCY_RESERVATION_FAILED' }, { status: 500 }) }
+  }
+  if (row.appointment_id !== appointmentId || row.operation_fingerprint !== fingerprint) {
+    return {
+      error: Response.json({
+        code: 'IDEMPOTENCY_KEY_REUSED',
+        appointment_id: row.appointment_id,
+      }, { status: 409, headers: { 'cache-control': 'no-store' } }),
+    }
+  }
+  return { row }
+}
+
+async function completeBookingOperation(
+  request: Request,
+  env: CompatRuntimeBindings,
+  operationKey: string,
+): Promise<void> {
+  if (!env.DB) return
+  const tenantId = text(request.headers.get('x-tenant-id'))
+  const moduleId = text(request.headers.get('x-module-id')).toLowerCase()
+  await env.DB.prepare(`
+    UPDATE appointment_command_registry
+    SET status='completed',updated_at_ms=?4
+    WHERE tenant_id=?1 AND module_id=?2 AND operation_key=?3
+  `).bind(tenantId, moduleId, operationKey, Date.now()).run()
+}
+
 async function resolveServiceSnapshots(
   request: Request,
   env: CompatRuntimeBindings,
@@ -143,6 +226,7 @@ async function resolveServiceSnapshots(
   const tenantId = text(request.headers.get('x-tenant-id'))
   const moduleId = text(request.headers.get('x-module-id')).toLowerCase()
   const petId = text(payload.pet_id)
+  const clientId = text(payload.client_id)
   const codes = requestedServiceCodes(payload)
   if (!codes.length) return { error: Response.json({ code: 'SERVICE_REQUIRED' }, { status: 400 }) }
   if (codes.length > 10) return { error: Response.json({ code: 'TOO_MANY_SERVICES' }, { status: 400 }) }
@@ -157,6 +241,9 @@ async function resolveServiceSnapshots(
     : null
   if (!pet || pet.status !== 'active') {
     return { error: Response.json({ code: 'PET_NOT_FOUND' }, { status: 404 }) }
+  }
+  if (clientId && pet.client_id !== clientId) {
+    return { error: Response.json({ code: 'PET_CLIENT_MISMATCH' }, { status: 409 }) }
   }
 
   const requestedItems = new Map(
@@ -237,6 +324,7 @@ async function persistOperationalSnapshots(
   env: CompatRuntimeBindings,
   appointmentId: string,
   operationKey: string | null,
+  operationFingerprint: string | null,
   items: SnapshotItem[],
 ): Promise<void> {
   if (!env.DB) return
@@ -244,12 +332,13 @@ async function persistOperationalSnapshots(
   const moduleId = text(request.headers.get('x-module-id')).toLowerCase()
   const statements: D1PreparedStatement[] = []
 
-  if (operationKey) {
+  if (operationKey || operationFingerprint) {
     statements.push(env.DB.prepare(`
       UPDATE appointments
-      SET operation_key=?4
+      SET operation_key=COALESCE(?4,operation_key),
+          operation_fingerprint=COALESCE(?5,operation_fingerprint)
       WHERE tenant_id=?1 AND module_id=?2 AND id=?3
-    `).bind(tenantId, moduleId, appointmentId, operationKey))
+    `).bind(tenantId, moduleId, appointmentId, operationKey, operationFingerprint))
   }
 
   items.forEach((item, position) => {
@@ -299,23 +388,63 @@ async function handleBooking(
   args: Record<string, unknown>,
   payload: Record<string, unknown>,
 ): Promise<Response> {
-  const explicitId = text(payload.id)
-  const intentHash = await sha256(canonicalIntent(request, payload))
-  const appointmentId = explicitId || deterministicAppointmentId(intentHash)
-  const operationKey = text(payload.operation_key) || `appointment-booking:${intentHash}`
+  if (payloadScopeMismatch(request, payload)) {
+    return Response.json({ code: 'SCOPE_MISMATCH' }, { status: 400 })
+  }
 
-  const existing = await existingAppointment(request, env, appointmentId)
-  if (!existing.ok) return existing
-  const existingPayload = record(await existing.json())
-  if (existingPayload.data) {
-    return Response.json({
-      data: {
-        appointment_id: appointmentId,
-        appointment: existingPayload.data,
-        idempotent: true,
-        operation_key: operationKey,
-      },
-    }, { headers: { 'cache-control': 'no-store' } })
+  const intentHash = await sha256(canonicalIntent(request, payload))
+  const callerKey = text(payload.idempotency_key) || text(payload.operation_key)
+  if (callerKey.length > 512) {
+    return Response.json({ code: 'INVALID_IDEMPOTENCY_KEY' }, { status: 400 })
+  }
+
+  // New clients send an explicit operation identity. Legacy callers without one
+  // retain the old intent-hash behavior only as a compatibility fallback.
+  const operationIdentity = callerKey || `legacy-intent:${intentHash}`
+  const operationIdentityHash = await scopedOperationIdentityHash(request, operationIdentity)
+  const operationKey = `appointment-booking:${operationIdentityHash}`
+  const explicitId = text(payload.id)
+  const appointmentId = explicitId || deterministicAppointmentId(operationIdentityHash)
+
+  // This authorized compat read happens before direct D1 command reservation,
+  // so the ledger never becomes an authentication bypass.
+  const existingResponse = await existingAppointment(request, env, appointmentId)
+  if (!existingResponse.ok) return existingResponse
+  const existingEnvelope = record(await existingResponse.json())
+  const existing = record(existingEnvelope.data)
+
+  const reservation = await reserveBookingOperation(
+    request,
+    env,
+    operationKey,
+    appointmentId,
+    intentHash,
+  )
+  if (reservation.error) return reservation.error
+
+  if (Object.keys(existing).length) {
+    const persistedOperationKey = text(existing.operation_key)
+    const persistedFingerprint = text(existing.operation_fingerprint)
+    if (persistedOperationKey && persistedOperationKey !== operationKey) {
+      return Response.json({ code: 'APPOINTMENT_ID_CONFLICT', appointment_id: appointmentId }, { status: 409 })
+    }
+    if (persistedFingerprint && persistedFingerprint !== intentHash) {
+      return Response.json({ code: 'IDEMPOTENCY_KEY_REUSED', appointment_id: appointmentId }, { status: 409 })
+    }
+    if (reservation.row?.status === 'completed') {
+      return Response.json({
+        data: {
+          appointment_id: appointmentId,
+          appointment: existing,
+          idempotent: true,
+          operation_key: operationKey,
+        },
+      }, { headers: { 'cache-control': 'no-store' } })
+    }
+    // A reserved command with an appointment already present means an earlier
+    // attempt stopped between the base write and snapshot completion. Replaying
+    // the same command repairs the same deterministic appointment instead of
+    // creating a second one.
   }
 
   const resolved = await resolveServiceSnapshots(request, env, payload)
@@ -325,6 +454,7 @@ async function handleBooking(
     ...payload,
     id: appointmentId,
     operation_key: operationKey,
+    operation_fingerprint: intentHash,
     service_items: serviceItems,
     service_group: text(serviceItems[0]?.group_type) || payload.service_group,
   }
@@ -335,7 +465,15 @@ async function handleBooking(
   if (!delegated.ok) return delegated
 
   try {
-    await persistOperationalSnapshots(request, env, appointmentId, operationKey, serviceItems)
+    await persistOperationalSnapshots(
+      request,
+      env,
+      appointmentId,
+      operationKey,
+      intentHash,
+      serviceItems,
+    )
+    await completeBookingOperation(request, env, operationKey)
   } catch (error) {
     console.error('appointment.booking.snapshot_failed', {
       appointment_id: appointmentId,
@@ -384,6 +522,7 @@ async function handleUpdate(
   if (serviceChanged || petChanged || !serviceItems.length) {
     const resolved = await resolveServiceSnapshots(request, env, {
       ...payload,
+      client_id: text(payload.client_id) || text(existing.client_id),
       pet_id: requestedPetId,
       services: requestedCodes.length
         ? requestedCodes.map((code) => ({ code }))
@@ -415,7 +554,7 @@ async function handleUpdate(
   if (!delegated.ok) return delegated
 
   try {
-    await persistOperationalSnapshots(request, env, appointmentId, null, serviceItems)
+    await persistOperationalSnapshots(request, env, appointmentId, null, null, serviceItems)
   } catch (error) {
     console.error('appointment.update.snapshot_failed', {
       appointment_id: appointmentId,
