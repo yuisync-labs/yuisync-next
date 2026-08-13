@@ -1,6 +1,7 @@
 import { getBetterAuthSession } from './auth/betterAuthRuntime'
 import type { CompatRuntimeBindings } from './compatApiRuntime.js'
 import { asText } from './appointmentBillingPolicy'
+import { billingModuleAllowed } from './appointmentBillingAccess'
 
 type PetRow={client_id:string;species:string;weight_kg:number|null;status:string}
 export async function resolveBillingParty(request:Request,env:CompatRuntimeBindings,payload:Record<string,unknown>){
@@ -12,7 +13,7 @@ export async function resolveBillingParty(request:Request,env:CompatRuntimeBindi
  const principal=await env.DB.prepare("SELECT id FROM identity_principals WHERE provider='better-auth' AND subject=?1 AND status='active' LIMIT 1").bind(userId).first<{id:string}>()
  if(!principal?.id)return{error:Response.json({code:'FORBIDDEN'},{status:403})}
  const membership=await env.DB.prepare("SELECT role,module_permissions_json FROM tenant_memberships WHERE tenant_id=?1 AND principal_id=?2 AND status='active' LIMIT 1").bind(tenantId,principal.id).first<{role:string;module_permissions_json:string|null}>()
- if(!membership)return{error:Response.json({code:'FORBIDDEN'},{status:403})}
+ if(!membership||!billingModuleAllowed(membership.role,membership.module_permissions_json,moduleId))return{error:Response.json({code:'FORBIDDEN'},{status:403})}
  const pet=await env.DB.prepare('SELECT client_id,species,weight_kg,status FROM pets WHERE tenant_id=?1 AND module_id=?2 AND id=?3 LIMIT 1').bind(tenantId,moduleId,petId).first<PetRow>()
  if(!pet||pet.status!=='active')return{error:Response.json({code:'PET_NOT_FOUND'},{status:404})}
  const requested=asText(payload.client_id);if(requested&&requested!==pet.client_id)return{error:Response.json({code:'PET_CLIENT_MISMATCH'},{status:409})}
