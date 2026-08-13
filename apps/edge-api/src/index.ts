@@ -3,6 +3,7 @@ import { handleAiLabApiRequest } from './aiLabApi'
 import { handleAppApiRequest } from './appApi'
 import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
 import { handleAppointmentBillingIntentCompat } from './appointmentBillingIntentCompat'
+import { handleAppointmentFinancialReopenApi } from './appointmentFinancialReopenApi'
 import { handleCheckoutApiRequest } from './checkoutApi'
 import { handleCompatApiRequest } from './compatApi'
 import { handleFinalReadiness } from './finalReadiness'
@@ -65,6 +66,9 @@ export default {
 
     const petshopServicesResponse = await handlePetshopServicesApiRequest(request, bindings)
     if (petshopServicesResponse) return respond(petshopServicesResponse)
+
+    const financialReopenResponse = await handleAppointmentFinancialReopenApi(request, bindings)
+    if (financialReopenResponse) return respond(financialReopenResponse)
 
     const explicitBillingResponse = await handleAppointmentBillingIntentCompat(request, bindings)
     if (explicitBillingResponse) return respond(explicitBillingResponse)
