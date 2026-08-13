@@ -16,7 +16,7 @@ export async function resolveBillingUpdateContext(request:Request,env:CompatRunt
  const catalog=await resolveBillingCatalog({db:env.DB,tenantId:party.tenantId!,moduleId:party.moduleId!,species:party.species!,weightGrams:party.weightGrams??null,payload});if(catalog.code)return{error:Response.json({code:catalog.code},{status:409})}
  const intent=parseBillingIntent(payload),items=catalog.items||[]
  const desired=intent.type==='auto'?{allocations:await automaticAllocations(env.DB,{tenantId:party.tenantId!,moduleId:party.moduleId!,clientId:party.clientId!},items,appointmentId)}:await resolveBenefitAllocations({db:env.DB,tenantId:party.tenantId!,moduleId:party.moduleId!,clientId:party.clientId!,serviceItems:items,intent})
- if(desired.code)return{error:Response.json({code:desired.code},{status:409})}
+ if('code'in desired&&desired.code)return{error:Response.json({code:desired.code},{status:409})}
  const existingServices=await env.DB.prepare('SELECT service_code FROM appointment_services WHERE tenant_id=?1 AND module_id=?2 AND appointment_id=?3 ORDER BY position').bind(party.tenantId,party.moduleId,appointmentId).all<{service_code:string}>()
  const active=await env.DB.prepare("SELECT state,subscription_id,benefit_key,appointment_service_position FROM subscription_benefit_allocations WHERE tenant_id=?1 AND module_id=?2 AND appointment_id=?3 AND state IN ('reserved','consumed') ORDER BY appointment_service_position").bind(party.tenantId,party.moduleId,appointmentId).all<Allocation>()
  if(current.status!=='completed'&&active.results.some((row)=>row.state==='consumed'))return{error:Response.json({code:'PACKAGE_RECONCILIATION_REQUIRED'},{status:409})}
