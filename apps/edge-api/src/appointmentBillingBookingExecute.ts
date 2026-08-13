@@ -9,7 +9,7 @@ const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{'cache
 export async function executeBillingBooking(env:CompatRuntimeBindings,payload:Record<string,unknown>,context:Context){
  if(!env.DB)return json({code:'DATABASE_NOT_CONFIGURED'},503)
  const{party,items,allocations,intent,identity}=context,now=Date.now(),covered=new Set(allocations.map((a)=>a.position))
- const billingType:intentType = intent.type==='subscription'?'subscription':'standalone'
+ const billingType:intentType = intent.type==='subscription'||(intent.type==='auto'&&allocations.length>0)?'subscription':'standalone'
  const statements:D1PreparedStatement[]=[
   env.DB.prepare(`INSERT INTO appointment_command_registry(tenant_id,module_id,operation_key,appointment_id,operation_fingerprint,status,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,'completed',?6,?6)`).bind(party.tenantId,party.moduleId,identity.operationKey,identity.appointmentId,identity.fingerprint,now),
   billingAppointmentStatement(env.DB,{tenantId:party.tenantId!,moduleId:party.moduleId!,clientId:party.clientId!,petId:party.petId!,appointmentId:identity.appointmentId,operationKey:identity.operationKey,fingerprint:identity.fingerprint,payload,items,allocations,billingType,now}),
