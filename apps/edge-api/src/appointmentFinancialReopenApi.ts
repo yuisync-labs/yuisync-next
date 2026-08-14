@@ -43,8 +43,17 @@ function targetStatus(value:unknown){
  return ({agendado:'scheduled',confirmado:'confirmed',em_andamento:'in_progress',scheduled:'scheduled',confirmed:'confirmed',in_progress:'in_progress'} as Record<string,string>)[status]||''
 }
 
+function isSettledPayment(payment:PaymentRow){
+ return ['authorized','received'].includes(payment.status)
+}
+
+function isProviderBackedPayment(payment:PaymentRow){
+ return Boolean(text(payment.provider)||text(payment.provider_reference))
+}
+
 export async function handleAppointmentFinancialReopenApi(request:Request,bindings:Bindings):Promise<Response|null>{
- const url=new URL(request.url),match=url.pathname.match(/^\/api\/petshop\/appointments\/([^/]+)\/reopen-financial\/?$/)
+ const url=new URL(request.url)
+ const match=url.pathname.match(/^\/api\/petshop\/appointments\/([^/]+)\/(?:financial-reopen|reopen-financial)\/?$/)
  if(!match)return null
  if(request.method!=='POST')return json({code:'METHOD_NOT_ALLOWED'},405)
  const appointmentId=decodeURIComponent(match[1]);if(!ID.test(appointmentId))return json({code:'INVALID_APPOINTMENT'},400)
@@ -60,25 +69,44 @@ export async function handleAppointmentFinancialReopenApi(request:Request,bindin
  if(appointment.status!=='completed')return json({code:'APPOINTMENT_NOT_COMPLETED',status:appointment.status},409)
  const sale=await db.prepare(`SELECT id,status,origin_type,origin_id,appointment_id FROM sales WHERE tenant_id=?1 AND module_id=?2 AND appointment_id=?3 AND status NOT IN ('cancelled','refunded') ORDER BY created_at_ms DESC LIMIT 1`).bind(scope.tenantId,scope.moduleId,appointmentId).first<SaleRow>()
  let financial:{action:string;sale_id:string|null;status:string|null}={action:'none',sale_id:null,status:null}
+ const statements:D1PreparedStatement[]=[]
 
  if(sale){
   if((sale.origin_type&&sale.origin_type!=='appointment')||(!sale.origin_type&&sale.appointment_id!==appointmentId))return json({code:'APPOINTMENT_REOPEN_EXTERNAL_SALE_REVIEW_REQUIRED',sale_id:sale.id},409)
   const paymentRows=await db.prepare(`SELECT id,status,provider,provider_reference FROM payments WHERE tenant_id=?1 AND module_id=?2 AND sale_id=?3 ORDER BY created_at_ms,id`).bind(scope.tenantId,scope.moduleId,sale.id).all<PaymentRow>()
-  const received=paymentRows.results.some((p)=>['authorized','received'].includes(p.status))
+  const settledPayments=paymentRows.results.filter(isSettledPayment)
+  const received=settledPayments.length>0
   if(received&&action!=='refund')return json({code:'APPOINTMENT_REOPEN_REFUND_REQUIRED',sale_id:sale.id},409)
   if(!received&&action!=='cancel')return json({code:'APPOINTMENT_REOPEN_SALE_CANCEL_REQUIRED',sale_id:sale.id},409)
-  const now=Date.now(),nextSaleStatus=received?'refunded':'cancelled',statements:D1PreparedStatement[]=[]
+
+  // A provider-backed payment may only become refunded after the payment
+  // provider confirms the refund. Never turn a client request into a fictitious
+  // completed refund in D1.
+  const externalSettlements=settledPayments.filter(isProviderBackedPayment)
+  if(received&&externalSettlements.length){
+   return json({
+    code:'APPOINTMENT_REOPEN_EXTERNAL_REFUND_REQUIRED',
+    sale_id:sale.id,
+    payment_ids:externalSettlements.map((payment)=>payment.id),
+   },409)
+  }
+
+  const now=Date.now(),nextSaleStatus=received?'refunded':'cancelled'
   for(const payment of paymentRows.results){
-   const next=['authorized','received'].includes(payment.status)?'refunded':['pending','awaiting_proof'].includes(payment.status)?'cancelled':payment.status
+   const next=isSettledPayment(payment)?'refunded':['pending','awaiting_proof'].includes(payment.status)?'cancelled':payment.status
    if(next!==payment.status)statements.push(db.prepare('UPDATE payments SET status=?4,updated_at_ms=?5 WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(scope.tenantId,scope.moduleId,payment.id,next,now))
   }
   statements.push(db.prepare(`UPDATE sales SET status=?4,updated_at_ms=?5,notes=CASE WHEN notes IS NULL OR trim(notes)='' THEN ?6 ELSE notes || ' | ' || ?6 END WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status NOT IN ('cancelled','refunded')`).bind(scope.tenantId,scope.moduleId,sale.id,nextSaleStatus,now,`Reabertura do atendimento ${appointmentId}: ${nextSaleStatus}`))
   if(received)statements.push(db.prepare(`INSERT OR IGNORE INTO financial_effects(tenant_id,module_id,operation_key,effect_type,aggregate_id,status,attempt_count,last_error_code,updated_at_ms) VALUES(?1,?2,?3,'refund',?4,'completed',1,NULL,?5)`).bind(scope.tenantId,scope.moduleId,`appointment-reopen:${appointmentId}:refund:${sale.id}`,sale.id,now))
-  try{await db.batch(statements)}catch{return json({code:'APPOINTMENT_REOPEN_FINANCIAL_TRANSITION_FAILED'},500)}
   financial={action:received?'refund':'cancel',sale_id:sale.id,status:nextSaleStatus}
  }
 
- const reopened=await reopenCompletedAppointment(request,bindings as any,appointmentId,status)
+ // Financial transition + appointment reopen + package release commit as one
+ // D1 batch. The active-sale trigger is still the race-condition backstop.
+ const reopened=await reopenCompletedAppointment(request,bindings as any,appointmentId,status,{
+  prefixStatements:statements,
+  financialGuardSatisfied:Boolean(sale),
+ })
  if(reopened.response)return reopened.response
  if(!reopened.reopened)return json({code:'APPOINTMENT_REOPEN_NOT_APPLIED',financial},409)
  return json({data:{appointment_id:appointmentId,status,financial,package_released:reopened.packageReleased===true,reopened:true}})
