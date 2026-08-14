@@ -33,6 +33,16 @@ export type EdgeFinalAuthBindings = {
   EDGE_AUTH_TRUSTED_ORIGINS?: string
 }
 
+export type EdgeWhatsappBindings = {
+  WHATSAPP_ACCESS_TOKEN?: string
+  WHATSAPP_VERIFY_TOKEN?: string
+  WHATSAPP_PHONE_NUMBER_ID?: string
+  WHATSAPP_APP_SECRET?: string
+  WHATSAPP_GRAPH_VERSION?: string
+  WHATSAPP_TENANT_ID?: string
+  WHATSAPP_MODULE_ID?: string
+}
+
 export type EdgeAppEnvironment = {
   Bindings: EdgeEnv
     & EdgeDatabaseBindings
@@ -43,5 +53,6 @@ export type EdgeAppEnvironment = {
     & AuthMigrationBindings
     & OperationalMigrationBindings
     & EdgeFinalAuthBindings
+    & EdgeWhatsappBindings
   Variables: EdgeVariables
 }
