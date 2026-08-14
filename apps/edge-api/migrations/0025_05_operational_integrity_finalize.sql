@@ -1,10 +1,7 @@
--- YuiSync operational integrity v25 finalization.
+-- YuiSync operational integrity v25 sequencing marker.
 --
--- The preceding 0025_* migrations introduce the explicit billing intent,
--- benefit allocation ledger, capacity guards, sale origin metadata and integer
--- weight bands. Promote the runtime schema identity only after every v25
--- invariant has been installed successfully.
-
-UPDATE _yuisync_system_metadata
-SET value='25', updated_at=CURRENT_TIMESTAMP
-WHERE key='schema_version';
+-- Do NOT promote schema_version here. Additional v25 migrations (including
+-- transport authority) still execute after this file. The authoritative v25
+-- promotion lives in 0025_99_operational_integrity_finalize.sql so readiness
+-- cannot report v25 if a later invariant failed to install.
+SELECT 1;
