@@ -1,0 +1,63 @@
+name: Production schema diagnostic
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: yuisync-production-schema-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.event.label.name == 'production-schema-diagnostic'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: e1970b384ebbe848c423f6af5086d3493a15a99d
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - run: npm ci
+      - name: Resolve production resources
+        run: node scripts/migration/production-cloudflare.mjs resolve
+      - name: Compare D1 schema objects
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCHEMA_SQL="SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND name <> '_cf_KV' ORDER BY type,name;"
+          npx wrangler d1 execute DB --env staging --remote --json --command "$SCHEMA_SQL" > /tmp/staging-schema.json
+          npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "$SCHEMA_SQL" > /tmp/production-schema.json
+          npx wrangler d1 execute DB --env staging --remote --json --command "SELECT name FROM d1_migrations ORDER BY id;" > /tmp/staging-migrations.json
+          npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT name FROM d1_migrations ORDER BY id;" > /tmp/production-migrations.json
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const rows = async (file) => {
+            const parsed = JSON.parse(await readFile(file,'utf8'))
+            return (Array.isArray(parsed) ? parsed : [parsed]).flatMap((entry) => Array.isArray(entry?.results) ? entry.results : [])
+          }
+          const normalize = (value) => value == null ? null : String(value).replace(/\s+/g,' ').trim()
+          const asMap = async (file) => new Map((await rows(file)).map((row) => [`${row.type}:${row.name}`, { type:String(row.type), name:String(row.name), tbl_name:String(row.tbl_name), sql:normalize(row.sql) }]))
+          const staging = await asMap('/tmp/staging-schema.json')
+          const production = await asMap('/tmp/production-schema.json')
+          const all = [...new Set([...staging.keys(), ...production.keys()])].sort()
+          const onlyStaging = all.filter((key) => staging.has(key) && !production.has(key))
+          const onlyProduction = all.filter((key) => production.has(key) && !staging.has(key))
+          const changed = all.filter((key) => staging.has(key) && production.has(key) && JSON.stringify(staging.get(key)) !== JSON.stringify(production.get(key)))
+          console.log('SCHEMA_DIAGNOSTIC=' + JSON.stringify({ staging_count:staging.size, production_count:production.size, only_staging:onlyStaging, only_production:onlyProduction, changed_count:changed.length, changed:changed.map((key) => ({ key, staging:staging.get(key), production:production.get(key) })) }))
+          const migrationNames = async (file) => (await rows(file)).map((row) => String(row.name))
+          console.log('MIGRATION_DIAGNOSTIC=' + JSON.stringify({ staging:await migrationNames('/tmp/staging-migrations.json'), production:await migrationNames('/tmp/production-migrations.json') }))
+          NODE
