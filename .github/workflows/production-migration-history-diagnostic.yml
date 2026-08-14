@@ -1,0 +1,44 @@
+name: Production migration history diagnostic
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  inspect:
+    if: github.event.label.name == 'production-migration-history-diagnostic'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: e1970b384ebbe848c423f6af5086d3493a15a99d
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - run: npm ci
+      - name: Resolve production resources
+        run: node scripts/migration/production-cloudflare.mjs resolve
+      - name: Inspect migration table metadata only
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'STAGING_TABLE='
+          npx wrangler d1 execute DB --env staging --remote --json --command "PRAGMA table_info(d1_migrations);"
+          echo 'PRODUCTION_TABLE='
+          npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "PRAGMA table_info(d1_migrations);"
+          echo 'STAGING_HISTORY='
+          npx wrangler d1 execute DB --env staging --remote --json --command "SELECT * FROM d1_migrations WHERE name LIKE '0021_%' OR name LIKE '0022_%' OR name LIKE '0023_%' ORDER BY id;"
+          echo 'PRODUCTION_HISTORY='
+          npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT * FROM d1_migrations WHERE name LIKE '0021_%' OR name LIKE '0022_%' OR name LIKE '0023_%' ORDER BY id;"
