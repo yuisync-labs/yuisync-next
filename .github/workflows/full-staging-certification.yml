@@ -26,6 +26,11 @@ jobs:
           github.event.pull_request.number == 36 &&
           github.event.pull_request.base.ref == 'main' &&
           github.event.pull_request.head.ref == 'codex/realtime-websocket'
+        ) ||
+        (
+          github.event.pull_request.number == 41 &&
+          github.event.pull_request.base.ref == 'feat/operational-sync-2026' &&
+          github.event.pull_request.head.ref == 'feat/operational-integrity-v25'
         )
       )
     runs-on: ubuntu-24.04
@@ -109,7 +114,7 @@ jobs:
           retention-days: 14
 
       - name: Run full remote certification after E2E cleanup
-        run: node scripts/migration/run-full-staging-certification.mjs
+        run: node scripts/migration/run-full-staging-certification-v25.mjs
 
       - name: Bind certification evidence to deployed SHA
         shell: bash
@@ -145,7 +150,7 @@ jobs:
         if: success()
         run: |
           echo '## Full Cloudflare staging certification' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Schema: v5 / runtime schema v22' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Schema: v5 / runtime schema v25' >> "$GITHUB_STEP_SUMMARY"
           echo '- Required checks: 26/26' >> "$GITHUB_STEP_SUMMARY"
           echo '- Evidence release SHA: ${{ github.event.pull_request.head.sha }}' >> "$GITHUB_STEP_SUMMARY"
           echo '- Browser E2E: real Worker + Better Auth + admin/manager/member' >> "$GITHUB_STEP_SUMMARY"
