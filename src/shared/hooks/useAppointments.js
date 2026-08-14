@@ -564,7 +564,17 @@ export function useAppointments() {
     return updated
   }, [activeModuleId, activeTenantId, fetchAppointmentById])
 
-  const updateStatus = (id, status, extra = {}) => update(id, { status, ...extra })
+  const updateStatus = (id, status, extra = {}) => {
+    if (
+      activeModuleId === 'petshop'
+      && status === 'concluido'
+      && typeof window !== 'undefined'
+      && !window.confirm('O serviço, valores e cliente/pet estão preenchidos corretamente?')
+    ) {
+      return Promise.resolve(null)
+    }
+    return update(id, { status, ...extra })
+  }
 
   const remove = useCallback(async (id) => {
     const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
