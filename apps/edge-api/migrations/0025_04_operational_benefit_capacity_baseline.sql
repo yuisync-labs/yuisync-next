@@ -7,7 +7,8 @@ BEFORE INSERT ON subscription_benefit_allocations
 FOR EACH ROW
 WHEN NEW.state IN ('reserved','consumed')
 BEGIN
-  SELECT CASE WHEN
+  SELECT RAISE(ABORT,'PACKAGE_BENEFIT_CAPACITY_EXCEEDED')
+  WHERE
     COALESCE((
       SELECT CAST(json_extract(cs.benefit_ledger_base_used_json, '$."' || replace(NEW.benefit_key,'"','\"') || '"') AS INTEGER)
       FROM client_subscriptions cs
@@ -26,9 +27,7 @@ BEGIN
       WHERE cs.tenant_id=NEW.tenant_id AND cs.module_id=NEW.module_id AND cs.id=NEW.subscription_id
         AND cs.status='active' AND sp.status='active'
         AND COALESCE(json_extract(j.value,'$.service_type'),json_extract(j.value,'$.service_code'),json_extract(j.value,'$.code'))=NEW.benefit_key
-    ),0)
-    THEN RAISE(ABORT,'PACKAGE_BENEFIT_CAPACITY_EXCEEDED')
-  END;
+    ),0);
 END;
 
 CREATE TRIGGER subscription_benefit_allocation_capacity_reactivate
@@ -36,7 +35,8 @@ BEFORE UPDATE OF state ON subscription_benefit_allocations
 FOR EACH ROW
 WHEN OLD.state='released' AND NEW.state IN ('reserved','consumed')
 BEGIN
-  SELECT CASE WHEN
+  SELECT RAISE(ABORT,'PACKAGE_BENEFIT_CAPACITY_EXCEEDED')
+  WHERE
     COALESCE((
       SELECT CAST(json_extract(cs.benefit_ledger_base_used_json, '$."' || replace(NEW.benefit_key,'"','\"') || '"') AS INTEGER)
       FROM client_subscriptions cs
@@ -55,7 +55,5 @@ BEGIN
       WHERE cs.tenant_id=NEW.tenant_id AND cs.module_id=NEW.module_id AND cs.id=NEW.subscription_id
         AND cs.status='active' AND sp.status='active'
         AND COALESCE(json_extract(j.value,'$.service_type'),json_extract(j.value,'$.service_code'),json_extract(j.value,'$.code'))=NEW.benefit_key
-    ),0)
-    THEN RAISE(ABORT,'PACKAGE_BENEFIT_CAPACITY_EXCEEDED')
-  END;
+    ),0);
 END;
