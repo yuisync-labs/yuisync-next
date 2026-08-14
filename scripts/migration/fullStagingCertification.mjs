@@ -1,5 +1,5 @@
 export const REQUIRED_CERTIFICATION_CHECKS = Object.freeze([
-  'schema_v22','tenant_isolation','clients_pets','catalog_services','inventory','operational_config',
+  'schema_v25','tenant_isolation','clients_pets','catalog_services','inventory','operational_config',
   'appointments','motodog','sales_checkout','payments_splits','chat','operation_state','fiscal_outbox','auth_db',
   'operational_reconciliation','ai_lab_migration','ai_lab_reconciliation','auth_identity_transition','auth_signin','frontend_no_supabase','cloudflare_spa',
   'transient_state_drained','idempotency_rerun','rollback_bookmark','queue_dlq','readiness',
