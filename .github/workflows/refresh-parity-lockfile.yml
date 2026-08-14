@@ -1,0 +1,36 @@
+name: Refresh parity lockfile
+
+on:
+  push:
+    branches:
+      - feat/operational-integrity-v25
+    paths:
+      - package.json
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lockfile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feat/operational-integrity-v25
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Refresh package-lock only
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Commit refreshed lockfile
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "package-lock.json already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore(deps): refresh lockfile after security override"
+          git push origin HEAD:feat/operational-integrity-v25
