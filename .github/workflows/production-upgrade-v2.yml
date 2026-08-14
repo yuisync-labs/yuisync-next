@@ -1,0 +1,307 @@
+name: Production upgrade v2
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  actions: read
+  issues: read
+
+concurrency:
+  group: yuisync-production-cutover
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Verify immutable certified release
+    if: github.event.label.name == 'production-upgrade-v2-authorized'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      release_sha: ${{ steps.release.outputs.release_sha }}
+      certification_run_id: ${{ steps.release.outputs.certification_run_id }}
+      certification_count: ${{ steps.release.outputs.certification_count }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Resolve authorization and release gates
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFile, readFile } from 'node:fs/promises'
+          import { execFileSync } from 'node:child_process'
+          const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH,'utf8'))
+          const body = String(event?.issue?.body || '')
+          const release = /^Release-SHA:\s*([0-9a-f]{40})\s*$/im.exec(body)?.[1]?.toLowerCase()
+          const authorization = /^Authorization:\s*(\S+)\s*$/im.exec(body)?.[1]
+          const domain = /^Domain:\s*(\S+)\s*$/im.exec(body)?.[1]?.toLowerCase()
+          if (!release) throw new Error('RELEASE_SHA_REQUIRED')
+          if (authorization !== 'AUTHORIZE_PRODUCTION_UPGRADE_V2') throw new Error('EXPLICIT_PRODUCTION_UPGRADE_V2_AUTHORIZATION_REQUIRED')
+          if (domain !== 'yuisync.app') throw new Error('PRODUCTION_DOMAIN_MUST_BE_YUISYNC_APP')
+          execFileSync('git',['fetch','origin','main'],{stdio:'inherit'})
+          execFileSync('git',['merge-base','--is-ancestor',release,'origin/main'],{stdio:'ignore'})
+          const repo = process.env.GITHUB_REPOSITORY
+          const runs = (workflow) => JSON.parse(execFileSync('gh',['api',`repos/${repo}/actions/workflows/${workflow}/runs`,'-f',`head_sha=${release}`,'-f','status=success','-f','per_page=100','-X','GET'],{encoding:'utf8',env:process.env})).workflow_runs || []
+          const quality = runs('quality.yml').filter((r) => r.head_sha === release && r.conclusion === 'success')
+          if (!quality.length) throw new Error('QUALITY_SUCCESS_REQUIRED')
+          const certs = runs('full-staging-certification.yml').filter((r) => r.head_sha === release && r.conclusion === 'success').sort((a,b)=>Number(b.run_number||0)-Number(a.run_number||0))
+          if (certs.length < 2) throw new Error(`DOUBLE_STAGING_CERTIFICATION_REQUIRED:${certs.length}`)
+          await appendFile(process.env.GITHUB_OUTPUT,[`release_sha=${release}`,`certification_run_id=${certs[0].id}`,`certification_count=${certs.length}`].join('\n')+'\n')
+          console.log(JSON.stringify({status:'authorized',release_sha:release,quality_runs:quality.length,certification_runs:certs.length}))
+          NODE
+
+  deploy:
+    name: Repair schema and deploy certified runtime
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_SHA: ${{ needs.preflight.outputs.release_sha }}
+      CERTIFICATION_RUN_ID: ${{ needs.preflight.outputs.certification_run_id }}
+      CERTIFICATION_COUNT: ${{ needs.preflight.outputs.certification_count }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - name: Require exact certified runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$CERTIFICATION_COUNT" -ge 2
+      - run: npm ci
+      - name: Revalidate certified runtime
+        run: |
+          npm run check:no-runtime-supabase
+          npm run check:edge-compat-surface -- --strict
+          npm run edge:check
+          npm run build
+      - name: Verify certification evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/staging-certification-source
+          gh run download "$CERTIFICATION_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "full-staging-certification-$RELEASE_SHA" --dir .artifacts/staging-certification-source
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const cert = JSON.parse(await readFile('.artifacts/staging-certification-source/certification.json','utf8'))
+          const rel = JSON.parse(await readFile('.artifacts/staging-certification-source/release.json','utf8'))
+          if (cert?.schema !== 'yuisync-staging-certification/v5' || cert?.status !== 'certified' || cert?.checks?.length !== 26) throw new Error('STAGING_CERTIFICATION_INVALID')
+          if (rel?.schema !== 'yuisync-staging-release-evidence/v1' || rel?.release_sha !== process.env.RELEASE_SHA) throw new Error('STAGING_RELEASE_SHA_MISMATCH')
+          NODE
+      - name: Resolve existing production resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/migration/production-dns.mjs inspect
+          node scripts/migration/production-cloudflare.mjs resolve
+          node scripts/migration/production-domain.mjs workers-url
+      - name: Export private pre-upgrade D1 backups
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/yuisync-production-backup && mkdir -p /tmp/yuisync-production-backup
+          npx wrangler d1 export DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --output=/tmp/yuisync-production-backup/db.sql
+          npx wrangler d1 export AUTH_DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --output=/tmp/yuisync-production-backup/auth.sql
+          test -s /tmp/yuisync-production-backup/db.sql
+          test -s /tmp/yuisync-production-backup/auth.sql
+      - name: Inject restored historical migration from current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main:refs/remotes/origin/main
+          git show origin/main:apps/edge-api/migrations/0022_membership_staff_type.sql > apps/edge-api/migrations/0022_membership_staff_type.sql
+          grep -q "ALTER TABLE tenant_memberships ADD COLUMN staff_type" apps/edge-api/migrations/0022_membership_staff_type.sql
+      - name: Apply all pending production migrations
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 migrations apply DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+          npx wrangler d1 migrations apply AUTH_DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+      - name: Prove exact schema and migration-set parity
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../../.artifacts/production-upgrade-v2
+          SCHEMA_SQL="SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND name <> '_cf_KV' ORDER BY type,name;"
+          npx wrangler d1 execute DB --env staging --remote --json --command "$SCHEMA_SQL" > ../../.artifacts/production-upgrade-v2/staging-db-schema.json
+          npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "$SCHEMA_SQL" > ../../.artifacts/production-upgrade-v2/production-db-schema.json
+          npx wrangler d1 execute AUTH_DB --env staging --remote --json --command "$SCHEMA_SQL" > ../../.artifacts/production-upgrade-v2/staging-auth-schema.json
+          npx wrangler d1 execute AUTH_DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "$SCHEMA_SQL" > ../../.artifacts/production-upgrade-v2/production-auth-schema.json
+          npx wrangler d1 execute DB --env staging --remote --json --command "SELECT name FROM d1_migrations;" > ../../.artifacts/production-upgrade-v2/staging-db-migrations.json
+          npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT name FROM d1_migrations;" > ../../.artifacts/production-upgrade-v2/production-db-migrations.json
+          npx wrangler d1 execute AUTH_DB --env staging --remote --json --command "SELECT name FROM auth_d1_migrations;" > ../../.artifacts/production-upgrade-v2/staging-auth-migrations.json
+          npx wrangler d1 execute AUTH_DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT name FROM auth_d1_migrations;" > ../../.artifacts/production-upgrade-v2/production-auth-migrations.json
+          npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT value FROM _yuisync_system_metadata WHERE key='schema_version';" > ../../.artifacts/production-upgrade-v2/production-schema-version.json
+          cd ../..
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises'
+          const rows = async (file) => {
+            const parsed = JSON.parse(await readFile(file,'utf8'))
+            return (Array.isArray(parsed)?parsed:[parsed]).flatMap((e)=>Array.isArray(e?.results)?e.results:[])
+          }
+          const norm = (v) => v == null ? null : String(v).replace(/\s+/g,' ').trim()
+          const schema = async (file) => (await rows(file)).map((r)=>({type:String(r.type),name:String(r.name),tbl_name:String(r.tbl_name),sql:norm(r.sql)}))
+          const names = async (file) => (await rows(file)).map((r)=>String(r.name)).sort()
+          const eq = (a,b) => JSON.stringify(a) === JSON.stringify(b)
+          const checks=[]
+          for (const [label,s,p] of [
+            ['DB schema','staging-db-schema.json','production-db-schema.json'],
+            ['AUTH_DB schema','staging-auth-schema.json','production-auth-schema.json'],
+          ]) {
+            const a=await schema(`.artifacts/production-upgrade-v2/${s}`), b=await schema(`.artifacts/production-upgrade-v2/${p}`)
+            checks.push({label,match:eq(a,b),staging_count:a.length,production_count:b.length})
+            if(!eq(a,b)) throw new Error(`PRODUCTION_SCHEMA_DIVERGENCE:${label}`)
+          }
+          for (const [label,s,p] of [
+            ['DB migration set','staging-db-migrations.json','production-db-migrations.json'],
+            ['AUTH_DB migration set','staging-auth-migrations.json','production-auth-migrations.json'],
+          ]) {
+            const a=await names(`.artifacts/production-upgrade-v2/${s}`), b=await names(`.artifacts/production-upgrade-v2/${p}`)
+            checks.push({label,match:eq(a,b),staging_count:a.length,production_count:b.length})
+            if(!eq(a,b)) throw new Error(`PRODUCTION_MIGRATION_SET_DIVERGENCE:${label}`)
+          }
+          const versionRows=await rows('.artifacts/production-upgrade-v2/production-schema-version.json')
+          const version=String(versionRows[0]?.value ?? '')
+          checks.push({label:'Production schema_version',match:version==='25',value:version})
+          if(version!=='25') throw new Error(`PRODUCTION_SCHEMA_VERSION_INVALID:${version}`)
+          await writeFile('.artifacts/production-upgrade-v2/reconciliation.json',JSON.stringify({schema:'yuisync-production-upgrade-v2/v1',release_sha:process.env.RELEASE_SHA,checks},null,2)+'\n')
+          console.log(JSON.stringify({status:'production-schema-certified',checks}))
+          NODE
+      - name: Materialize production custom domain
+        shell: bash
+        run: |
+          set -euo pipefail
+          YUISYNC_PRODUCTION_ATTACH_DOMAIN=true node scripts/migration/production-cloudflare.mjs resolve
+      - name: Capture Worker version before deploy
+        working-directory: apps/edge-api
+        run: |
+          mkdir -p ../../.artifacts/production-upgrade-v2
+          npx wrangler versions list --name yuisync-edge-api-production --json > ../../.artifacts/production-upgrade-v2/worker-versions-before.json
+      - name: Deploy exact certified runtime to yuisync.app
+        id: live-deploy
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          SECRETS_JSON='[]'
+          if npx wrangler secret list --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --format json > /tmp/yuisync-prod-secrets.json 2>/dev/null; then SECRETS_JSON="$(cat /tmp/yuisync-prod-secrets.json)"; fi
+          export SECRETS_JSON
+          node --input-type=module <<'NODE'
+          import { randomBytes } from 'node:crypto'
+          import { writeFile } from 'node:fs/promises'
+          let rows=[]; try { rows=JSON.parse(process.env.SECRETS_JSON||'[]') } catch {}
+          const secrets={}
+          if(!(Array.isArray(rows)&&rows.some((r)=>r?.name==='BETTER_AUTH_SECRET'))) secrets.BETTER_AUTH_SECRET=randomBytes(64).toString('base64url')
+          if(process.env.OPENAI_API_KEY) secrets.OPENAI_API_KEY=process.env.OPENAI_API_KEY
+          await writeFile('/tmp/yuisync-production-secrets.json',JSON.stringify(secrets),{mode:0o600})
+          await writeFile('/tmp/yuisync-production-secret-count',String(Object.keys(secrets).length),{mode:0o600})
+          NODE
+          COUNT="$(cat /tmp/yuisync-production-secret-count)"
+          if [ "$COUNT" -gt 0 ]; then
+            npx wrangler deploy --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --secrets-file /tmp/yuisync-production-secrets.json
+          else
+            npx wrangler deploy --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+          fi
+          rm -f /tmp/yuisync-production-secrets.json /tmp/yuisync-production-secret-count /tmp/yuisync-prod-secrets.json
+      - name: Smoke live yuisync.app
+        shell: bash
+        run: |
+          set -euo pipefail
+          status='000'
+          for attempt in $(seq 1 18); do
+            status="$(curl --silent --show-error --max-time 20 -o /tmp/live-health.json -w '%{http_code}' https://yuisync.app/health || true)"
+            [ "$status" = '200' ] && break
+            echo "Live /health attempt $attempt returned HTTP $status; waiting for propagation."
+            sleep 5
+          done
+          test "$status" = '200'
+          curl --fail --silent --show-error --max-time 20 https://yuisync.app/ready > /tmp/live-ready.json
+          curl --fail --silent --show-error --max-time 20 https://yuisync.app/ > /dev/null
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const h=JSON.parse(await readFile('/tmp/live-health.json','utf8')), r=JSON.parse(await readFile('/tmp/live-ready.json','utf8'))
+          if(h?.status!=='ok'||h?.environment!=='production') throw new Error('LIVE_HEALTH_INVALID')
+          if(r?.status!=='ready'||r?.environment!=='production') throw new Error('LIVE_READY_INVALID')
+          NODE
+      - name: Prepare ephemeral live Better Auth user
+        id: live-fixtures
+        env:
+          YUISYNC_E2E_WRANGLER_ENV: production
+        run: |
+          export YUISYNC_E2E_BASE_URL="https://yuisync.app"
+          export YUISYNC_E2E_WRANGLER_CONFIG="$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+          node scripts/migration/staging-e2e-fixtures.mjs setup
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run authenticated live-domain E2E
+        run: |
+          export YUISYNC_E2E_BASE_URL="https://yuisync.app"
+          npx playwright test test/e2e/authenticated-tabs.spec.js --project=desktop --workers=1 --timeout=180000
+      - name: Clean ephemeral live Better Auth user
+        if: always() && steps.live-fixtures.outcome == 'success'
+        env:
+          YUISYNC_E2E_WRANGLER_ENV: production
+        run: |
+          export YUISYNC_E2E_BASE_URL="https://yuisync.app"
+          export YUISYNC_E2E_WRANGLER_CONFIG="$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+          node scripts/migration/staging-e2e-fixtures.mjs cleanup
+      - name: Capture live Worker version
+        if: always() && steps.live-deploy.outcome == 'success'
+        working-directory: apps/edge-api
+        run: |
+          mkdir -p ../../.artifacts/production-upgrade-v2
+          npx wrangler versions list --name yuisync-edge-api-production --json > ../../.artifacts/production-upgrade-v2/worker-versions-after.json
+      - name: Emergency Worker rollback on post-deploy failure
+        if: failure() && steps.live-deploy.outcome == 'success'
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler rollback --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --message "Automatic rollback after failed YuiSync Next production upgrade v2 $RELEASE_SHA"
+      - name: Remove private SQL backup
+        if: always()
+        run: rm -rf /tmp/yuisync-production-backup
+      - name: Upload sanitized release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-upgrade-v2-${{ env.RELEASE_SHA }}
+          path: |
+            .artifacts/production-upgrade-v2/reconciliation.json
+            .artifacts/production-upgrade-v2/worker-versions-before.json
+            .artifacts/production-upgrade-v2/worker-versions-after.json
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Production release summary
+        if: success()
+        run: |
+          echo '### YuiSync Next production release' >> "$GITHUB_STEP_SUMMARY"
+          echo "- Runtime: \`$RELEASE_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo '- Production D1 upgraded in place and schema-certified' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Domain: https://yuisync.app' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Authenticated live E2E: passed' >> "$GITHUB_STEP_SUMMARY"
