@@ -1,3 +1,7 @@
+import { useEffect, useRef } from 'react'
+
+import { supabase } from '../../../lib/supabase'
+
 const STYLES = `
   .yuisync-agenda-card-surface .yuisync-card-content {
     display: grid !important;
@@ -117,6 +121,104 @@ const STYLES = `
   }
 `
 
+const ACTIVE_PACKAGE_BENEFIT_STATUSES = new Set(['reserved', 'consumed'])
+const RELEASED_PACKAGE_BENEFIT_STATUSES = new Set(['released', 'cancelled', 'canceled'])
+
+export function appointmentUsesPackage(appointment = {}) {
+  const benefitStatus = String(appointment.subscription_benefit_status || '').trim().toLowerCase()
+  const serviceItems = Array.isArray(appointment.service_items) ? appointment.service_items : []
+
+  if (ACTIVE_PACKAGE_BENEFIT_STATUSES.has(benefitStatus)) return true
+  if (appointment.subscription_benefit_used === true) return true
+  if (serviceItems.some((item) => (
+    item?.benefit_used === true
+    || ACTIVE_PACKAGE_BENEFIT_STATUSES.has(String(item?.benefit_status || '').trim().toLowerCase())
+  ))) return true
+
+  return Boolean(appointment.subscription_id) && !RELEASED_PACKAGE_BENEFIT_STATUSES.has(benefitStatus)
+}
+
+function packageCardIds() {
+  return [...document.querySelectorAll('[data-yuisync-native-appointment-id]')]
+    .map((card) => String(card.dataset.yuisyncNativeAppointmentId || '').trim())
+    .filter(Boolean)
+}
+
+function applyPackageMarkers(rows = []) {
+  const appointmentsById = new Map((rows || []).map((appointment) => [String(appointment.id), appointment]))
+
+  document.querySelectorAll('[data-yuisync-native-appointment-id]').forEach((card) => {
+    const appointment = appointmentsById.get(String(card.dataset.yuisyncNativeAppointmentId || ''))
+    if (!appointment) return
+
+    const usesPackage = appointmentUsesPackage(appointment)
+    card.dataset.yuisyncPackage = String(usesPackage)
+
+    if (usesPackage) {
+      card.dataset.yuisyncCardKind = 'package'
+      const priceNode = card.querySelector('.yuisync-card-service > span:last-child')
+      if (priceNode) {
+        priceNode.textContent = 'PACOTE · R$ 0,00'
+        priceNode.classList.add('yuisync-package-label')
+      }
+    }
+  })
+}
+
 export function AgendaCardLayoutEnhancer() {
+  const lastIdsRef = useRef('')
+  const refreshTokenRef = useRef(0)
+
+  useEffect(() => {
+    let disposed = false
+    let frame = 0
+
+    const syncPackageCards = async ({ force = false } = {}) => {
+      const ids = [...new Set(packageCardIds())].sort()
+      const signature = ids.join('|')
+      if (!ids.length) {
+        lastIdsRef.current = ''
+        return
+      }
+      if (!force && signature === lastIdsRef.current) return
+      lastIdsRef.current = signature
+
+      const requestToken = ++refreshTokenRef.current
+      const { data, error } = await supabase
+        .from('appointments')
+        .select('id, subscription_id, subscription_benefit_used, subscription_benefit_status, service_items')
+        .in('id', ids)
+
+      if (disposed || requestToken !== refreshTokenRef.current) return
+      if (error) {
+        console.warn('Falha ao identificar pacotes nos cards da agenda:', error.message)
+        return
+      }
+      applyPackageMarkers(data || [])
+    }
+
+    const schedule = ({ force = false } = {}) => {
+      if (frame) window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        void syncPackageCards({ force })
+      })
+    }
+
+    const observer = new MutationObserver(() => schedule())
+    observer.observe(document.body, { childList: true, subtree: true })
+
+    const handleAppointmentSync = () => schedule({ force: true })
+    window.addEventListener('yuisync:appointments-sync', handleAppointmentSync)
+    schedule({ force: true })
+
+    return () => {
+      disposed = true
+      observer.disconnect()
+      window.removeEventListener('yuisync:appointments-sync', handleAppointmentSync)
+      if (frame) window.cancelAnimationFrame(frame)
+    }
+  }, [])
+
   return <style>{STYLES}</style>
 }
