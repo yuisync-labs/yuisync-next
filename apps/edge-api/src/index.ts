@@ -17,6 +17,7 @@ import { handlePetshopServicesApiRequest } from './petshopServicesApi'
 import { handleAsyncQueue } from './queueHandler'
 import { handleRealtimeApiRequest, scheduleRealtimeInvalidation } from './realtimeApi'
 import type { EdgeAppEnvironment } from './types'
+import { handleWhatsappApiRequest } from './whatsappApi'
 
 export { CoordinationDurableObject } from './coordination/coordinationDurableObject'
 
@@ -48,6 +49,9 @@ export default {
 
     const realtimeResponse = await handleRealtimeApiRequest(request, bindings)
     if (realtimeResponse) return realtimeResponse
+
+    const whatsappResponse = await handleWhatsappApiRequest(request, bindings)
+    if (whatsappResponse) return respond(whatsappResponse)
 
     const authResponse = await handleBetterAuthRequest(request, bindings)
     if (authResponse) return respond(authResponse)
