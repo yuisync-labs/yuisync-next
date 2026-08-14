@@ -22,6 +22,21 @@ export type ReopenAppointmentResult = {
   packageReleased?: boolean
 }
 
+export type ReopenAppointmentOptions = {
+  /**
+   * Statements that must commit in the same D1 batch as the reopen itself.
+   * Used by the explicit financial-reopen endpoint so a sale/payment reversal
+   * can never commit while the appointment remains completed.
+   */
+  prefixStatements?: D1PreparedStatement[]
+  /**
+   * The caller already validated the active sale and supplied its terminal
+   * financial transition in prefixStatements. The database trigger remains the
+   * final race-condition guard inside the same transaction.
+   */
+  financialGuardSatisfied?: boolean
+}
+
 function json(body: unknown, status = 200): Response {
   return Response.json(body, {
     status,
@@ -146,6 +161,7 @@ export async function reopenCompletedAppointment(
   env: CompatRuntimeBindings,
   appointmentId: string,
   requestedStatus: unknown,
+  options: ReopenAppointmentOptions = {},
 ): Promise<ReopenAppointmentResult> {
   if (!env.DB) return { response: json({ code: 'DATABASE_NOT_CONFIGURED' }, 503) }
   const scope = requestScope(request)
@@ -163,8 +179,10 @@ export async function reopenCompletedAppointment(
   if (!appointment) return { response: json({ code: 'APPOINTMENT_NOT_FOUND' }, 404) }
   if (appointment.status !== 'completed') return { reopened: false }
 
-  const financialBlocker = await completedAppointmentReopenFinancialBlocker(request, env, appointmentId)
-  if (financialBlocker) return { response: financialBlocker }
+  if (!options.financialGuardSatisfied) {
+    const financialBlocker = await completedAppointmentReopenFinancialBlocker(request, env, appointmentId)
+    if (financialBlocker) return { response: financialBlocker }
+  }
 
   const benefits = parseArray(appointment.subscription_benefits_json)
   const released = releaseBenefitSnapshots(benefits)
@@ -195,6 +213,7 @@ export async function reopenCompletedAppointment(
   const now = Date.now()
   const markerStatus = targetStatus
   const statements: D1PreparedStatement[] = [
+    ...(options.prefixStatements || []),
     env.DB.prepare(`
       UPDATE appointments
       SET status=?4,
