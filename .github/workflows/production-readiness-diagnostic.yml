@@ -1,0 +1,44 @@
+name: Production readiness diagnostic
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  diagnose:
+    if: github.event.label.name == 'production-readiness-diagnostic'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: e1970b384ebbe848c423f6af5086d3493a15a99d
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - run: npm ci
+      - name: Resolve production resources
+        run: node scripts/migration/production-cloudflare.mjs resolve
+      - name: Inspect secret names and safe readiness prerequisites
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'SECRET_NAMES='
+          npx wrangler secret list --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --format json | node --input-type=module -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s||'[]');console.log(JSON.stringify(r.map(x=>x.name).sort()))})"
+          echo 'DB_VERSION='
+          npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT value FROM _yuisync_system_metadata WHERE key='schema_version';"
+          echo 'AUTH_TABLES='
+          npx wrangler d1 execute AUTH_DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('user','session','account','verification') ORDER BY name;"
+          echo 'CURRENT_READY='
+          curl --silent --show-error --max-time 20 -w '\nHTTP_STATUS=%{http_code}\n' https://yuisync.app/ready || true
