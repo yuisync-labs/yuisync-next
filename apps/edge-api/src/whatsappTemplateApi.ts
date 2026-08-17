@@ -128,13 +128,14 @@ export async function handleWhatsappTemplateApiRequest(request: Request, binding
         return json({ code: 'INVALID_JSON' }, 400)
       }
       const tenantId = safeId(payload.tenant_id)
-      const phoneNumberId = numericId(payload.phone_number_id)
-      if (!tenantId || !phoneNumberId) return json({ code: 'INVALID_SCOPE' }, 400)
+      const phoneNumberIdRaw = payload.phone_number_id
+      const phoneNumberId = phoneNumberIdRaw == null ? null : numericId(phoneNumberIdRaw)
+      if (!tenantId || (phoneNumberIdRaw != null && !phoneNumberId)) return json({ code: 'INVALID_SCOPE' }, 400)
       const authError = await authorizeTenantAdmin(request, bindings, tenantId)
       if (authError) return authError
       const selection = await resolveSelection(bindings, tenantId, phoneNumberId)
       if (selection.error || !selection.selected) return selection.error
-      const result = await adapter(bindings, tenantId, phoneNumberId).createTemplate({
+      const result = await adapter(bindings, tenantId, selection.selected.phone_number_id).createTemplate({
         tenantId,
         wabaId: selection.selected.waba_id,
         name: String(payload.name ?? ''),
