@@ -5,7 +5,6 @@ export type WhatsappRuntimeBindings = {
   DB?: D1Database
   WHATSAPP_VERIFY_TOKEN?: string
   WHATSAPP_APP_SECRET?: string
-  [binding: string]: unknown
 }
 
 type MetaMessage = Record<string, any>
