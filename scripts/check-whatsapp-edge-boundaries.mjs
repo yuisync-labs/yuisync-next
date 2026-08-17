@@ -10,7 +10,7 @@ const forbiddenEdgeTokens = [
   'WHATSAPP_ACCESS_TOKEN',
   'WHATSAPP_PHONE_NUMBER_ID',
   'WHATSAPP_TENANT_ID',
-  'WHATSAPP_MODULE_ID',
+  'bindings.WHATSAPP_MODULE_ID',
 ]
 
 async function filesUnder(directory) {
