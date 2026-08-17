@@ -18,6 +18,33 @@ export interface WhatsAppConnectionRepositoryPort {
   save(connection: WhatsAppAccountConnectionV1): Promise<WhatsAppConnectionPersistenceReceipt>
 }
 
+export type WhatsAppAccessCredential = Readonly<{
+  tenantId: string
+  phoneNumberId: string
+  accessToken: string
+}>
+
+export interface WhatsAppCredentialVaultPort {
+  save(credential: WhatsAppAccessCredential): Promise<void>
+  findByPhoneNumberId(tenantId: string, phoneNumberId: string): Promise<WhatsAppAccessCredential | null>
+}
+
+export type WhatsAppEmbeddedSignupCompletion = Readonly<{
+  code: string
+  wabaId: string
+  phoneNumberId?: string | null
+}>
+
+export type WhatsAppEmbeddedSignupResult = Readonly<{
+  connection: WhatsAppAccountConnectionV1
+  accessToken: string
+}>
+
+export interface WhatsAppOnboardingPort {
+  complete(input: WhatsAppEmbeddedSignupCompletion & Readonly<{ tenantId: string }>): Promise<WhatsAppEmbeddedSignupResult>
+  subscribe(wabaId: string, accessToken: string): Promise<void>
+}
+
 export interface WhatsAppMessagingPort {
   sendText(command: WhatsAppSendCommandV1): Promise<WhatsAppSendResultV1>
 }
