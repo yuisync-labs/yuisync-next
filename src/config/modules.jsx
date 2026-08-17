@@ -65,12 +65,12 @@ export const MODULES = {
     shortName: 'PetShop',
     icon: PawPrint,
     theme: {
-      primaryBg: 'bg-[#059669]',
-      text: 'text-[#059669]',
-      textPrimary: 'text-[#059669]',
-      bgLight: 'bg-[#059669]/12',
-      border: 'border-[#059669]/20',
-      shadow: 'shadow-[#059669]/20',
+      primaryBg: 'bg-[var(--primary)]',
+      text: 'text-[var(--primary)]',
+      textPrimary: 'text-[var(--primary)]',
+      bgLight: 'bg-[var(--primary-bg-light)]',
+      border: 'border-[var(--primary-border)]',
+      shadow: 'shadow-none',
     },
     roles: [
       { id: 'admin_pet', label: 'Admin Pet', description: 'Acesso total ao modulo PetShop' },

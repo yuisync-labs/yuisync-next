@@ -1,0 +1,132 @@
+name: Product UI preview
+
+on:
+  push:
+    branches:
+      - design/product-ui-cleanup
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: product-ui-preview
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Build and deploy UI preview
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: cloudflare-staging
+      url: ${{ steps.deploy.outputs.deployment-url }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+
+      - name: Require scoped Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+
+      - run: npm ci
+
+      - name: Validate Edge compatibility
+        run: npm run check:edge-compat-surface -- --strict
+
+      - name: Validate UI branch and build SPA
+        run: npm run edge:check
+
+      - name: Deploy preview Worker and SPA assets
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          workingDirectory: apps/edge-api
+          command: deploy --env staging
+
+      - name: Provision isolated preview reviewer
+        working-directory: apps/edge-api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+
+          TENANTS="$(npx wrangler d1 execute DB --env staging --remote --json --command "SELECT t.id, COALESCE(s.store_name,t.name) AS name FROM tenants t LEFT JOIN tenant_module_settings s ON s.tenant_id=t.id AND s.module_id='petshop' WHERE t.status='active' AND t.id NOT LIKE 'e2e-%' ORDER BY CASE WHEN lower(COALESCE(s.store_name,t.name,'')) LIKE '%quatro%patas%' THEN 0 ELSE 1 END, t.updated_at_ms DESC LIMIT 1;")"
+          TENANT_ID="$(node -e "const r=JSON.parse(process.argv[1]);const rows=r?.[0]?.results||r?.results||[];process.stdout.write(String(rows[0]?.id||''));" "$TENANTS")"
+          TENANT_NAME="$(node -e "const r=JSON.parse(process.argv[1]);const rows=r?.[0]?.results||r?.results||[];process.stdout.write(String(rows[0]?.name||''));" "$TENANTS")"
+
+          NOW="$(node -e 'process.stdout.write(String(Date.now()))')"
+          if [ -z "$TENANT_ID" ]; then
+            TENANT_ID='preview-ui-tenant'
+            TENANT_NAME='YuiSync Preview'
+            npx wrangler d1 execute DB --env staging --remote --command "INSERT OR IGNORE INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES('${TENANT_ID}','preview-ui','${TENANT_NAME}','active',${NOW},${NOW}); UPDATE tenants SET name='${TENANT_NAME}',status='active',updated_at_ms=${NOW} WHERE id='${TENANT_ID}'; INSERT OR IGNORE INTO tenant_module_settings(tenant_id,module_id,store_name,created_at_ms,updated_at_ms) VALUES('${TENANT_ID}','petshop','${TENANT_NAME}',${NOW},${NOW}); UPDATE tenant_module_settings SET store_name='${TENANT_NAME}',updated_at_ms=${NOW} WHERE tenant_id='${TENANT_ID}' AND module_id='petshop';"
+          fi
+          case "$TENANT_ID" in (*[!A-Za-z0-9_-]*) echo "Unsafe tenant id" >&2; exit 1;; esac
+
+          USER_ID='01ace5f8-f964-42ac-be13-8a4d2f76966f'
+          PRINCIPAL_ID='c189017f-7cbb-48bb-aaae-819a0c0d59fe'
+          EMAIL='preview.gabriel@yuisync.invalid'
+          PASSWORD_HASH='$2b$12$4e7ilJYhs6cIJItM9y1h8ewDc6lGe5.xH5PTt7OrqIh4.KGh6ksIW'
+
+          npx wrangler d1 execute AUTH_DB --env staging --remote --command "DELETE FROM session WHERE userId='${USER_ID}'; DELETE FROM account WHERE userId='${USER_ID}'; DELETE FROM user WHERE id='${USER_ID}' OR email='${EMAIL}'; INSERT INTO user(id,name,email,emailVerified,image,createdAt,updatedAt) VALUES('${USER_ID}','Gabriel Preview','${EMAIL}',1,NULL,${NOW},${NOW}); INSERT INTO account(id,userId,accountId,providerId,password,createdAt,updatedAt) VALUES('credential:${USER_ID}','${USER_ID}','${USER_ID}','credential','${PASSWORD_HASH}',${NOW},${NOW});"
+
+          npx wrangler d1 execute DB --env staging --remote --command "DELETE FROM tenant_memberships WHERE principal_id='${PRINCIPAL_ID}'; DELETE FROM identity_principals WHERE id='${PRINCIPAL_ID}' OR (provider='better-auth' AND subject='${USER_ID}'); INSERT INTO identity_principals(id,provider,subject,display_name,email,status,created_at_ms,updated_at_ms) VALUES('${PRINCIPAL_ID}','better-auth','${USER_ID}','Gabriel Preview','${EMAIL}','active',${NOW},${NOW}); INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES('${TENANT_ID}','${PRINCIPAL_ID}','active',${NOW},${NOW},'admin','{\"petshop\":{\"role\":\"admin_pet\"}}');"
+
+          echo "Preview reviewer provisioned for tenant: ${TENANT_NAME:-$TENANT_ID}"
+
+      - name: Verify preview SPA
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          HEADERS="$(mktemp)"
+          BODY="$(mktemp)"
+          curl --silent --show-error --fail --dump-header "$HEADERS" --output "$BODY" "$PREVIEW_URL/"
+          grep -Eiq '^content-type:.*text/html' "$HEADERS"
+          grep -qi '<div id="root"' "$BODY"
+          rm -f "$HEADERS" "$BODY"
+
+      - name: Verify preview readiness
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          BODY_FILE="$(mktemp)"
+          curl --silent --show-error --fail "$PREVIEW_URL/ready" > "$BODY_FILE"
+          node - "$BODY_FILE" <<'NODE'
+          const fs = require('node:fs');
+          const body = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (body.status !== 'ready' || body.checks?.database !== 'ready' || body.checks?.schema_version !== '22' || body.checks?.coordination !== 'ready' || body.checks?.auth_database !== 'configured') {
+            throw new Error('UI preview staging readiness is not healthy.');
+          }
+          console.log(JSON.stringify({ status: body.status, schema: body.checks.schema_version, environment: body.environment }));
+          NODE
+          rm -f "$BODY_FILE"
+
+      - name: Record preview summary
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
+          PREVIEW_SHA: ${{ github.sha }}
+        run: |
+          echo "## Product UI preview" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${PREVIEW_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: ${PREVIEW_URL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Reviewer: preview.gabriel@yuisync.invalid" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Target: Cloudflare staging only" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Production: untouched" >> "$GITHUB_STEP_SUMMARY"
+          echo "- D1 migrations: not modified by this workflow" >> "$GITHUB_STEP_SUMMARY"

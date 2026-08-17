@@ -1,17 +1,17 @@
-import { useMemo, useState } from 'react'
-import { motion } from 'framer-motion'
+import { useMemo } from 'react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { Sparkles, Timer } from 'lucide-react'
+import { Timer } from 'lucide-react'
+import { Card, StatusBadge } from '../../../components/ui'
 import { calculateSavedPercentage, formatHours, formatPercentage } from '../utils/aiHoursSaved'
 
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null
 
   return (
-    <div className="rounded-xl border border-emerald-300/35 bg-emerald-950/95 px-3 py-2 shadow-xl backdrop-blur-sm">
-      <p className="text-[11px] uppercase tracking-[0.14em] text-emerald-200/90">{label}</p>
-      <p className="text-sm font-semibold text-white">{formatHours(payload[0].value)}</p>
-    </div>
+    <Card tone="neutral" className="px-3 py-2">
+      <p className="text-[11px] font-medium text-muted">{label}</p>
+      <p className="mt-0.5 text-sm font-semibold text-text">{formatHours(payload[0].value)}</p>
+    </Card>
   )
 }
 
@@ -22,8 +22,6 @@ export default function AIHoursSavedCard({
   className = '',
   onClick,
 }) {
-  const [isHovered, setIsHovered] = useState(false)
-
   const savedPercentage = useMemo(
     () => calculateSavedPercentage(savedHours, totalHours),
     [savedHours, totalHours]
@@ -32,120 +30,84 @@ export default function AIHoursSavedCard({
   const latestSaved = series?.[series.length - 1]?.saved ?? savedHours
   const hasMeasuredData = Number(savedHours || 0) > 0 && Array.isArray(series) && series.length > 0
   const helperText = `${formatHours(savedHours)} economizadas de ${formatHours(totalHours)} de operacao hoje`
-  const lastIndex = Math.max((series?.length || 1) - 1, 0)
-
-  function LivePointDot({ cx, cy, index }) {
-    if (index !== lastIndex) return null
-
-    return (
-      <g>
-        <circle cx={cx} cy={cy} r={5} className="ai-flow-dot" />
-        <circle cx={cx} cy={cy} r={2.4} fill="#ecfdf5" />
-      </g>
-    )
-  }
 
   return (
-    <motion.article
-      initial={{ opacity: 0, y: 18 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: 'easeOut' }}
-      whileHover={{ y: -4, scale: 1.005 }}
-      onHoverStart={() => setIsHovered(true)}
-      onHoverEnd={() => setIsHovered(false)}
+    <Card
+      as="article"
+      tone="success"
+      interactive={Boolean(onClick)}
       onClick={onClick}
-      className={`relative overflow-hidden rounded-xl2 border border-emerald-300/35 bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-700 p-5 shadow-[0_20px_50px_rgba(5,150,105,0.42)] ring-1 ring-emerald-200/20 ${onClick ? 'cursor-pointer' : ''} ${className}`}
+      className={`p-5 ${onClick ? 'cursor-pointer' : ''} ${className}`}
     >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.24),transparent_38%)]" />
-      <motion.div
-        aria-hidden="true"
-        animate={{
-          opacity: isHovered ? 0.38 : 0.18,
-          x: isHovered ? [0, 26, 0] : [0, 16, 0],
-        }}
-        transition={{ duration: isHovered ? 1.4 : 2.6, repeat: Infinity, ease: 'easeInOut' }}
-        className="pointer-events-none absolute -right-24 top-0 h-full w-64 bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.45),transparent_68%)] blur-2xl"
-      />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold text-muted">Tempo economizado pela IA</p>
+          <p className="mt-1 text-sm text-muted">Indicador de eficiência operacional</p>
+        </div>
+        <StatusBadge variant={hasMeasuredData ? 'success' : 'neutral'}>
+          {hasMeasuredData ? 'Atualizado' : 'Sem amostra'}
+        </StatusBadge>
+      </div>
 
-      <div className="relative z-10">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-emerald-50/80">
-              Tempo economizado pela IA
-            </p>
-            <p className="mt-1 text-sm text-emerald-50/90">Indicador de eficiencia operacional</p>
-          </div>
+      <div className="mt-5 grid gap-5 lg:grid-cols-[0.72fr_1.28fr] lg:items-end">
+        <div>
+          <p className="font-display text-5xl font-bold leading-none tracking-tight text-text">
+            {hasMeasuredData ? formatPercentage(savedPercentage) : '—'}
+          </p>
+          <p className="mt-2 max-w-sm text-xs leading-5 text-muted">
+            {hasMeasuredData ? helperText : 'Dados insuficientes para calcular a economia de hoje.'}
+          </p>
 
-          <div className="inline-flex items-center gap-1 rounded-full border border-emerald-100/35 bg-emerald-950/30 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-white">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-100 ai-live-dot" />
-            {hasMeasuredData ? 'Tempo real' : 'Sem amostra'}
+          <div className="mt-5 inline-flex items-center gap-2 rounded-lg border border-[var(--border2)] bg-[var(--surface)] px-3 py-2">
+            <Timer size={15} className="text-emerald-600" />
+            <div>
+              <p className="text-[10px] font-medium text-muted">Economia hoje</p>
+              <p className="text-sm font-semibold text-text">{hasMeasuredData ? formatHours(latestSaved) : '—'}</p>
+            </div>
           </div>
         </div>
 
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="font-display text-5xl font-black leading-none text-white">{hasMeasuredData ? formatPercentage(savedPercentage) : '—'}</p>
-            <p className="mt-1 text-xs text-white/90">{hasMeasuredData ? helperText : 'Dados insuficientes para calcular a economia de hoje.'}</p>
-          </div>
-
-          <div className="rounded-xl border border-emerald-100/30 bg-emerald-900/20 px-3 py-2 text-right">
-            <p className="text-[10px] uppercase tracking-[0.16em] text-emerald-100/85">Hoje</p>
-            <p className="mt-1 flex items-center justify-end gap-1 text-lg font-bold text-white">
-              <Timer size={16} className="text-emerald-100/90" />
-              {hasMeasuredData ? formatHours(latestSaved) : '—'}
-            </p>
-          </div>
-        </div>
-
-        <div className="h-40 min-w-0 rounded-xl border border-emerald-100/20 bg-emerald-950/25 p-2 backdrop-blur-[2px] sm:h-44">
-          {hasMeasuredData ? <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={140} debounce={50}>
-            <AreaChart data={series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="aiHoursFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#dcfce7" stopOpacity="0.58" />
-                  <stop offset="100%" stopColor="#dcfce7" stopOpacity="0.06" />
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="time" tick={{ fill: 'rgba(236,253,245,0.88)', fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis
-                tick={{ fill: 'rgba(236,253,245,0.82)', fontSize: 10 }}
-                width={30}
-                axisLine={false}
-                tickLine={false}
-                domain={[0, 'dataMax + 0.6']}
-              />
-              <Tooltip cursor={{ stroke: 'rgba(236,253,245,0.25)', strokeWidth: 1 }} content={<ChartTooltip />} />
-              <Area
-                type="basis"
-                dataKey="saved"
-                stroke="#ecfdf5"
-                strokeWidth={isHovered ? 3.2 : 2.6}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                fillOpacity={1}
-                fill="url(#aiHoursFill)"
-                dot={(dotProps) => <LivePointDot {...dotProps} />}
-                activeDot={{ r: 5, fill: '#bbf7d0', stroke: '#14532d', strokeWidth: 2 }}
-                animationDuration={1100}
-                className="ai-flow-line"
-              />
-            </AreaChart>
-          </ResponsiveContainer> : (
-            <div className="flex h-full items-center justify-center text-center text-sm font-semibold text-white/80">
-              O indicador sera exibido quando houver atendimentos da IA hoje.
+        <div className="h-36 min-w-0 rounded-[12px] border border-[var(--border2)] bg-[var(--surface)] p-2 sm:h-40">
+          {hasMeasuredData ? (
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={128} debounce={50}>
+              <AreaChart data={series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="aiHoursFillClean" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#10b981" stopOpacity="0.18" />
+                    <stop offset="100%" stopColor="#10b981" stopOpacity="0.02" />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="time" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
+                <YAxis
+                  tick={{ fill: '#64748b', fontSize: 10 }}
+                  width={30}
+                  axisLine={false}
+                  tickLine={false}
+                  domain={[0, 'dataMax + 0.6']}
+                />
+                <Tooltip cursor={{ stroke: '#cbd5e1', strokeWidth: 1 }} content={<ChartTooltip />} />
+                <Area
+                  type="monotone"
+                  dataKey="saved"
+                  stroke="#059669"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  fillOpacity={1}
+                  fill="url(#aiHoursFillClean)"
+                  dot={false}
+                  activeDot={{ r: 4, fill: '#059669', stroke: '#ffffff', strokeWidth: 2 }}
+                  animationDuration={350}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-full items-center justify-center px-5 text-center text-sm font-medium text-muted">
+              O indicador será exibido quando houver atendimentos da IA hoje.
             </div>
           )}
         </div>
-
-        <div className="mt-3 flex items-center justify-between text-xs text-emerald-50/85">
-          <span className="inline-flex items-center gap-1">
-            <Sparkles size={12} />
-            {hasMeasuredData ? 'IA operando em otimizacao continua' : 'Aguardando atividade da IA'}
-          </span>
-          <span className="font-semibold">{hasMeasuredData ? `${formatHours(savedHours)} / ${formatHours(totalHours)}` : 'Sem dados'}</span>
-        </div>
       </div>
-
-    </motion.article>
+    </Card>
   )
 }
