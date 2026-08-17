@@ -43,3 +43,9 @@ export type {
   StructuredModelRequest,
   StructuredModelResponse,
 } from './model'
+
+export type {
+  WhatsAppConnectionPersistenceReceipt,
+  WhatsAppConnectionRepositoryPort,
+  WhatsAppMessagingPort,
+} from './whatsapp'
