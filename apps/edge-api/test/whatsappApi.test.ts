@@ -37,13 +37,12 @@ async function signature(raw: ArrayBuffer): Promise<string> {
   return `sha256=${hex(await crypto.subtle.sign('HMAC', key, raw))}`
 }
 
-function bindings(database: D1Database, legacyOverrides: Partial<WhatsappRuntimeBindings> = {}): WhatsappRuntimeBindings {
+function bindings(database: D1Database): WhatsappRuntimeBindings {
   return {
     DB: database,
     WHATSAPP_VERIFY_TOKEN: VERIFY_TOKEN,
     WHATSAPP_APP_SECRET: APP_SECRET,
-    ...legacyOverrides,
-  } as WhatsappRuntimeBindings
+  }
 }
 
 function webhookPayload(input: Readonly<{
@@ -253,12 +252,8 @@ describe('Cloudflare-native WhatsApp transport', () => {
     })
   })
 
-  it('mantém dois tenants isolados pelo phone_number_id mesmo com bindings globais legados conflitantes', async () => {
-    const runtime = bindings(testEnv.DB, {
-      WHATSAPP_TENANT_ID: TENANT_B,
-      WHATSAPP_PHONE_NUMBER_ID: PHONE_B,
-      WHATSAPP_MODULE_ID: 'petshop',
-    })
+  it('mantém dois tenants isolados pelo phone_number_id sem qualquer binding global de tenant ou número', async () => {
+    const runtime = bindings(testEnv.DB)
 
     const first = await handleWhatsappApiRequest(await signedRequest(webhookPayload({
       wabaId: WABA_A,

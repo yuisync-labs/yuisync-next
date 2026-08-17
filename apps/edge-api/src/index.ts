@@ -21,6 +21,7 @@ import { handleWhatsappApiRequest } from './whatsappApi'
 import { handleWhatsappDeliveryStatusRequest } from './whatsappDeliveryStatusApi'
 import { handleWhatsappOnboardingApiRequest } from './whatsappOnboardingApi'
 import { handleWhatsappUnifiedOutboundApiRequest } from './whatsappOutboundApi'
+import { handleWhatsappTemplateApiRequest } from './whatsappTemplateApi'
 
 export { CoordinationDurableObject } from './coordination/coordinationDurableObject'
 
@@ -64,6 +65,9 @@ export default {
 
     const whatsappOnboardingResponse = await handleWhatsappOnboardingApiRequest(request, bindings)
     if (whatsappOnboardingResponse) return respond(whatsappOnboardingResponse)
+
+    const whatsappTemplateResponse = await handleWhatsappTemplateApiRequest(request, bindings)
+    if (whatsappTemplateResponse) return respond(whatsappTemplateResponse)
 
     const authResponse = await handleBetterAuthRequest(request, bindings)
     if (authResponse) return respond(authResponse)

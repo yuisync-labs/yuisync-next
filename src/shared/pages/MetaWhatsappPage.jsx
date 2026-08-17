@@ -371,7 +371,7 @@ export default function MetaWhatsappPage() {
           <label className="block space-y-2 text-sm font-bold text-text">Message<textarea className="input min-h-28 w-full resize-y py-3" value={messageForm.message} onChange={(event) => setMessageForm((current) => ({ ...current, message: event.target.value }))} required /></label>
           <button type="submit" className="btn btn-primary gap-2" disabled={sending || !status?.canSendMessages}>{sending ? <Loader2 size={15} className="animate-spin" /> : <MessageSquareText size={15} />} Send through WhatsApp Cloud API</button>
           <ResultBanner result={messageResult} />
-          {!status?.canSendMessages && <p className="text-xs text-amber-300">The legacy review sender remains unchanged in WA4. Outbound will move to the tenant credential path in WA5.</p>}
+          {!status?.canSendMessages && <p className="text-xs text-amber-300">Connect a WhatsApp Business number to this tenant before sending. Outbound uses the tenant-scoped credential stored encrypted on the Cloudflare Worker.</p>}
         </form>
       </SectionCard>
 

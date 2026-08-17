@@ -46,6 +46,7 @@
     "check:contract-boundaries": "node scripts/check-contract-boundaries.mjs",
     "check:no-runtime-supabase": "node scripts/check-no-runtime-supabase.mjs",
     "check:edge-compat-surface": "node scripts/check-edge-compat-surface.mjs",
+    "check:whatsapp-edge-boundaries": "node scripts/check-whatsapp-edge-boundaries.mjs",
     "edge:types": "npm run types --workspace @yuisync/edge-api",
     "edge:types:check": "npm run types:check --workspace @yuisync/edge-api",
     "edge:typecheck": "npm run typecheck --workspace @yuisync/edge-api",

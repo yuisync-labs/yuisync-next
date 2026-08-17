@@ -34,17 +34,13 @@ export type EdgeFinalAuthBindings = {
 }
 
 export type EdgeWhatsappBindings = {
-  WHATSAPP_ACCESS_TOKEN?: string
   WHATSAPP_VERIFY_TOKEN?: string
-  WHATSAPP_PHONE_NUMBER_ID?: string
   WHATSAPP_APP_ID?: string
   WHATSAPP_APP_SECRET?: string
   WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID?: string
   WHATSAPP_EMBEDDED_SIGNUP_REDIRECT_URI?: string
   WHATSAPP_CREDENTIAL_ENCRYPTION_KEY?: string
   WHATSAPP_GRAPH_VERSION?: string
-  WHATSAPP_TENANT_ID?: string
-  WHATSAPP_MODULE_ID?: string
 }
 
 export type EdgeAppEnvironment = {
