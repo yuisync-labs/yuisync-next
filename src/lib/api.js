@@ -212,25 +212,35 @@ export function searchProductImages({ name, barcode, category, brand, moduleId, 
   })
 }
 
-export function getMetaWhatsappReview({ tenantId, moduleId = 'petshop', includeTemplates = false }) {
-  const params = new URLSearchParams({
-    integration: 'meta-whatsapp',
-    tenant_id: tenantId,
-    module_id: moduleId,
-  })
-  if (includeTemplates) params.set('include_templates', '1')
-  return apiRequest(`/chat/respond?${params.toString()}`, { method: 'GET' })
-}
-
-function metaWhatsappAction(action, payload) {
-  return apiRequest('/chat/respond?integration=meta-whatsapp', {
-    method: 'POST',
-    body: JSON.stringify({ action, ...payload }),
-  })
-}
-
-export function saveMetaWhatsappAssetIds(payload) {
-  return metaWhatsappAction('save_asset_ids', payload)
+export async function getMetaWhatsappReview({ tenantId, includeTemplates = false }) {
+  const onboarding = await apiRequest(`/whatsapp/onboarding/status?tenant_id=${encodeURIComponent(tenantId)}`, { method: 'GET' })
+  const connected = (onboarding.connections || []).filter((connection) => connection.status === 'connected')
+  const primary = connected.length === 1 ? connected[0] : null
+  let templates = []
+  if (includeTemplates && primary) {
+    const params = new URLSearchParams({
+      tenant_id: tenantId,
+      phone_number_id: primary.phone_number_id,
+    })
+    const result = await apiRequest(`/whatsapp/templates?${params.toString()}`, { method: 'GET' })
+    templates = result.templates || []
+  }
+  return {
+    status: {
+      connected: Boolean(primary),
+      canSendMessages: Boolean(primary),
+      canManageTemplates: Boolean(primary),
+      source: 'cloudflare_d1',
+      tokenMode: 'encrypted_tenant_credential',
+      channelActive: Boolean(primary),
+      phoneNumberId: primary?.phone_number_id || '',
+      businessAccountId: primary?.waba_id || '',
+      permissions: ['business_management', 'whatsapp_business_management', 'whatsapp_business_messaging'],
+      reviewerNote: 'YuiSync stores the Meta access token encrypted server-side per tenant and phone number. It is never exposed in the browser.',
+      selectionRequired: connected.length > 1,
+    },
+    templates,
+  }
 }
 
 export function sendMetaWhatsappReviewMessage({
@@ -259,10 +269,23 @@ export function sendMetaWhatsappReviewMessage({
   }))
 }
 
-export function createMetaWhatsappTemplate(payload) {
-  return metaWhatsappAction('create_template', payload)
-}
-
-export function subscribeMetaWhatsappBusinessAccount(payload) {
-  return metaWhatsappAction('subscribe_waba', payload)
+export function createMetaWhatsappTemplate({
+  tenantId,
+  phoneNumberId,
+  name,
+  category,
+  language,
+  bodyText,
+}) {
+  return apiRequest('/whatsapp/templates', {
+    method: 'POST',
+    body: JSON.stringify({
+      tenant_id: tenantId,
+      phone_number_id: phoneNumberId,
+      name,
+      category,
+      language,
+      body_text: bodyText,
+    }),
+  })
 }
