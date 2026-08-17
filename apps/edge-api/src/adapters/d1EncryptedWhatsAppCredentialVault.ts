@@ -62,8 +62,14 @@ function fromBase64(value: string): Uint8Array {
   }
 }
 
-function aad(tenantId: string, phoneNumberId: string): Uint8Array {
-  return new TextEncoder().encode(`${tenantId}:${phoneNumberId}:v${KEY_VERSION}`)
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  return copy.buffer
+}
+
+function aad(tenantId: string, phoneNumberId: string): ArrayBuffer {
+  return toArrayBuffer(new TextEncoder().encode(`${tenantId}:${phoneNumberId}:v${KEY_VERSION}`))
 }
 
 export class D1EncryptedWhatsAppCredentialVault implements WhatsAppCredentialVaultPort {
@@ -91,9 +97,14 @@ export class D1EncryptedWhatsAppCredentialVault implements WhatsAppCredentialVau
       const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES))
       const plaintext = new TextEncoder().encode(accessToken)
       const encrypted = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv, additionalData: aad(tenantId, phoneNumberId), tagLength: 128 },
+        {
+          name: 'AES-GCM',
+          iv: toArrayBuffer(iv),
+          additionalData: aad(tenantId, phoneNumberId),
+          tagLength: 128,
+        },
         key,
-        plaintext,
+        toArrayBuffer(plaintext),
       )
       const now = this.now()
       await database.prepare(`
@@ -146,12 +157,12 @@ export class D1EncryptedWhatsAppCredentialVault implements WhatsAppCredentialVau
       const decrypted = await crypto.subtle.decrypt(
         {
           name: 'AES-GCM',
-          iv: fromBase64(row.token_iv),
+          iv: toArrayBuffer(fromBase64(row.token_iv)),
           additionalData: aad(tenantId, phoneNumberId),
           tagLength: 128,
         },
         key,
-        fromBase64(row.token_ciphertext),
+        toArrayBuffer(fromBase64(row.token_ciphertext)),
       )
       const accessToken = new TextDecoder().decode(decrypted).trim()
       if (!accessToken) throw new WhatsAppCredentialVaultError('WHATSAPP_CREDENTIAL_VAULT_CORRUPT')
@@ -170,6 +181,6 @@ export class D1EncryptedWhatsAppCredentialVault implements WhatsAppCredentialVau
   }
 
   private async cryptoKey(): Promise<CryptoKey> {
-    return crypto.subtle.importKey('raw', this.keyBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+    return crypto.subtle.importKey('raw', toArrayBuffer(this.keyBytes), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
   }
 }
