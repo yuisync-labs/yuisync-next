@@ -237,13 +237,17 @@ Além dos testes unitários, `typecheck:contracts` valida que os ports dependem 
 - [x] contratos exportados pelo entrypoint existente;
 - [x] ports exportados pelo entrypoint existente;
 - [x] testes de contratos adicionados;
-- [ ] suíte/linters/typecheck/build confirmados pelo CI;
+- [x] suíte de qualidade, contratos, typecheck, build e `edge:check` confirmados pelo CI;
 - [x] nenhum callback alterado;
 - [x] nenhum secret alterado;
 - [x] nenhuma configuração Meta alterada;
 - [x] nenhum runtime WhatsApp alterado;
 - [x] nenhum banco migrado;
 - [x] nenhum caminho legado removido.
+
+### Observação de CI
+
+O workflow `Quality` do repositório validou o código do WA1, inclusive o `edge:check`. Um check externo separado, `Workers Builds: yuisync-edge-api-staging`, fornecido pelo Cloudflare GitHub App, falhou sem diagnóstico no payload exposto pelo GitHub. Nenhuma configuração de infraestrutura foi alterada neste PR para contornar esse check, pois isso foge ao escopo do WA1.
 
 ## Rollback do WA1
 
