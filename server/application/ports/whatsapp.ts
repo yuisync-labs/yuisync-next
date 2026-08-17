@@ -48,3 +48,31 @@ export interface WhatsAppOnboardingPort {
 export interface WhatsAppMessagingPort {
   sendText(command: WhatsAppSendCommandV1): Promise<WhatsAppSendResultV1>
 }
+
+export type WhatsAppMessageTemplateSummary = Readonly<{
+  id: string
+  name: string
+  status: string
+  category: string
+  language: string
+}>
+
+export type WhatsAppCreateMessageTemplateCommand = Readonly<{
+  tenantId: string
+  wabaId: string
+  name: string
+  language: string
+  category: 'UTILITY' | 'MARKETING' | 'AUTHENTICATION'
+  bodyText: string
+}>
+
+export type WhatsAppCreateMessageTemplateResult = Readonly<{
+  id: string
+  status: string
+  category: string
+}>
+
+export interface WhatsAppTemplateManagementPort {
+  listTemplates(input: Readonly<{ tenantId: string; wabaId: string }>): Promise<readonly WhatsAppMessageTemplateSummary[]>
+  createTemplate(command: WhatsAppCreateMessageTemplateCommand): Promise<WhatsAppCreateMessageTemplateResult>
+}
