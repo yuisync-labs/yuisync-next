@@ -2,7 +2,10 @@ import {
   parseWhatsAppAccountConnectionV1,
   type WhatsAppAccountConnectionV1,
 } from '../../../../shared/contracts/v1/index'
-import type { WhatsAppConnectionRepositoryPort } from '../../../../server/application/ports/whatsapp'
+import type {
+  WhatsAppConnectionPersistenceReceipt,
+  WhatsAppConnectionRepositoryPort,
+} from '../../../../server/application/ports/whatsapp'
 
 type ConnectionRow = Readonly<{
   tenant_id: string
@@ -110,7 +113,7 @@ ORDER BY p.phone_number_id ASC
     }
   }
 
-  async save(connection: WhatsAppAccountConnectionV1): Promise<void> {
+  async save(connection: WhatsAppAccountConnectionV1): Promise<WhatsAppConnectionPersistenceReceipt> {
     const database = this.requireDatabase()
     const validated = parseWhatsAppAccountConnectionV1(connection)
     const now = this.now()
@@ -180,6 +183,13 @@ ORDER BY p.phone_number_id ASC
         || persisted.waba_id !== validated.waba_id
         || persisted.business_id !== validated.business_id) {
         throw new WhatsAppConnectionRepositoryError('CONNECTION_CONFLICT')
+      }
+
+      return {
+        tenantId: validated.tenant_id,
+        phoneNumberId: validated.phone_number_id,
+        created: !phoneOwner,
+        updated: Boolean(phoneOwner),
       }
     } catch (error) {
       if (error instanceof WhatsAppConnectionRepositoryError) throw error
