@@ -9,7 +9,7 @@ describe('D1 integration in workerd', () => {
   it('aplica todas as migrations no banco isolado de testes', async () => {
     const row = await testEnv.DB.prepare('SELECT value FROM _yuisync_system_metadata WHERE key = ?')
       .bind('schema_version').first<{ value: string }>()
-    expect(row).toEqual({ value: '27' })
+    expect(row).toEqual({ value: '28' })
 
     const required = [
       'clients','pets','catalog_products','services','inventory_balances','inventory_movements',
@@ -19,10 +19,11 @@ describe('D1 integration in workerd', () => {
       'fiscal_profiles','fiscal_item_rules','fiscal_document_items','fiscal_events',
       'profiles','quick_replies','petshop_growth_portal_access','tenant_onboarding','tenant_governance_alerts','system_update_logs',
       'whatsapp_waba_accounts','whatsapp_phone_connections','whatsapp_ingress_receipts','whatsapp_access_credentials',
+      'whatsapp_outbound_messages','whatsapp_delivery_receipts',
     ]
     const tables = await testEnv.DB.prepare(`SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name`)
       .all<{ name: string }>()
-    const actual = new Set(tables.results.map((table) => table.name))
+    const actual = new Set(tables.results.map((table)=>table.name))
     for (const name of required) expect(actual.has(name), `missing table ${name}`).toBe(true)
 
     const views = await testEnv.DB.prepare(`SELECT name FROM sqlite_schema WHERE type='view' ORDER BY name`).all<{name:string}>()
