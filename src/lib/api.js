@@ -250,7 +250,13 @@ export function sendMetaWhatsappReviewMessage({
       idempotency_key: crypto.randomUUID(),
       ...(phoneNumberId ? { phone_number_id: phoneNumberId } : {}),
     }),
-  })
+  }).then((payload) => ({
+    ...payload,
+    result: {
+      ...(payload.result || {}),
+      messages: payload.result?.provider_message_id ? [{ id: payload.result.provider_message_id }] : [],
+    },
+  }))
 }
 
 export function createMetaWhatsappTemplate(payload) {
