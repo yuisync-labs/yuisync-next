@@ -1,16 +1,10 @@
 import { parseIncomingWhatsAppMessageV1, type IncomingWhatsAppMessageV1 } from '../../../shared/contracts/v1/index'
 import { D1WhatsAppConnectionRepository } from './adapters/d1WhatsAppConnectionRepository'
-import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 
-export type WhatsappRuntimeBindings = BetterAuthRuntimeBindings & {
+export type WhatsappRuntimeBindings = {
   DB?: D1Database
-  WHATSAPP_ACCESS_TOKEN?: string
   WHATSAPP_VERIFY_TOKEN?: string
-  WHATSAPP_PHONE_NUMBER_ID?: string
   WHATSAPP_APP_SECRET?: string
-  WHATSAPP_GRAPH_VERSION?: string
-  WHATSAPP_TENANT_ID?: string
-  WHATSAPP_MODULE_ID?: string
 }
 
 type MetaMessage = Record<string, any>
@@ -26,11 +20,8 @@ type MetaEvent = {
 }
 
 const WEBHOOK_PATHS = new Set(['/api/whatsapp/webhook', '/api/whatsapp-webhook'])
-const SEND_PATH = '/api/whatsapp/send'
 const WHATSAPP_MODULE_ID = 'petshop'
 const MAX_WEBHOOK_BYTES = 256 * 1024
-const MAX_TEXT_CHARS = 4096
-const DEFAULT_GRAPH_VERSION = 'v25.0'
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
   return Response.json(body, {
@@ -113,30 +104,6 @@ export function extractWhatsappEvents(payload: unknown): MetaEvent[] {
     }
   }
   return events
-}
-
-function legacyOutboundScope(bindings: WhatsappRuntimeBindings) {
-  return {
-    tenantId: clean(bindings.WHATSAPP_TENANT_ID),
-    moduleId: clean(bindings.WHATSAPP_MODULE_ID).toLowerCase() || WHATSAPP_MODULE_ID,
-    phoneNumberId: clean(bindings.WHATSAPP_PHONE_NUMBER_ID),
-  }
-}
-
-async function validateLegacyOutboundScope(bindings: WhatsappRuntimeBindings): Promise<Response | null> {
-  if (!bindings.DB) return json({ code: 'DATABASE_NOT_CONFIGURED' }, 503)
-  const configured = legacyOutboundScope(bindings)
-  if (!configured.tenantId || !configured.phoneNumberId) {
-    return json({ code: 'WHATSAPP_NOT_CONFIGURED' }, 503)
-  }
-  const tenant = await bindings.DB.prepare(`
-    SELECT t.id
-    FROM tenants t
-    JOIN tenant_module_settings s ON s.tenant_id=t.id AND s.module_id=?2
-    WHERE t.id=?1 AND t.status='active'
-    LIMIT 1
-  `).bind(configured.tenantId, configured.moduleId).first<{ id: string }>()
-  return tenant ? null : json({ code: 'WHATSAPP_TENANT_SCOPE_INVALID' }, 503)
 }
 
 function metaTimestampIso(raw: string): string | null {
@@ -256,31 +223,19 @@ async function processInboundEvent(
   repository: D1WhatsAppConnectionRepository,
   event: MetaEvent,
 ) {
-  if (!event.phoneNumberId) {
-    return { ignored: true, reason: 'missing_phone_number_id', message_id: event.messageId }
-  }
-  if (!event.wabaId) {
-    return { ignored: true, reason: 'missing_waba_id', message_id: event.messageId }
-  }
+  if (!event.phoneNumberId) return { ignored: true, reason: 'missing_phone_number_id', message_id: event.messageId }
+  if (!event.wabaId) return { ignored: true, reason: 'missing_waba_id', message_id: event.messageId }
 
   const connection = await repository.findByPhoneNumberId(event.phoneNumberId)
-  if (!connection) {
-    return { ignored: true, reason: 'unknown_phone_number_id', message_id: event.messageId }
-  }
-  if (connection.waba_id !== event.wabaId) {
-    return { ignored: true, reason: 'waba_mismatch', message_id: event.messageId }
-  }
-  if (connection.status !== 'connected') {
-    return { ignored: true, reason: 'connection_not_connected', message_id: event.messageId }
-  }
+  if (!connection) return { ignored: true, reason: 'unknown_phone_number_id', message_id: event.messageId }
+  if (connection.waba_id !== event.wabaId) return { ignored: true, reason: 'waba_mismatch', message_id: event.messageId }
+  if (connection.status !== 'connected') return { ignored: true, reason: 'connection_not_connected', message_id: event.messageId }
   if (!await tenantAcceptsWhatsapp(database, connection.tenant_id)) {
     return { ignored: true, reason: 'tenant_scope_inactive', message_id: event.messageId }
   }
 
   const timestamp = metaTimestampIso(event.timestamp)
-  if (!timestamp) {
-    return { ignored: true, reason: 'invalid_timestamp', message_id: event.messageId }
-  }
+  if (!timestamp) return { ignored: true, reason: 'invalid_timestamp', message_id: event.messageId }
 
   let normalized: IncomingWhatsAppMessageV1
   try {
@@ -336,112 +291,17 @@ async function handleWebhookPost(request: Request, bindings: WhatsappRuntimeBind
   const events = extractWhatsappEvents(payload)
   const results = []
   try {
-    for (const event of events) {
-      results.push(await processInboundEvent(bindings.DB, repository, event))
-    }
+    for (const event of events) results.push(await processInboundEvent(bindings.DB, repository, event))
   } catch {
     return json({ code: 'WHATSAPP_INGRESS_UNAVAILABLE' }, 503)
   }
   return json({ ok: true, processed: results.length, results })
 }
 
-function moduleAllowed(raw: unknown, moduleId: string): boolean {
-  try {
-    const value = typeof raw === 'string' ? JSON.parse(raw) : raw
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-    const permissions = value as Record<string, unknown>
-    return permissions['*'] === true || permissions[moduleId] === true || Boolean(permissions[moduleId] && typeof permissions[moduleId] === 'object')
-  } catch {
-    return false
-  }
-}
-
-async function authorizeOutbound(request: Request, bindings: WhatsappRuntimeBindings, tenantId: string, moduleId: string): Promise<Response | null> {
-  if (!bindings.DB) return json({ code: 'DATABASE_NOT_CONFIGURED' }, 503)
-  const session = await getBetterAuthSession(request, bindings)
-  const userId = clean(session?.user?.id)
-  if (!userId) return json({ code: 'UNAUTHENTICATED' }, 401)
-  const row = await bindings.DB.prepare(`
-    SELECT m.role,m.module_permissions_json
-    FROM identity_principals p
-    JOIN tenant_memberships m ON m.principal_id=p.id AND m.tenant_id=?2 AND m.status='active'
-    JOIN tenants t ON t.id=m.tenant_id AND t.status='active'
-    WHERE p.provider='better-auth' AND p.subject=?1 AND p.status='active'
-    LIMIT 1
-  `).bind(userId, tenantId).first<{ role: string; module_permissions_json: string }>()
-  if (!row) return json({ code: 'FORBIDDEN' }, 403)
-  const allowed = row.role === 'owner' || row.role === 'admin' || moduleAllowed(row.module_permissions_json, moduleId)
-  return allowed ? null : json({ code: 'FORBIDDEN' }, 403)
-}
-
-async function sendWhatsappText(bindings: WhatsappRuntimeBindings, to: string, text: string) {
-  const token = clean(bindings.WHATSAPP_ACCESS_TOKEN)
-  const phoneNumberId = clean(bindings.WHATSAPP_PHONE_NUMBER_ID)
-  const version = clean(bindings.WHATSAPP_GRAPH_VERSION) || DEFAULT_GRAPH_VERSION
-  if (!token || !phoneNumberId) throw new Error('WHATSAPP_NOT_CONFIGURED')
-  const response = await fetch(`https://graph.facebook.com/${encodeURIComponent(version)}/${encodeURIComponent(phoneNumberId)}/messages`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to,
-      type: 'text',
-      text: { preview_url: false, body: text.slice(0, MAX_TEXT_CHARS) },
-    }),
-  })
-  const payload = await response.json().catch(() => ({})) as Record<string, any>
-  if (!response.ok) throw new Error(clean(payload?.error?.message) || `WHATSAPP_GRAPH_${response.status}`)
-  return payload
-}
-
-async function handleOutbound(request: Request, bindings: WhatsappRuntimeBindings): Promise<Response> {
-  const configured = legacyOutboundScope(bindings)
-  const scopeError = await validateLegacyOutboundScope(bindings)
-  if (scopeError) return scopeError
-  let body: Record<string, unknown>
-  try { body = await request.json() as Record<string, unknown> } catch { return json({ code: 'INVALID_JSON' }, 400) }
-  const tenantId = clean(body.tenant_id || request.headers.get('x-tenant-id'))
-  const moduleId = clean(body.module_id || request.headers.get('x-module-id')).toLowerCase() || configured.moduleId
-  if (tenantId !== configured.tenantId || moduleId !== configured.moduleId) return json({ code: 'WHATSAPP_SCOPE_MISMATCH' }, 403)
-  const authError = await authorizeOutbound(request, bindings, tenantId, moduleId)
-  if (authError) return authError
-  const to = clean(body.to)
-  const text = clean(body.text)
-  if (!/^\+?\d{8,20}$/.test(to) || !text) return json({ code: 'INVALID_WHATSAPP_MESSAGE' }, 400)
-
-  let delivery: Record<string, any>
-  try { delivery = await sendWhatsappText(bindings, to.replace(/^\+/, ''), text) } catch (error) {
-    return json({ code: 'WHATSAPP_DELIVERY_FAILED', message: error instanceof Error ? error.message : 'Unknown delivery error' }, 502)
-  }
-
-  const externalMessageId = clean(delivery?.messages?.[0]?.id) || null
-  const now = Date.now()
-  const threadId = `wa:${to.replace(/^\+/, '')}`
-  await bindings.DB!.batch([
-    bindings.DB!.prepare(`
-      INSERT INTO chat_threads(tenant_id,module_id,id,channel,external_thread_id,status,last_message_at_ms,created_at_ms,updated_at_ms)
-      VALUES(?1,?2,?3,'whatsapp',?4,'open',?5,?5,?5)
-      ON CONFLICT(tenant_id,module_id,id) DO UPDATE SET last_message_at_ms=excluded.last_message_at_ms,updated_at_ms=excluded.updated_at_ms
-    `).bind(tenantId, moduleId, threadId, to.replace(/^\+/, ''), now),
-    bindings.DB!.prepare(`
-      INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,content_json,created_at_ms)
-      VALUES(?1,?2,?3,?4,?5,'outbound','assistant',?6,?7,?8)
-    `).bind(tenantId, moduleId, crypto.randomUUID(), threadId, externalMessageId, text.slice(0, MAX_TEXT_CHARS), JSON.stringify({ channel: 'whatsapp', delivery_status: 'sent' }), now),
-  ])
-  return json({ ok: true, message_id: externalMessageId })
-}
-
 export async function handleWhatsappApiRequest(request: Request, bindings: WhatsappRuntimeBindings): Promise<Response | null> {
   const { pathname } = new URL(request.url)
-  if (WEBHOOK_PATHS.has(pathname)) {
-    if (request.method === 'GET') return handleWebhookGet(request, bindings)
-    if (request.method === 'POST') return handleWebhookPost(request, bindings)
-    return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET, POST' })
-  }
-  if (pathname === SEND_PATH) {
-    if (request.method === 'POST') return handleOutbound(request, bindings)
-    return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'POST' })
-  }
-  return null
+  if (!WEBHOOK_PATHS.has(pathname)) return null
+  if (request.method === 'GET') return handleWebhookGet(request, bindings)
+  if (request.method === 'POST') return handleWebhookPost(request, bindings)
+  return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET, POST' })
 }
