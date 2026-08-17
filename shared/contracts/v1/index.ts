@@ -77,3 +77,21 @@ export {
   type AsyncCanaryEventV1,
   type AsyncCanaryPayloadV1,
 } from './asyncCanary'
+
+export {
+  IncomingWhatsAppMessageV1Schema,
+  WhatsAppAccountConnectionV1Schema,
+  WhatsAppConnectionStatusV1Schema,
+  WhatsAppMessageStatusV1Schema,
+  WhatsAppSendCommandV1Schema,
+  WhatsAppSendResultV1Schema,
+  parseIncomingWhatsAppMessageV1,
+  parseWhatsAppAccountConnectionV1,
+  parseWhatsAppSendCommandV1,
+  parseWhatsAppSendResultV1,
+  type IncomingWhatsAppMessageV1,
+  type WhatsAppAccountConnectionV1,
+  type WhatsAppMessageStatusV1,
+  type WhatsAppSendCommandV1,
+  type WhatsAppSendResultV1,
+} from './whatsapp'
