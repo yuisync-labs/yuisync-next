@@ -31,7 +31,7 @@
     "test:luna": "npm run test:luna:unit && npm run test:luna:regressions && npm run test:luna:eval",
     "audit:ci": "node scripts/check-npm-audit.mjs",
     "luna:fixture:export": "node scripts/export-luna-trace-fixture.mjs",
-    "luna:trace:replay": "node scripts/replay-luna-trace-fixture.mjs",
+    "luna:trace:replay": "node scripts/replay-luna-trace.mjs",
     "test:luna:foundation": "node --test test/luna/errors.test.mjs test/luna/toolRegistry.test.mjs test/luna/runtime.test.mjs test/luna/traceFixture.test.mjs test/luna/temporaryOperationStore.test.mjs test/luna/factualRenderer.test.mjs test/luna/foundationIntegration.test.mjs test/luna/ciPolicy.test.mjs test/luna/evalPlatform.test.mjs test/luna/evalApiStatic.test.mjs",
     "luna:eval:compile": "node scripts/compile-luna-scenarios.mjs",
     "luna:eval:run": "node scripts/run-luna-evals.mjs",
