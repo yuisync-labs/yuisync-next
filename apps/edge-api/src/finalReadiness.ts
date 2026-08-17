@@ -4,7 +4,7 @@ import { hasCoordinationBinding, isEdgeCoordinationEnabled } from './coordinatio
 import { hasD1Binding, isEdgeDatabaseEnabled } from './databaseFeature'
 import { resolveRequestId } from './requestContext'
 
-const REQUIRED_MAIN_SCHEMA_VERSION = '27'
+const REQUIRED_MAIN_SCHEMA_VERSION = '28'
 
 export type FinalReadinessBindings={
   APP_ENV?:string;SERVICE_NAME?:string;RELEASE_CHANNEL?:string;

@@ -8,7 +8,7 @@ import {
   sendJson,
   validateUUID,
 } from '../server/lib/http.js'
-import { resolveWhatsappConfig, sendWhatsappText } from '../server/lib/whatsapp.js'
+import { resolveWhatsappConfig } from '../server/lib/whatsapp.js'
 
 type LooseRecord = Record<string, any>
 type JsonBody = Record<string, unknown>
@@ -305,30 +305,6 @@ async function subscribeBusinessAccount(tenantId: string, moduleId: string) {
   )
 }
 
-async function sendTestMessage(
-  tenantId: string,
-  moduleId: string,
-  body: JsonBody,
-) {
-  const to = digits(body.to)
-  const message = clean(body.message)
-
-  if (to.length < 8 || to.length > 20) {
-    throw new HttpError(400, 'Enter the recipient number in international format, using digits only.')
-  }
-  if (!message || message.length > 4096) {
-    throw new HttpError(400, 'Message is required and must have at most 4,096 characters.')
-  }
-
-  const config = await resolveWhatsappConfig({
-    tenantId,
-    moduleId,
-    requireMessaging: true,
-  })
-
-  return sendWhatsappText(config, { to, text: message })
-}
-
 export async function handleMetaWhatsappApi(req: IncomingMessage, res: ServerResponse) {
   try {
     const url = getUrl(req)
@@ -365,7 +341,7 @@ export async function handleMetaWhatsappApi(req: IncomingMessage, res: ServerRes
     if (action === 'save_asset_ids') {
       result = await saveAssetIds(tenantId, moduleId, body)
     } else if (action === 'send_message') {
-      result = await sendTestMessage(tenantId, moduleId, body)
+      throw new HttpError(410, 'Legacy WhatsApp sending is disabled. Use the Cloudflare /api/whatsapp/send route.')
     } else if (action === 'create_template') {
       result = await createMessageTemplate(tenantId, moduleId, body)
     } else if (action === 'subscribe_waba') {

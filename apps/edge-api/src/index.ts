@@ -18,7 +18,9 @@ import { handleAsyncQueue } from './queueHandler'
 import { handleRealtimeApiRequest, scheduleRealtimeInvalidation } from './realtimeApi'
 import type { EdgeAppEnvironment } from './types'
 import { handleWhatsappApiRequest } from './whatsappApi'
+import { handleWhatsappDeliveryStatusRequest } from './whatsappDeliveryStatusApi'
 import { handleWhatsappOnboardingApiRequest } from './whatsappOnboardingApi'
+import { handleWhatsappUnifiedOutboundApiRequest } from './whatsappOutboundApi'
 
 export { CoordinationDurableObject } from './coordination/coordinationDurableObject'
 
@@ -50,6 +52,12 @@ export default {
 
     const realtimeResponse = await handleRealtimeApiRequest(request, bindings)
     if (realtimeResponse) return realtimeResponse
+
+    const whatsappUnifiedOutboundResponse = await handleWhatsappUnifiedOutboundApiRequest(request, bindings)
+    if (whatsappUnifiedOutboundResponse) return respond(whatsappUnifiedOutboundResponse)
+
+    const whatsappStatusResponse = await handleWhatsappDeliveryStatusRequest(request.clone() as Request, bindings)
+    if (whatsappStatusResponse) return respond(whatsappStatusResponse)
 
     const whatsappResponse = await handleWhatsappApiRequest(request, bindings)
     if (whatsappResponse) return respond(whatsappResponse)

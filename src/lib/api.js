@@ -13,7 +13,7 @@ async function apiRequest(path, options = {}) {
   const payload = await response.json().catch(() => ({}))
 
   if (!response.ok) {
-    const error = new Error(payload.error?.message || payload.error || payload.message || 'Erro ao processar a solicitação.')
+    const error = new Error(payload.error?.message || payload.error || payload.message || payload.code || 'Erro ao processar a solicitação.')
     error.status = response.status
     error.code = payload.error?.code || payload.code || ''
     throw error
@@ -233,8 +233,30 @@ export function saveMetaWhatsappAssetIds(payload) {
   return metaWhatsappAction('save_asset_ids', payload)
 }
 
-export function sendMetaWhatsappReviewMessage(payload) {
-  return metaWhatsappAction('send_message', payload)
+export function sendMetaWhatsappReviewMessage({
+  tenantId,
+  moduleId = 'petshop',
+  to,
+  message,
+  phoneNumberId = null,
+}) {
+  return apiRequest('/whatsapp/send', {
+    method: 'POST',
+    body: JSON.stringify({
+      tenant_id: tenantId,
+      module_id: moduleId,
+      to,
+      text: message,
+      idempotency_key: crypto.randomUUID(),
+      ...(phoneNumberId ? { phone_number_id: phoneNumberId } : {}),
+    }),
+  }).then((payload) => ({
+    ...payload,
+    result: {
+      ...(payload.result || {}),
+      messages: payload.result?.provider_message_id ? [{ id: payload.result.provider_message_id }] : [],
+    },
+  }))
 }
 
 export function createMetaWhatsappTemplate(payload) {
