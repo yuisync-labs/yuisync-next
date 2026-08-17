@@ -102,7 +102,7 @@ describe('YuiSync edge foundation', () => {
       status: 'not_ready',
       checks: expect.objectContaining({
         database: 'ready',
-        schema_version: '26',
+        schema_version: '27',
         auth_database: 'not_configured',
         coordination: 'disabled',
         better_auth: 'disabled',
@@ -111,7 +111,7 @@ describe('YuiSync edge foundation', () => {
     }))
   })
 
-  it('fica ready somente com D1 v26, AUTH_DB e Better Auth configurados', async () => {
+  it('fica ready somente com D1 v27, AUTH_DB e Better Auth configurados', async () => {
     const response = await request('/ready', undefined, readyBindings())
     const body = await response.json<{
       status: string
@@ -123,7 +123,7 @@ describe('YuiSync edge foundation', () => {
       status: 'ready',
       checks: {
         database: 'ready',
-        schema_version: '26',
+        schema_version: '27',
         auth_database: 'configured',
         coordination: 'disabled',
         better_auth: 'enabled',
