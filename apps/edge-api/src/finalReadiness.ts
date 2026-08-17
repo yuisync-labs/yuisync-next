@@ -4,6 +4,8 @@ import { hasCoordinationBinding, isEdgeCoordinationEnabled } from './coordinatio
 import { hasD1Binding, isEdgeDatabaseEnabled } from './databaseFeature'
 import { resolveRequestId } from './requestContext'
 
+const REQUIRED_MAIN_SCHEMA_VERSION = '26'
+
 export type FinalReadinessBindings={
   APP_ENV?:string;SERVICE_NAME?:string;RELEASE_CHANNEL?:string;
   EDGE_DATABASE_ENABLED?:string;DB?:D1Database;
@@ -14,7 +16,7 @@ export type FinalReadinessBindings={
 
 async function mainSchema(database:D1Database|undefined){
   if(!database)return{status:'not_configured',version:null}
-  try{const row=await database.prepare("SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'").first<{value:string}>();return{status:String(row?.value)==='25'?'ready':'wrong_version',version:row?.value??null}}
+  try{const row=await database.prepare("SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'").first<{value:string}>();return{status:String(row?.value)===REQUIRED_MAIN_SCHEMA_VERSION?'ready':'wrong_version',version:row?.value??null}}
   catch{return{status:'unavailable',version:null}}
 }
 async function authSchema(database:D1Database|undefined){
