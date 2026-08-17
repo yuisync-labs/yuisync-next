@@ -15,10 +15,6 @@ CREATE TABLE IF NOT EXISTS whatsapp_outbound_messages (
   created_at_ms INTEGER NOT NULL,
   updated_at_ms INTEGER NOT NULL,
   PRIMARY KEY (tenant_id,module_id,idempotency_key),
-  FOREIGN KEY (tenant_id,module_id,internal_message_id)
-    REFERENCES chat_messages(tenant_id,module_id,id) ON UPDATE RESTRICT ON DELETE CASCADE,
-  FOREIGN KEY (tenant_id,module_id,thread_id)
-    REFERENCES chat_threads(tenant_id,module_id,id) ON UPDATE RESTRICT ON DELETE CASCADE,
   FOREIGN KEY (phone_number_id)
     REFERENCES whatsapp_phone_connections(phone_number_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   CHECK (length(trim(module_id)) BETWEEN 1 AND 64),
@@ -53,8 +49,8 @@ CREATE TABLE IF NOT EXISTS whatsapp_delivery_receipts (
   error_code TEXT,
   received_at_ms INTEGER NOT NULL,
   PRIMARY KEY (tenant_id,module_id,provider_message_id,status,provider_timestamp_ms),
-  FOREIGN KEY (tenant_id,module_id,provider_message_id)
-    REFERENCES whatsapp_outbound_messages(tenant_id,module_id,provider_message_id) ON UPDATE RESTRICT ON DELETE CASCADE,
+  FOREIGN KEY (phone_number_id)
+    REFERENCES whatsapp_phone_connections(phone_number_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   CHECK (length(trim(provider_message_id)) BETWEEN 1 AND 160),
   CHECK (length(trim(phone_number_id)) BETWEEN 1 AND 160),
   CHECK (error_code IS NULL OR length(trim(error_code)) BETWEEN 1 AND 160)
