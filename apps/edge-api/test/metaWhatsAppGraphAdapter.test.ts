@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import type { WhatsAppSendCommandV1 } from '../../../shared/contracts/v1/index'
 import {
   META_WHATSAPP_GRAPH_VERSION,
   MetaWhatsAppGraphAdapter,
@@ -7,10 +8,10 @@ import {
   type MetaWhatsAppCredentialsResolver,
 } from '../src/adapters/metaWhatsAppGraphAdapter'
 
-function command(overrides: Record<string, unknown> = {}) {
+function command(overrides: Partial<WhatsAppSendCommandV1> = {}): WhatsAppSendCommandV1 {
   return {
-    type: 'whatsapp_send_command' as const,
-    version: 1 as const,
+    type: 'whatsapp_send_command',
+    version: 1,
     tenant_id: 'tenant-petshop-001',
     conversation_id: 'conversation-wa-001',
     to: '+5532999999999',
