@@ -9,7 +9,7 @@ describe('D1 integration in workerd', () => {
   it('aplica todas as migrations no banco isolado de testes', async () => {
     const row = await testEnv.DB.prepare('SELECT value FROM _yuisync_system_metadata WHERE key = ?')
       .bind('schema_version').first<{ value: string }>()
-    expect(row).toEqual({ value: '25' })
+    expect(row).toEqual({ value: '26' })
 
     const required = [
       'clients','pets','catalog_products','services','inventory_balances','inventory_movements',
@@ -18,6 +18,7 @@ describe('D1 integration in workerd', () => {
       'operation_checkpoints','operation_effects','fiscal_documents','effect_outbox',
       'fiscal_profiles','fiscal_item_rules','fiscal_document_items','fiscal_events',
       'profiles','quick_replies','petshop_growth_portal_access','tenant_onboarding','tenant_governance_alerts','system_update_logs',
+      'whatsapp_waba_accounts','whatsapp_phone_connections','whatsapp_ingress_receipts',
     ]
     const tables = await testEnv.DB.prepare(`SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name`)
       .all<{ name: string }>()
