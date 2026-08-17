@@ -54,7 +54,12 @@ describe('D1WhatsAppConnectionRepository', () => {
     const repository = new D1WhatsAppConnectionRepository(testEnv.DB, () => 1_786_966_100_000)
     const expected = connection()
 
-    await repository.save(expected)
+    await expect(repository.save(expected)).resolves.toEqual({
+      tenantId: TENANT_A,
+      phoneNumberId: expected.phone_number_id,
+      created: true,
+      updated: false,
+    })
 
     await expect(repository.findByPhoneNumberId(expected.phone_number_id)).resolves.toEqual(expected)
     await expect(repository.findByTenantId(TENANT_A)).resolves.toEqual([expected])
@@ -116,7 +121,12 @@ describe('D1WhatsAppConnectionRepository', () => {
       status: 'connected',
     })
 
-    await repository.save(updated)
+    await expect(repository.save(updated)).resolves.toEqual({
+      tenantId: TENANT_A,
+      phoneNumberId: updated.phone_number_id,
+      created: false,
+      updated: true,
+    })
 
     await expect(repository.findByPhoneNumberId(updated.phone_number_id)).resolves.toEqual(updated)
   })
