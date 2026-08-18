@@ -18,10 +18,16 @@ function migrationsFrom(version: number): Migration[] {
   })
 }
 
-async function setSchemaVersion(version: number) {
+async function setSchemaSnapshot(version: number) {
   await db.prepare("UPDATE _yuisync_system_metadata SET value=?1 WHERE key='schema_version'")
     .bind(String(version))
     .run()
+
+  for (const migration of migrationsFrom(version)) {
+    await db.prepare('DELETE FROM d1_migrations WHERE name=?1')
+      .bind(migration.name)
+      .run()
+  }
 }
 
 async function dropVersion28() {
@@ -99,17 +105,17 @@ async function assertLatestSchema() {
 describe('D1 recent migration upgrade matrix', () => {
   it('upgrades v27, v26 and v25 snapshots to v28 using the repository migrations', async () => {
     await dropVersion28()
-    await setSchemaVersion(27)
+    await setSchemaSnapshot(27)
     await applyD1Migrations(db, migrationsFrom(27))
     await assertLatestSchema()
 
     await dropVersion27()
-    await setSchemaVersion(26)
+    await setSchemaSnapshot(26)
     await applyD1Migrations(db, migrationsFrom(26))
     await assertLatestSchema()
 
     await dropVersion26()
-    await setSchemaVersion(25)
+    await setSchemaSnapshot(25)
     await applyD1Migrations(db, migrationsFrom(25))
     await assertLatestSchema()
   })
