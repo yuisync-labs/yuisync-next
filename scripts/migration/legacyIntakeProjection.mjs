@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { gzipSync } from 'node:zlib'
+import { gzipSync, gunzipSync } from 'node:zlib'
 
 import { isSensitiveFieldName, registryEntry, sourceKeyFor } from './legacyIntakeRegistry.mjs'
 import { sealMigrationSecret } from './migrationSecretVault.mjs'
@@ -124,7 +124,16 @@ function payloadStorage(payloadText, base) {
 }
 
 export function reconstructLegacyPayload(record, chunks = []) {
-  if (record?.payload_mode === 'inline') return String(record.payload_json || '')
+  if (record?.payload_mode === 'inline') {
+    const payloadText = String(record.payload_json || '')
+    if (Buffer.byteLength(payloadText, 'utf8') !== Number(record.payload_bytes)) {
+      throw new LegacyIntakeProjectionError('MIGRATION_INLINE_PAYLOAD_SIZE_MISMATCH')
+    }
+    if (checksumText(payloadText) !== record.payload_checksum) {
+      throw new LegacyIntakeProjectionError('MIGRATION_INLINE_PAYLOAD_CHECKSUM_MISMATCH')
+    }
+    return payloadText
+  }
   if (record?.payload_mode !== 'chunked' || record?.payload_encoding !== 'gzip+base64') {
     throw new LegacyIntakeProjectionError('MIGRATION_PAYLOAD_STORAGE_INVALID')
   }
@@ -135,15 +144,22 @@ export function reconstructLegacyPayload(record, chunks = []) {
   if (ordered.length !== expected || ordered.some((chunk, index) => Number(chunk.chunk_index) !== index)) {
     throw new LegacyIntakeProjectionError('MIGRATION_PAYLOAD_CHUNKS_INCOMPLETE')
   }
-  const compressed = Buffer.concat(ordered.map((chunk) => Buffer.from(chunk.payload_chunk_b64, 'base64')))
+
   let payload
   try {
-    payload = Bun?.gzipDecompressSync
+    const compressed = Buffer.concat(ordered.map((chunk) => Buffer.from(chunk.payload_chunk_b64, 'base64')))
+    payload = gunzipSync(compressed)
   } catch {
-    payload = null
+    throw new LegacyIntakeProjectionError('MIGRATION_PAYLOAD_DECOMPRESSION_FAILED')
   }
-  // Node is the migration runtime; use a lazy import-free gunzip path through zlib below.
-  return compressed
+  const payloadText = payload.toString('utf8')
+  if (payload.length !== Number(record.payload_bytes)) {
+    throw new LegacyIntakeProjectionError('MIGRATION_CHUNKED_PAYLOAD_SIZE_MISMATCH')
+  }
+  if (checksumText(payloadText) !== record.payload_checksum) {
+    throw new LegacyIntakeProjectionError('MIGRATION_CHUNKED_PAYLOAD_CHECKSUM_MISMATCH')
+  }
+  return payloadText
 }
 
 export function projectLegacySourceRows({
