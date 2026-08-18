@@ -1,0 +1,28 @@
+name: PR60 codemod
+
+on:
+  pull_request:
+    types: [reopened]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  codemod:
+    if: ${{ github.event.pull_request.head.ref == 'hardening/agenda-declarative-package-state' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: hardening/agenda-declarative-package-state
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/agent-pr60-codemod.mjs
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/modules/petshop/pages/AgendaPage.jsx src/shared/hooks/useAppointments.js
+          git commit -m "refactor(agenda): wire declarative package state [pr60-codemod]"
+          git push origin HEAD:hardening/agenda-declarative-package-state
