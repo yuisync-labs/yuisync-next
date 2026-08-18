@@ -9,6 +9,23 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
 const MODULE = /^[a-z0-9][a-z0-9_-]{0,63}$/
 const SUBSCRIPTION_STATUSES = new Set(['pending_payment', 'active', 'paused', 'cancelled'])
 
+export const PETSHOP_SUBSCRIPTION_LIST_SQL = `
+  SELECT
+    subscription.*,
+    plan.name AS plan_name,plan.price_cents AS plan_price_cents,
+    plan.billing_cycle AS plan_billing_cycle,plan.services_json AS plan_services_json,plan.status AS plan_status,
+    client.name AS client_name,client.phone AS client_phone,client.email AS client_email,
+    client.address AS client_address,client.neighborhood AS client_neighborhood,client.city AS client_city,
+    NULL AS client_details_json
+  FROM client_subscriptions subscription
+  JOIN subscription_plans plan
+    ON plan.tenant_id=subscription.tenant_id AND plan.module_id=subscription.module_id AND plan.id=subscription.plan_id
+  JOIN clients client
+    ON client.tenant_id=subscription.tenant_id AND client.module_id=subscription.module_id AND client.id=subscription.client_id
+  WHERE subscription.tenant_id=?1 AND subscription.module_id=?2
+  ORDER BY subscription.started_at_ms DESC,subscription.id DESC
+`
+
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
   return Response.json(body, {
     status,
@@ -212,22 +229,8 @@ async function listSubscriptions(request: Request, bindings: Bindings): Promise<
   const resolved = await resolveScope(request, bindings)
   if (resolved.error) return resolved.error
   const scope = resolved.scope!
-  const rows = await bindings.DB!.prepare(`
-    SELECT
-      subscription.*,
-      plan.name AS plan_name,plan.price_cents AS plan_price_cents,
-      plan.billing_cycle AS plan_billing_cycle,plan.services_json AS plan_services_json,plan.status AS plan_status,
-      client.name AS client_name,client.phone AS client_phone,client.email AS client_email,
-      client.address AS client_address,client.neighborhood AS client_neighborhood,client.city AS client_city,
-      client.details_json AS client_details_json
-    FROM client_subscriptions subscription
-    JOIN subscription_plans plan
-      ON plan.tenant_id=subscription.tenant_id AND plan.module_id=subscription.module_id AND plan.id=subscription.plan_id
-    JOIN clients client
-      ON client.tenant_id=subscription.tenant_id AND client.module_id=subscription.module_id AND client.id=subscription.client_id
-    WHERE subscription.tenant_id=?1 AND subscription.module_id=?2
-    ORDER BY subscription.started_at_ms DESC,subscription.id DESC
-  `).bind(scope.tenantId, scope.moduleId).all<any>()
+  const rows = await bindings.DB!.prepare(PETSHOP_SUBSCRIPTION_LIST_SQL)
+    .bind(scope.tenantId, scope.moduleId).all<any>()
   const usageBySubscription = await allocationUsage(bindings, scope, rows.results.map((row) => String(row.id)))
   return json({
     subscriptions: rows.results.map((row) => {
