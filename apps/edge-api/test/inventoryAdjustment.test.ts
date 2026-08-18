@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 
-import { adjustInventoryStock, InventoryAdjustmentError } from '../src/inventoryAdjustment'
+import { adjustInventoryStock } from '../src/inventoryAdjustment'
 
 const db = (env as EdgeEnv & { DB: D1Database }).DB
 
@@ -128,7 +128,7 @@ describe('atomic inventory adjustment', () => {
         deltaUnits: -9,
         operationKey: `invalid:${seeded.productId}`,
         movementType: 'adjustment',
-      })).rejects.toMatchObject<Partial<InventoryAdjustmentError>>({ code: 'INSUFFICIENT_AVAILABLE_STOCK', status: 409 })
+      })).rejects.toMatchObject({ code: 'INSUFFICIENT_AVAILABLE_STOCK', status: 409 })
 
       const balance = await db.prepare(`
         SELECT on_hand_milliunits,reserved_milliunits,version
