@@ -25,6 +25,21 @@ const authDb = {
   }),
 } as unknown as D1Database
 
+const versionOnlyMainDb = {
+  prepare: (sql: string) => {
+    if (sql.includes('_yuisync_system_metadata')) {
+      return { first: async () => ({ value: '28' }) }
+    }
+    return {
+      all: async () => ({
+        results: [
+          { capability: 'table:whatsapp_outbound_messages', present: 0 },
+        ],
+      }),
+    }
+  },
+} as unknown as D1Database
+
 function readyBindings(overrides: Partial<TestBindings> = {}): TestBindings {
   return {
     ...testBindings,
@@ -103,6 +118,7 @@ describe('YuiSync edge foundation', () => {
       checks: expect.objectContaining({
         database: 'ready',
         schema_version: '28',
+        schema_capabilities: 'ready',
         auth_database: 'not_configured',
         coordination: 'disabled',
         better_auth: 'disabled',
@@ -124,12 +140,33 @@ describe('YuiSync edge foundation', () => {
       checks: {
         database: 'ready',
         schema_version: '28',
+        schema_capabilities: 'ready',
         auth_database: 'configured',
         coordination: 'disabled',
         better_auth: 'enabled',
         migration_capabilities: 'closed',
       },
     })
+  })
+
+  it('falha fechado quando metadata v28 não corresponde às capacidades estruturais', async () => {
+    const response = await request('/ready', undefined, readyBindings({ DB: versionOnlyMainDb }))
+    const body = await response.json<{
+      status: string
+      checks: { database: string; schema_version: string | null; schema_capabilities: string }
+      missing_schema_capabilities: string[]
+    }>()
+
+    expect(response.status).toBe(503)
+    expect(body).toMatchObject({
+      status: 'not_ready',
+      checks: {
+        database: 'incomplete',
+        schema_version: '28',
+        schema_capabilities: 'incomplete',
+      },
+    })
+    expect(body.missing_schema_capabilities).toContain('table:whatsapp_outbound_messages')
   })
 
   it('falha fechado quando a flag de banco está ativa sem binding D1', async () => {
