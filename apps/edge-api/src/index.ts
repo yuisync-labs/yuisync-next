@@ -1,4 +1,5 @@
 import app from './app'
+import { handleAdminMaintenanceRequest } from './adminMaintenance'
 import { handleAiLabApiRequest } from './aiLabApi'
 import { handleAppApiRequest } from './appApi'
 import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
@@ -85,6 +86,9 @@ export default {
 
     const managedUsersResponse = await handleManagedUsersApiRequest(request, bindings)
     if (managedUsersResponse) return respond(managedUsersResponse)
+
+    const adminMaintenanceResponse = await handleAdminMaintenanceRequest(request, bindings)
+    if (adminMaintenanceResponse) return respond(adminMaintenanceResponse)
 
     const inventoryAdjustmentResponse = await handleInventoryAdjustmentRequest(request, bindings)
     if (inventoryAdjustmentResponse) return respond(inventoryAdjustmentResponse)
