@@ -4,6 +4,7 @@ import { validateRegistryCoverage } from './legacyIntakeRegistry.mjs'
 export const REQUIRED_INTAKE_TABLES = Object.freeze([
   'migration_runs',
   'migration_source_records',
+  'migration_source_payload_chunks',
   'migration_secret_vault',
   'migration_table_checkpoints',
   'migration_reconciliation',
@@ -36,6 +37,7 @@ export function evaluateMigrationReadiness({
   secretSummary = null,
   storageSummary = null,
   clientsPetsSummary = null,
+  payloadSummary = null,
 } = {}) {
   const checks = []
   const coverage = validateRegistryCoverage(discoveredSource)
@@ -71,6 +73,15 @@ export function evaluateMigrationReadiness({
       && Number(clientsPetsSummary.destination_clients || 0) >= Number(clientsPetsSummary.source_clients || 0)
       && Number(clientsPetsSummary.ambiguous_matches || 0) === 0
     checks.push({ id: 'clients_pets_lossless_projection', ok: lossless, ...clientsPetsSummary })
+  }
+
+  if (payloadSummary) {
+    const oversized = Number(payloadSummary.oversized_rows || 0)
+    checks.push({
+      id: 'oversized_payload_support',
+      ok: oversized === 0 || payloadSummary.chunking_ready === true,
+      ...payloadSummary,
+    })
   }
 
   return { ready: checks.every((check) => check.ok), checks }
