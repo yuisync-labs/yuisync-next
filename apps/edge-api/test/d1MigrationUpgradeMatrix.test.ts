@@ -30,7 +30,23 @@ async function setSchemaSnapshot(version: number) {
   }
 }
 
+async function dropVersion30() {
+  await db.exec(`
+    DROP TRIGGER IF EXISTS cash_register_single_open_insert_guard;
+    DROP TRIGGER IF EXISTS cash_register_single_open_reopen_guard;
+    DROP VIEW IF EXISTS compat_chat_sessions;
+    DROP VIEW IF EXISTS compat_chat_messages;
+    ALTER TABLE chat_threads DROP COLUMN context_json;
+    ALTER TABLE chat_threads DROP COLUMN closed_at_ms;
+    ALTER TABLE chat_threads DROP COLUMN csat_score;
+    ALTER TABLE chat_threads DROP COLUMN assigned_staff_key;
+    ALTER TABLE chat_threads DROP COLUMN intent;
+    ALTER TABLE chat_threads DROP COLUMN customer_name;
+  `)
+}
+
 async function dropVersion29() {
+  await dropVersion30()
   await db.exec(`
     DROP TRIGGER IF EXISTS client_subscription_base_usage_capacity_guard;
     DROP TRIGGER IF EXISTS client_subscription_usage_projection_from_base;
@@ -66,7 +82,7 @@ async function dropVersion26() {
 async function assertLatestSchema() {
   const version = await db.prepare("SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'")
     .first<{ value: string }>()
-  expect(version?.value).toBe('29')
+  expect(version?.value).toBe('30')
 
   const tables = await db.prepare(`
     SELECT name FROM sqlite_schema
@@ -95,6 +111,12 @@ async function assertLatestSchema() {
     expect(names.has(required)).toBe(true)
   }
 
+  const chatColumns = await db.prepare('PRAGMA table_info(chat_threads)').all<{ name: string }>()
+  const chatNames = new Set(chatColumns.results.map((row) => row.name))
+  for (const required of ['customer_name', 'intent', 'assigned_staff_key', 'csat_score', 'closed_at_ms', 'context_json']) {
+    expect(chatNames.has(required)).toBe(true)
+  }
+
   const triggers = await db.prepare(`
     SELECT name FROM sqlite_schema
     WHERE type='trigger' AND name IN (
@@ -103,7 +125,9 @@ async function assertLatestSchema() {
       'subscription_usage_projection_after_allocation_insert',
       'subscription_usage_projection_after_allocation_update',
       'subscription_usage_projection_after_allocation_delete',
-      'package_allocation_from_late_service_consumption'
+      'package_allocation_from_late_service_consumption',
+      'cash_register_single_open_insert_guard',
+      'cash_register_single_open_reopen_guard'
     )
   `).all<{ name: string }>()
   expect(new Set(triggers.results.map((row) => row.name))).toEqual(new Set([
@@ -113,6 +137,8 @@ async function assertLatestSchema() {
     'subscription_usage_projection_after_allocation_update',
     'subscription_usage_projection_after_allocation_delete',
     'package_allocation_from_late_service_consumption',
+    'cash_register_single_open_insert_guard',
+    'cash_register_single_open_reopen_guard',
   ]))
 
   const indexes = await db.prepare(`
@@ -135,7 +161,12 @@ async function assertLatestSchema() {
 }
 
 describe('D1 recent migration upgrade matrix', () => {
-  it('upgrades v28, v27, v26 and v25 snapshots to v29 using the repository migrations', async () => {
+  it('upgrades v29, v28, v27, v26 and v25 snapshots to v30 using the repository migrations', async () => {
+    await dropVersion30()
+    await setSchemaSnapshot(29)
+    await applyD1Migrations(db, migrationsFrom(29))
+    await assertLatestSchema()
+
     await dropVersion29()
     await setSchemaSnapshot(28)
     await applyD1Migrations(db, migrationsFrom(28))
