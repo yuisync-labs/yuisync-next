@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildLegacyIntakeSql, createD1LegacyIntakeWriter } from '../scripts/migration/d1LegacyIntakeWriter.mjs'
-import { projectLegacySourceRows } from '../scripts/migration/legacyIntakeProjection.mjs'
+import { buildLegacyIntakeSql, createD1LegacyIntakeWriter, D1_SAFE_STATEMENT_MAX_BYTES } from '../scripts/migration/d1LegacyIntakeWriter.mjs'
+import { projectLegacySourceRows, reconstructLegacyPayload } from '../scripts/migration/legacyIntakeProjection.mjs'
 import { registryEntry, sourceKeyFor, validateRegistryCoverage } from '../scripts/migration/legacyIntakeRegistry.mjs'
 import { evaluateMigrationReadiness } from '../scripts/migration/migrationReadinessGate.mjs'
 import { openMigrationSecret, parseMigrationVaultKey, sealMigrationSecret } from '../scripts/migration/migrationSecretVault.mjs'
@@ -50,9 +50,31 @@ describe('migration intake readiness', () => {
     })
     expect(result.records).toHaveLength(1)
     expect(result.secrets).toHaveLength(2)
+    expect(result.records[0].payload_mode).toBe('inline')
     expect(result.records[0].payload_json).not.toContain('dont-log-me')
     expect(result.records[0].payload_json).not.toContain('nested-secret')
     expect(JSON.parse(result.records[0].secret_names_json)).toEqual(['$.metadata.access_token', '$.whatsapp_app_secret'])
+  })
+
+  it('compresses and chunks oversized source rows, then reconstructs them byte-for-byte', () => {
+    const hugeContext = Array.from({ length: 10_000 }, (_, index) => `turn-${index}:${'abcdef0123456789'.repeat(8)}`).join('|')
+    const result = projectLegacySourceRows({
+      runId: 'run-large', tableName: 'chat_sessions', tenantId: 'tenant-1', now: 5,
+      rows: [{ id: 'session-1', tenant_id: 'tenant-1', module_id: 'petshop', customer_phone: '1', context: { transcript: hugeContext } }],
+    })
+    const record = result.records[0]
+    expect(record.payload_mode).toBe('chunked')
+    expect(record.payload_encoding).toBe('gzip+base64')
+    expect(record.payload_json).toBeNull()
+    expect(record.payload_bytes).toBeGreaterThan(32_000)
+    expect(result.chunks.length).toBe(record.payload_chunk_count)
+    expect(result.chunks.every((chunk) => chunk.chunk_bytes <= 32_000)).toBe(true)
+    const reconstructed = reconstructLegacyPayload(record, result.chunks)
+    expect(Buffer.byteLength(reconstructed, 'utf8')).toBe(record.payload_bytes)
+    expect(JSON.parse(reconstructed).context.transcript).toBe(hugeContext)
+
+    const sql = buildLegacyIntakeSql({ records: result.records, chunks: result.chunks, checkpoints: [result.checkpoint] })
+    expect(Math.max(...sql.split('\n').map((line) => Buffer.byteLength(line, 'utf8')))).toBeLessThanOrEqual(D1_SAFE_STATEMENT_MAX_BYTES)
   })
 
   it('rejects cross-tenant rows and secret rows without a vault key', () => {
@@ -121,8 +143,8 @@ describe('migration intake readiness', () => {
     })).toThrowError(expect.objectContaining({ code: 'PET_OWNER_MATCH_AMBIGUOUS' }))
   })
 
-  it('marks readiness green only when registry, destination, auth, secrets, storage and clients/pets are green', () => {
-    const intakeTables = ['migration_runs','migration_source_records','migration_secret_vault','migration_table_checkpoints','migration_reconciliation']
+  it('marks readiness green only when registry, destination, auth, secrets, storage, payloads and clients/pets are green', () => {
+    const intakeTables = ['migration_runs','migration_source_records','migration_source_payload_chunks','migration_secret_vault','migration_table_checkpoints','migration_reconciliation']
     const report = evaluateMigrationReadiness({
       discoveredSource: [{ table_name: 'clients', table_type: 'BASE TABLE', row_count: 10 }],
       destinationTables: intakeTables,
@@ -130,11 +152,12 @@ describe('migration intake readiness', () => {
       secretSummary: { secret_values: 3, vault_ready: true },
       storageSummary: { supabase_hosted_assets: 0 },
       clientsPetsSummary: { source_clients: 10, destination_clients: 10, source_pets: 5, destination_pets: 5, ambiguous_matches: 0 },
+      payloadSummary: { oversized_rows: 1, chunking_ready: true },
     })
     expect(report.ready).toBe(true)
   })
 
-  it('builds idempotent intake SQL and requires run-specific production authorization', async () => {
+  it('builds retry-safe intake SQL and requires run-specific production authorization', async () => {
     const sql = buildLegacyIntakeSql({
       run: {
         id: 'run-1', source_system: 'supabase', source_ref: 'source', tenant_id: 'tenant-1', module_id: 'petshop',
@@ -143,7 +166,7 @@ describe('migration intake readiness', () => {
       },
     })
     expect(sql).toContain("O''Hara")
-    expect(sql).toContain('BEGIN IMMEDIATE;')
+    expect(sql).not.toContain('BEGIN IMMEDIATE;')
     expect(sql).toContain('ON CONFLICT(id) DO UPDATE')
 
     const writer = createD1LegacyIntakeWriter({ environment: 'production', productionAuthorization: 'wrong', execFile: async () => ({ stdout: '' }) })
