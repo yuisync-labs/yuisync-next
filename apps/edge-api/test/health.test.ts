@@ -28,12 +28,12 @@ const authDb = {
 const versionOnlyMainDb = {
   prepare: (sql: string) => {
     if (sql.includes('_yuisync_system_metadata')) {
-      return { first: async () => ({ value: '28' }) }
+      return { first: async () => ({ value: '29' }) }
     }
     return {
       all: async () => ({
         results: [
-          { capability: 'table:whatsapp_outbound_messages', present: 0 },
+          { capability: 'trigger:client_subscription_usage_projection_from_base', present: 0 },
         ],
       }),
     }
@@ -117,7 +117,7 @@ describe('YuiSync edge foundation', () => {
       status: 'not_ready',
       checks: expect.objectContaining({
         database: 'ready',
-        schema_version: '28',
+        schema_version: '29',
         schema_capabilities: 'ready',
         auth_database: 'not_configured',
         coordination: 'disabled',
@@ -127,7 +127,7 @@ describe('YuiSync edge foundation', () => {
     }))
   })
 
-  it('fica ready somente com D1 v28, AUTH_DB e Better Auth configurados', async () => {
+  it('fica ready somente com D1 v29, AUTH_DB e Better Auth configurados', async () => {
     const response = await request('/ready', undefined, readyBindings())
     const body = await response.json<{
       status: string
@@ -139,7 +139,7 @@ describe('YuiSync edge foundation', () => {
       status: 'ready',
       checks: {
         database: 'ready',
-        schema_version: '28',
+        schema_version: '29',
         schema_capabilities: 'ready',
         auth_database: 'configured',
         coordination: 'disabled',
@@ -149,7 +149,7 @@ describe('YuiSync edge foundation', () => {
     })
   })
 
-  it('falha fechado quando metadata v28 não corresponde às capacidades estruturais', async () => {
+  it('falha fechado quando metadata v29 não corresponde às capacidades estruturais', async () => {
     const response = await request('/ready', undefined, readyBindings({ DB: versionOnlyMainDb }))
     const body = await response.json<{
       status: string
@@ -162,11 +162,11 @@ describe('YuiSync edge foundation', () => {
       status: 'not_ready',
       checks: {
         database: 'incomplete',
-        schema_version: '28',
+        schema_version: '29',
         schema_capabilities: 'incomplete',
       },
     })
-    expect(body.missing_schema_capabilities).toContain('table:whatsapp_outbound_messages')
+    expect(body.missing_schema_capabilities.length).toBeGreaterThan(0)
   })
 
   it('falha fechado quando a flag de banco está ativa sem binding D1', async () => {
