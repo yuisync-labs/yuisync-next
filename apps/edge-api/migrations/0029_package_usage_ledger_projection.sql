@@ -75,14 +75,14 @@ CREATE TRIGGER IF NOT EXISTS subscription_usage_projection_after_allocation_inse
 AFTER INSERT ON subscription_benefit_allocations
 FOR EACH ROW
 BEGIN
-  UPDATE client_subscriptions AS subscription
+  UPDATE client_subscriptions
   SET services_used_json=COALESCE((
     SELECT json_group_object(benefit_key,total_used)
     FROM (
       SELECT benefit_key,SUM(amount) AS total_used
       FROM (
         SELECT base.key AS benefit_key,MAX(0,CAST(base.value AS INTEGER)) AS amount
-        FROM json_each(subscription.benefit_ledger_base_used_json) base
+        FROM json_each(client_subscriptions.benefit_ledger_base_used_json) base
         UNION ALL
         SELECT allocation.benefit_key AS benefit_key,COUNT(*) AS amount
         FROM subscription_benefit_allocations allocation
@@ -95,76 +95,76 @@ BEGIN
       GROUP BY benefit_key
     ) usage_totals
   ),'{}')
-  WHERE subscription.tenant_id=NEW.tenant_id
-    AND subscription.module_id=NEW.module_id
-    AND subscription.id=NEW.subscription_id;
+  WHERE tenant_id=NEW.tenant_id
+    AND module_id=NEW.module_id
+    AND id=NEW.subscription_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS subscription_usage_projection_after_allocation_update
 AFTER UPDATE OF state,benefit_key,subscription_id ON subscription_benefit_allocations
 FOR EACH ROW
 BEGIN
-  UPDATE client_subscriptions AS subscription
+  UPDATE client_subscriptions
   SET services_used_json=COALESCE((
     SELECT json_group_object(benefit_key,total_used)
     FROM (
       SELECT benefit_key,SUM(amount) AS total_used
       FROM (
         SELECT base.key AS benefit_key,MAX(0,CAST(base.value AS INTEGER)) AS amount
-        FROM json_each(subscription.benefit_ledger_base_used_json) base
+        FROM json_each(client_subscriptions.benefit_ledger_base_used_json) base
         UNION ALL
         SELECT allocation.benefit_key AS benefit_key,COUNT(*) AS amount
         FROM subscription_benefit_allocations allocation
-        WHERE allocation.tenant_id=subscription.tenant_id
-          AND allocation.module_id=subscription.module_id
-          AND allocation.subscription_id=subscription.id
+        WHERE allocation.tenant_id=client_subscriptions.tenant_id
+          AND allocation.module_id=client_subscriptions.module_id
+          AND allocation.subscription_id=client_subscriptions.id
           AND allocation.state='consumed'
         GROUP BY allocation.benefit_key
       ) usage_parts
       GROUP BY benefit_key
     ) usage_totals
   ),'{}')
-  WHERE subscription.tenant_id=OLD.tenant_id
-    AND subscription.module_id=OLD.module_id
-    AND subscription.id=OLD.subscription_id;
+  WHERE tenant_id=OLD.tenant_id
+    AND module_id=OLD.module_id
+    AND id=OLD.subscription_id;
 
-  UPDATE client_subscriptions AS subscription
+  UPDATE client_subscriptions
   SET services_used_json=COALESCE((
     SELECT json_group_object(benefit_key,total_used)
     FROM (
       SELECT benefit_key,SUM(amount) AS total_used
       FROM (
         SELECT base.key AS benefit_key,MAX(0,CAST(base.value AS INTEGER)) AS amount
-        FROM json_each(subscription.benefit_ledger_base_used_json) base
+        FROM json_each(client_subscriptions.benefit_ledger_base_used_json) base
         UNION ALL
         SELECT allocation.benefit_key AS benefit_key,COUNT(*) AS amount
         FROM subscription_benefit_allocations allocation
-        WHERE allocation.tenant_id=subscription.tenant_id
-          AND allocation.module_id=subscription.module_id
-          AND allocation.subscription_id=subscription.id
+        WHERE allocation.tenant_id=client_subscriptions.tenant_id
+          AND allocation.module_id=client_subscriptions.module_id
+          AND allocation.subscription_id=client_subscriptions.id
           AND allocation.state='consumed'
         GROUP BY allocation.benefit_key
       ) usage_parts
       GROUP BY benefit_key
     ) usage_totals
   ),'{}')
-  WHERE subscription.tenant_id=NEW.tenant_id
-    AND subscription.module_id=NEW.module_id
-    AND subscription.id=NEW.subscription_id;
+  WHERE tenant_id=NEW.tenant_id
+    AND module_id=NEW.module_id
+    AND id=NEW.subscription_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS subscription_usage_projection_after_allocation_delete
 AFTER DELETE ON subscription_benefit_allocations
 FOR EACH ROW
 BEGIN
-  UPDATE client_subscriptions AS subscription
+  UPDATE client_subscriptions
   SET services_used_json=COALESCE((
     SELECT json_group_object(benefit_key,total_used)
     FROM (
       SELECT benefit_key,SUM(amount) AS total_used
       FROM (
         SELECT base.key AS benefit_key,MAX(0,CAST(base.value AS INTEGER)) AS amount
-        FROM json_each(subscription.benefit_ledger_base_used_json) base
+        FROM json_each(client_subscriptions.benefit_ledger_base_used_json) base
         UNION ALL
         SELECT allocation.benefit_key AS benefit_key,COUNT(*) AS amount
         FROM subscription_benefit_allocations allocation
@@ -177,9 +177,9 @@ BEGIN
       GROUP BY benefit_key
     ) usage_totals
   ),'{}')
-  WHERE subscription.tenant_id=OLD.tenant_id
-    AND subscription.module_id=OLD.module_id
-    AND subscription.id=OLD.subscription_id;
+  WHERE tenant_id=OLD.tenant_id
+    AND module_id=OLD.module_id
+    AND id=OLD.subscription_id;
 END;
 
 -- If a formerly-standalone appointment is converted to package coverage during completion,
@@ -253,20 +253,20 @@ WHERE appointment.subscription_id IS NOT NULL
   );
 
 -- Rebuild every compatibility usage projection from the canonical base + consumed ledger.
-UPDATE client_subscriptions AS subscription
+UPDATE client_subscriptions
 SET services_used_json=COALESCE((
   SELECT json_group_object(benefit_key,total_used)
   FROM (
     SELECT benefit_key,SUM(amount) AS total_used
     FROM (
       SELECT base.key AS benefit_key,MAX(0,CAST(base.value AS INTEGER)) AS amount
-      FROM json_each(subscription.benefit_ledger_base_used_json) base
+      FROM json_each(client_subscriptions.benefit_ledger_base_used_json) base
       UNION ALL
       SELECT allocation.benefit_key AS benefit_key,COUNT(*) AS amount
       FROM subscription_benefit_allocations allocation
-      WHERE allocation.tenant_id=subscription.tenant_id
-        AND allocation.module_id=subscription.module_id
-        AND allocation.subscription_id=subscription.id
+      WHERE allocation.tenant_id=client_subscriptions.tenant_id
+        AND allocation.module_id=client_subscriptions.module_id
+        AND allocation.subscription_id=client_subscriptions.id
         AND allocation.state='consumed'
       GROUP BY allocation.benefit_key
     ) usage_parts
