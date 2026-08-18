@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { DateTime } from 'luxon'
 import {
   Ban,
   Bike,
@@ -21,11 +22,17 @@ import {
 
 import { useAuthCtx } from '../../../context/AuthContext'
 import { useModuleCtx } from '../../../context/ModuleContext'
-import { fmtCurrency, supabase } from '../../../lib/supabase'
-import { applyTenantFilter, runWithTenantFallback } from '../../../lib/tenant'
+import { fmtCurrency } from '../../../lib/supabase'
 import { useClients } from '../../../shared/hooks/useClients'
 import { groupPetsByTutor } from '../../../shared/lib/petTutorGroups'
 import { useCatalogPlans } from '../hooks/useCatalogPlans'
+import {
+  cancelSubscriptionCommand,
+  loadPackageAppointmentsCommand,
+  publishPackageScheduleHint,
+  reschedulePackageAppointmentCommand,
+  updateSubscriptionUsageCommand,
+} from '../lib/planCommands'
 import { usePetshopAdvanced, BILLING_CYCLES } from '../hooks/usePetshopAdvanced'
 import {
   MOTODOG_PLAN_SERVICE,
@@ -44,7 +51,6 @@ import {
 } from '../lib/subscriptionUsageAdmin'
 
 const PACKAGE_FIRST_APPOINTMENT_STORAGE_KEY = 'yuisync:package-first-appointment-at'
-const PACKAGE_SCHEDULE_SAVED_EVENT = 'yuisync:subscription-schedule-saved'
 
 function enrichPlanServices(services, catalogServices) {
   const catalog = catalogServiceMap(catalogServices)
@@ -111,36 +117,39 @@ function statusMeta(status) {
   }[status] || { label: status || 'Indefinido', cls: 'badge-gray' }
 }
 
+const PETSHOP_ZONE = 'America/Sao_Paulo'
+
+function asPetshopDateTime(value) {
+  if (value instanceof Date) return DateTime.fromJSDate(value).setZone(PETSHOP_ZONE)
+  const raw = String(value || '')
+  if (!raw) return DateTime.invalid('empty')
+  const parsed = DateTime.fromISO(raw, { setZone: true })
+  return parsed.isValid ? parsed.setZone(PETSHOP_ZONE) : DateTime.invalid('invalid')
+}
+
 function localDateValue(value) {
-  const date = value instanceof Date ? value : new Date(value || '')
-  if (Number.isNaN(date.getTime())) return ''
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  const date = asPetshopDateTime(value)
+  return date.isValid ? date.toISODate() : ''
 }
 
 function renewalStartDate(subscription = {}, pendingSubscription = null) {
-  if (pendingSubscription?.first_appointment_at) return localDateValue(pendingSubscription.first_appointment_at)
-  const firstAppointment = new Date(subscription.first_appointment_at || '')
-  if (!Number.isNaN(firstAppointment.getTime())) {
-    firstAppointment.setDate(firstAppointment.getDate() + 28)
-    return localDateValue(firstAppointment)
-  }
+  if (pendingSubscription?.started_at) return localDateValue(pendingSubscription.started_at)
   if (subscription.next_billing_date) return String(subscription.next_billing_date).slice(0, 10)
-  return localDateValue(new Date())
+  const started = asPetshopDateTime(subscription.started_at)
+  if (started.isValid) return started.plus({ days: 28 }).toISODate()
+  return DateTime.now().setZone(PETSHOP_ZONE).toISODate()
 }
 
 function appointmentInputParts(value) {
-  const date = new Date(value || '')
-  if (Number.isNaN(date.getTime())) return { date: '', time: '' }
-  return {
-    date: localDateValue(date),
-    time: `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`,
-  }
+  const date = asPetshopDateTime(value)
+  if (!date.isValid) return { date: '', time: '' }
+  return { date: date.toISODate(), time: date.toFormat('HH:mm') }
 }
 
 function appointmentDateTimeIso(dateValue, timeValue) {
   if (!dateValue || !timeValue) return ''
-  const date = new Date(`${dateValue}T${timeValue}:00`)
-  return Number.isNaN(date.getTime()) ? '' : date.toISOString()
+  const date = DateTime.fromISO(`${dateValue}T${timeValue}:00`, { zone: PETSHOP_ZONE })
+  return date.isValid ? date.toUTC().toISO() : ''
 }
 
 function packageAppointmentServiceLabel(appointment = {}) {
@@ -510,24 +519,17 @@ function PackageAppointmentsModal({ subscription, activeTenantId, moduleId, onCl
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const runScoped = useMemo(() => (runner) => runWithTenantFallback(activeTenantId, runner), [activeTenantId])
 
   async function loadAppointments() {
     setLoading(true)
     setError('')
     try {
-      const response = await runScoped(async (includeTenant) => {
-        let query = supabase
-          .from('appointments')
-          .select('id,scheduled_at,status,service_type,service_items,notes,source')
-          .eq('module_id', moduleId)
-          .eq('subscription_id', subscription.id)
-          .order('scheduled_at', { ascending: true })
-        query = applyTenantFilter(query, activeTenantId, includeTenant)
-        return query
+      const appointments = await loadPackageAppointmentsCommand({
+        tenantId: activeTenantId,
+        moduleId,
+        subscriptionId: subscription.id,
       })
-      if (response.error) throw response.error
-      setRows((response.data || []).map((appointment) => ({
+      setRows(appointments.map((appointment) => ({
         ...appointment,
         ...appointmentInputParts(appointment.scheduled_at),
         original_scheduled_at: appointment.scheduled_at,
@@ -568,16 +570,13 @@ function PackageAppointmentsModal({ subscription, activeTenantId, moduleId, onCl
         const after = new Date(row.next_scheduled_at || '').getTime()
         if (Number.isFinite(before) && Number.isFinite(after) && before === after) continue
 
-        const response = await supabase.rpc('update_petshop_appointment_transaction', {
-          p_appointment_id: row.id,
-          p_payload: {
-            tenant_id: activeTenantId,
-            module_id: moduleId,
-            scheduled_at: row.next_scheduled_at,
-            source: row.source || 'package_activation',
-          },
+        await reschedulePackageAppointmentCommand({
+          tenantId: activeTenantId,
+          moduleId,
+          appointmentId: row.id,
+          scheduledAt: row.next_scheduled_at,
+          source: row.source || 'package_activation',
         })
-        if (response.error) throw response.error
       }
 
       const firstAt = normalized
@@ -585,26 +584,16 @@ function PackageAppointmentsModal({ subscription, activeTenantId, moduleId, onCl
         .filter(Boolean)
         .sort((left, right) => new Date(left) - new Date(right))[0]
 
-      if (firstAt) {
-        const response = await runScoped(async (includeTenant) => {
-          let query = supabase
-            .from('client_subscriptions')
-            .update({ first_appointment_at: firstAt, updated_at: new Date().toISOString() })
-            .eq('id', subscription.id)
-            .eq('module_id', moduleId)
-          query = applyTenantFilter(query, activeTenantId, includeTenant)
-          return query.select('id,first_appointment_at').single()
-        })
-        if (response.error) throw response.error
-      }
+      if (firstAt) publishPackageScheduleHint({ subscriptionId: subscription.id, firstAppointmentAt: firstAt })
 
       await loadAppointments()
       await onChanged?.()
       setNotice('Datas do pacote atualizadas com sucesso.')
     } catch (saveError) {
+      const code = String(saveError?.code || '')
       const message = String(saveError?.message || '')
-      setError(message.includes('update_petshop_appointment_transaction')
-        ? 'A infraestrutura de edição da Agenda ainda não foi aplicada no banco.'
+      setError(code === 'APPOINTMENT_UPDATE_UNAVAILABLE'
+        ? 'A infraestrutura de edição da Agenda ainda não está disponível.'
         : message || 'Não foi possível atualizar os agendamentos do pacote.')
     } finally {
       setSaving(false)
@@ -790,7 +779,6 @@ export default function PlanosNativePage({ setPage }) {
   const [editingUsage, setEditingUsage] = useState(null)
   const [managingAppointments, setManagingAppointments] = useState(null)
   const [cancelling, setCancelling] = useState(null)
-  const runScoped = useMemo(() => (runner) => runWithTenantFallback(activeTenantId, runner), [activeTenantId])
 
   const activeSubscriptions = subscriptions.filter((subscription) => (
     subscription.status === 'active' && !subscriptionIsCompleted(subscription)
@@ -808,7 +796,7 @@ export default function PlanosNativePage({ setPage }) {
   )
   const renewalsToday = subscriptions.filter((subscription) => (
     !subscriptionIsCompleted(subscription)
-    && subscription.next_billing_date === new Date().toISOString().slice(0, 10)
+    && subscription.next_billing_date === DateTime.now().setZone(PETSHOP_ZONE).toISODate()
   )).length
 
   async function reload() {
@@ -849,29 +837,8 @@ export default function PlanosNativePage({ setPage }) {
   async function persistPendingSchedule(subscription) {
     if (subscription?.status !== 'pending_payment') return subscription
     const firstAt = window.sessionStorage.getItem(PACKAGE_FIRST_APPOINTMENT_STORAGE_KEY)
-      || subscription.first_appointment_at
-    if (!firstAt) throw new Error('Informe a primeira data e o horário fixo antes de abrir o pagamento.')
-
-    const response = await runScoped(async (includeTenant) => {
-      let query = supabase
-        .from('client_subscriptions')
-        .update({
-          first_appointment_at: firstAt,
-          recurring_appointments_created_at: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', subscription.id)
-        .eq('module_id', moduleId)
-      query = applyTenantFilter(query, activeTenantId, includeTenant)
-      return query.select('id,first_appointment_at').single()
-    })
-    if (response.error) throw response.error
-
-    window.sessionStorage.removeItem(PACKAGE_FIRST_APPOINTMENT_STORAGE_KEY)
-    window.dispatchEvent(new CustomEvent(PACKAGE_SCHEDULE_SAVED_EVENT, {
-      detail: { subscriptionId: subscription.id, firstAppointmentAt: firstAt },
-    }))
-    return { ...subscription, first_appointment_at: firstAt }
+    if (firstAt) publishPackageScheduleHint({ subscriptionId: subscription.id, firstAppointmentAt: firstAt })
+    return subscription
   }
 
   async function handleSaveSubscription(payload) {
@@ -903,7 +870,7 @@ export default function PlanosNativePage({ setPage }) {
       && candidate.client_id === subscription.client_id
       && candidate.status === 'pending_payment'
     ))
-    if (pendingRenewal?.first_appointment_at) {
+    if (pendingRenewal) {
       focusSubscriptionPayment(pendingRenewal.id)
       return
     }
@@ -918,31 +885,13 @@ export default function PlanosNativePage({ setPage }) {
   async function saveUsage(subscription, requested) {
     if (!activeTenantId) throw new Error('Selecione uma empresa ativa antes de editar o consumo.')
     const servicesUsed = clampSubscriptionUsage(subscription, requested)
-    const response = await runScoped(async (includeTenant) => {
-      let query = supabase
-        .from('client_subscriptions')
-        .update({ services_used: servicesUsed, updated_at: new Date().toISOString() })
-        .eq('id', subscription.id)
-        .eq('module_id', moduleId)
-      query = applyTenantFilter(query, activeTenantId, includeTenant)
-      return query.select('id,services_used').single()
-    })
-    if (response.error) throw response.error
+    await updateSubscriptionUsageCommand({ tenantId: activeTenantId, moduleId, subscriptionId: subscription.id, servicesUsed })
     await reload()
   }
 
   async function cancelSubscription(subscription) {
     if (!activeTenantId) throw new Error('Selecione uma empresa ativa antes de cancelar.')
-    const response = await runScoped(async (includeTenant) => {
-      let query = supabase
-        .from('client_subscriptions')
-        .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-        .eq('id', subscription.id)
-        .eq('module_id', moduleId)
-      query = applyTenantFilter(query, activeTenantId, includeTenant)
-      return query.select('id,status').single()
-    })
-    if (response.error) throw response.error
+    await cancelSubscriptionCommand({ tenantId: activeTenantId, moduleId, subscriptionId: subscription.id })
     await reload()
   }
 
