@@ -1,0 +1,28 @@
+name: PR62 codemod
+
+on:
+  pull_request:
+    types: [opened, reopened]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  codemod:
+    if: ${{ github.event.pull_request.head.ref == 'hardening/planos-native-commands' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: hardening/planos-native-commands
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/agent-pr62-codemod.mjs
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/modules/petshop/pages/PlanosNativePage.jsx
+          git commit -m "refactor(plans): remove page data mutations [pr62-codemod]"
+          git push origin HEAD:hardening/planos-native-commands
