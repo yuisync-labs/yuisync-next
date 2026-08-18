@@ -39,12 +39,12 @@ describe('admin maintenance integrity', () => {
       body: JSON.stringify({ tenantId: 'tenant-test-1', moduleId: 'petshop', confirm: 'RESET_CHAT_HISTORY' }),
     })
 
-    const missingGate = await handleAdminMaintenanceRequest(request.clone(), { DB: db } as any, { getSession: getSession as any })
+    const missingGate = await handleAdminMaintenanceRequest(request.clone() as unknown as Request, { DB: db } as any, { getSession: getSession as any })
     expect(missingGate?.status).toBe(403)
     await expect(missingGate?.json()).resolves.toMatchObject({ code: 'MAINTENANCE_TEST_TENANT_REQUIRED' })
     expect(getSession).not.toHaveBeenCalled()
 
-    const wrongTenant = await handleAdminMaintenanceRequest(request.clone(), {
+    const wrongTenant = await handleAdminMaintenanceRequest(request.clone() as unknown as Request, {
       DB: db,
       MAINTENANCE_TEST_TENANT_ID: 'another-test-tenant',
     } as any, { getSession: getSession as any })
