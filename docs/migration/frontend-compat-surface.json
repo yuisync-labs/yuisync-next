@@ -3,145 +3,42 @@
   "policy": "frontend-supabase-compat-ratchet",
   "generated_from": "src/**/*.{js,jsx,ts,tsx}",
   "totals": {
-    "from": 216,
+    "from": 213,
     "rpc": 16
   },
   "files": {
-    "src/components/SupportWidget.jsx": {
-      "from": 5,
-      "rpc": 0
-    },
-    "src/components/SystemSupportPriorityAlert.jsx": {
-      "from": 1,
-      "rpc": 0
-    },
-    "src/modules/petshop/components/ClientHistoryGroomingEnhancer.jsx": {
-      "from": 5,
-      "rpc": 0
-    },
-    "src/modules/petshop/components/DashboardAgendaLabelsEnhancer.jsx": {
-      "from": 1,
-      "rpc": 0
-    },
-    "src/modules/petshop/components/DashboardServiceKpiEnhancer.jsx": {
-      "from": 2,
-      "rpc": 0
-    },
-    "src/modules/petshop/components/PackageRecurringScheduleEnhancer.jsx": {
-      "from": 1,
-      "rpc": 0
-    },
-    "src/modules/petshop/hooks/useCatalogPlans.js": {
-      "from": 2,
-      "rpc": 0
-    },
-    "src/modules/petshop/hooks/usePetshopAdvanced.js": {
-      "from": 2,
-      "rpc": 0
-    },
-    "src/modules/petshop/hooks/usePetshopAdvancedCore.js": {
-      "from": 46,
-      "rpc": 4
-    },
-    "src/modules/petshop/hooks/usePetshopGrowth.js": {
-      "from": 21,
-      "rpc": 0
-    },
-    "src/modules/petshop/lib/cashRegisterOperations.js": {
-      "from": 7,
-      "rpc": 0
-    },
-    "src/modules/petshop/lib/deliveryOperations.js": {
-      "from": 8,
-      "rpc": 0
-    },
-    "src/modules/petshop/lib/packageCommissionOperations.js": {
-      "from": 4,
-      "rpc": 0
-    },
-    "src/modules/petshop/lib/planCommands.js": {
-      "from": 1,
-      "rpc": 1
-    },
-    "src/modules/petshop/lib/teamSettingsOperations.js": {
-      "from": 1,
-      "rpc": 0
-    },
-    "src/modules/petshop/pages/BanhoTosaPdvPanel.jsx": {
-      "from": 2,
-      "rpc": 2
-    },
-    "src/modules/petshop/pages/PackageActivationPdvPanel.jsx": {
-      "from": 1,
-      "rpc": 1
-    },
-    "src/modules/petshop/pages/PackageActivationReliablePanel.jsx": {
-      "from": 0,
-      "rpc": 1
-    },
-    "src/modules/petshop/pages/PlanosPaymentIntegratedPage.jsx": {
-      "from": 1,
-      "rpc": 0
-    },
-    "src/public/pages/PublicBookingPage.jsx": {
-      "from": 0,
-      "rpc": 1
-    },
-    "src/public/pages/PublicClientPortalPage.jsx": {
-      "from": 0,
-      "rpc": 1
-    },
-    "src/shared/hooks/useAnalytics.js": {
-      "from": 6,
-      "rpc": 0
-    },
-    "src/shared/hooks/useAppointments.js": {
-      "from": 13,
-      "rpc": 2
-    },
-    "src/shared/hooks/useChat.js": {
-      "from": 7,
-      "rpc": 0
-    },
-    "src/shared/hooks/useClients.js": {
-      "from": 7,
-      "rpc": 0
-    },
-    "src/shared/hooks/useFinance.js": {
-      "from": 13,
-      "rpc": 1
-    },
-    "src/shared/hooks/useProducts.js": {
-      "from": 9,
-      "rpc": 0
-    },
-    "src/shared/hooks/useSales.js": {
-      "from": 13,
-      "rpc": 1
-    },
-    "src/shared/pages/AiLabPage.jsx": {
-      "from": 10,
-      "rpc": 0
-    },
-    "src/shared/pages/CommercialPage.jsx": {
-      "from": 9,
-      "rpc": 1
-    },
-    "src/shared/pages/LogsPage.jsx": {
-      "from": 2,
-      "rpc": 0
-    },
-    "src/shared/pages/SettingsIntegratedPage.jsx": {
-      "from": 1,
-      "rpc": 0
-    },
-    "src/shared/pages/SettingsPage.jsx": {
-      "from": 6,
-      "rpc": 0
-    },
-    "src/shared/pages/SupportHubPage.jsx": {
-      "from": 9,
-      "rpc": 0
-    }
+    "src/components/SupportWidget.jsx": { "from": 5, "rpc": 0 },
+    "src/components/SystemSupportPriorityAlert.jsx": { "from": 1, "rpc": 0 },
+    "src/modules/petshop/components/ClientHistoryGroomingEnhancer.jsx": { "from": 5, "rpc": 0 },
+    "src/modules/petshop/components/DashboardAgendaLabelsEnhancer.jsx": { "from": 1, "rpc": 0 },
+    "src/modules/petshop/components/DashboardServiceKpiEnhancer.jsx": { "from": 2, "rpc": 0 },
+    "src/modules/petshop/components/PackageRecurringScheduleEnhancer.jsx": { "from": 1, "rpc": 0 },
+    "src/modules/petshop/hooks/usePetshopAdvanced.js": { "from": 2, "rpc": 0 },
+    "src/modules/petshop/hooks/usePetshopAdvancedCore.js": { "from": 46, "rpc": 4 },
+    "src/modules/petshop/hooks/usePetshopGrowth.js": { "from": 21, "rpc": 0 },
+    "src/modules/petshop/lib/cashRegisterOperations.js": { "from": 7, "rpc": 0 },
+    "src/modules/petshop/lib/deliveryOperations.js": { "from": 8, "rpc": 0 },
+    "src/modules/petshop/lib/packageCommissionOperations.js": { "from": 4, "rpc": 0 },
+    "src/modules/petshop/lib/planCommands.js": { "from": 1, "rpc": 1 },
+    "src/modules/petshop/lib/teamSettingsOperations.js": { "from": 1, "rpc": 0 },
+    "src/modules/petshop/pages/BanhoTosaPdvPanel.jsx": { "from": 2, "rpc": 2 },
+    "src/modules/petshop/pages/PackageActivationPdvPanel.jsx": { "from": 1, "rpc": 1 },
+    "src/modules/petshop/pages/PackageActivationReliablePanel.jsx": { "from": 0, "rpc": 1 },
+    "src/modules/petshop/pages/PlanosPaymentIntegratedPage.jsx": { "from": 1, "rpc": 0 },
+    "src/public/pages/PublicBookingPage.jsx": { "from": 0, "rpc": 1 },
+    "src/public/pages/PublicClientPortalPage.jsx": { "from": 0, "rpc": 1 },
+    "src/shared/hooks/useAnalytics.js": { "from": 6, "rpc": 0 },
+    "src/shared/hooks/useAppointments.js": { "from": 13, "rpc": 2 },
+    "src/shared/hooks/useChat.js": { "from": 7, "rpc": 0 },
+    "src/shared/hooks/useClients.js": { "from": 7, "rpc": 0 },
+    "src/shared/hooks/useFinance.js": { "from": 13, "rpc": 1 },
+    "src/shared/hooks/useProducts.js": { "from": 8, "rpc": 0 },
+    "src/shared/hooks/useSales.js": { "from": 13, "rpc": 1 },
+    "src/shared/pages/AiLabPage.jsx": { "from": 10, "rpc": 0 },
+    "src/shared/pages/CommercialPage.jsx": { "from": 9, "rpc": 1 },
+    "src/shared/pages/LogsPage.jsx": { "from": 2, "rpc": 0 },
+    "src/shared/pages/SettingsIntegratedPage.jsx": { "from": 1, "rpc": 0 },
+    "src/shared/pages/SettingsPage.jsx": { "from": 6, "rpc": 0 },
+    "src/shared/pages/SupportHubPage.jsx": { "from": 9, "rpc": 0 }
   }
 }

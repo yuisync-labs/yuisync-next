@@ -9,7 +9,7 @@ describe('D1 integration in workerd', () => {
   it('aplica todas as migrations no banco isolado de testes', async () => {
     const row = await testEnv.DB.prepare('SELECT value FROM _yuisync_system_metadata WHERE key = ?')
       .bind('schema_version').first<{ value: string }>()
-    expect(row).toEqual({ value: '28' })
+    expect(row).toEqual({ value: '30' })
 
     const required = [
       'clients','pets','catalog_products','services','inventory_balances','inventory_movements',
@@ -27,7 +27,10 @@ describe('D1 integration in workerd', () => {
     for (const name of required) expect(actual.has(name), `missing table ${name}`).toBe(true)
 
     const views = await testEnv.DB.prepare(`SELECT name FROM sqlite_schema WHERE type='view' ORDER BY name`).all<{name:string}>()
-    expect(new Set(views.results.map((view)=>view.name)).has('petshop_growth_exec_daily')).toBe(true)
+    const viewNames = new Set(views.results.map((view)=>view.name))
+    expect(viewNames.has('petshop_growth_exec_daily')).toBe(true)
+    expect(viewNames.has('compat_chat_sessions')).toBe(true)
+    expect(viewNames.has('compat_chat_messages')).toBe(true)
 
     const appointmentColumns = await testEnv.DB.prepare(`PRAGMA table_info(appointments)`).all<{ name:string }>()
     const appointmentColumnNames = new Set(appointmentColumns.results.map((column)=>column.name))
@@ -40,10 +43,23 @@ describe('D1 integration in workerd', () => {
     expect(serviceColumnNames.has('max_weight_kg')).toBe(true)
     expect(serviceColumnNames.has('species_target')).toBe(true)
 
+    const chatColumns = await testEnv.DB.prepare(`PRAGMA table_info(chat_threads)`).all<{ name:string }>()
+    const chatColumnNames = new Set(chatColumns.results.map((column)=>column.name))
+    for (const column of ['customer_name','intent','assigned_staff_key','csat_score','closed_at_ms','context_json']) {
+      expect(chatColumnNames.has(column), `missing chat_threads.${column}`).toBe(true)
+    }
+
     const membershipColumns = await testEnv.DB.prepare(`PRAGMA table_info(tenant_memberships)`).all<{ name:string }>()
     const membershipColumnNames = new Set(membershipColumns.results.map((column)=>column.name))
     expect(membershipColumnNames.has('role')).toBe(true)
     expect(membershipColumnNames.has('module_permissions_json')).toBe(true)
+
+    const triggers = await testEnv.DB.prepare(`SELECT name FROM sqlite_schema WHERE type='trigger'`).all<{name:string}>()
+    const triggerNames = new Set(triggers.results.map((trigger)=>trigger.name))
+    expect(triggerNames.has('client_subscription_base_usage_capacity_guard')).toBe(true)
+    expect(triggerNames.has('package_allocation_from_late_service_consumption')).toBe(true)
+    expect(triggerNames.has('cash_register_single_open_insert_guard')).toBe(true)
+    expect(triggerNames.has('cash_register_single_open_reopen_guard')).toBe(true)
   })
 
   it('executa o canário pelo binding D1 real do ambiente de teste', async () => {

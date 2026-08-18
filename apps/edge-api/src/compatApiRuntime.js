@@ -96,6 +96,25 @@ function legacyStatus(value, kind) {
 function fulfillment(value) { const v=String(value ?? '').toLowerCase(); return ({ balcao:'counter', entrega:'delivery', servico:'service' })[v] || (['counter','delivery','service'].includes(v)?v:'counter') }
 function paymentMethod(value) { const v=String(value ?? '').toLowerCase(); if (v.includes('pix')) return 'pix'; if (v.includes('dinheiro')||v==='cash') return 'cash'; return 'card' }
 
+export function normalizeCompatChatSession(raw, scope, id = str(raw?.id) || crypto.randomUUID(), now = Date.now()) {
+  const statusValue=str(raw?.status).toLowerCase()
+  const status=['human','handoff'].includes(statusValue)?'handoff':statusValue==='closed'?'closed':'open'
+  const legacyChannel=str(raw?.channel).toLowerCase()
+  const channel=legacyChannel==='website'||legacyChannel==='web'||legacyChannel==='instagram'?'web':legacyChannel==='interno'||legacyChannel==='internal'?'internal':'whatsapp'
+  const context={...obj(raw?.context)}
+  if(legacyChannel==='instagram')context.legacy_channel='instagram'
+  else if('legacy_channel'in context)delete context.legacy_channel
+  const csat=raw?.csat_score==null?null:Math.max(1,Math.min(5,Math.round(num(raw.csat_score))))
+  return {
+    tenant_id:scope.tenantId,module_id:scope.moduleId,id,channel,
+    external_thread_id:str(raw?.customer_phone??raw?.phone??raw?.external_thread_id),
+    client_id:str(raw?.client_id),pet_id:str(raw?.pet_id),customer_name:str(raw?.customer_name),
+    status,intent:str(raw?.intent),assigned_staff_key:str(raw?.employee_id??raw?.assigned_staff_key),
+    csat_score:csat,closed_at_ms:nullableEpoch(raw?.closed_at),context_json:jsonString(context,{}),
+    last_message_at_ms:nullableEpoch(raw?.last_message_at),created_at_ms:epoch(raw?.opened_at??raw?.created_at,now),updated_at_ms:now,
+  }
+}
+
 async function resolveScope(request, env) {
   if (!env.DB) return { error: json({ code: 'DATABASE_NOT_CONFIGURED' }, 503) }
   const tenantId = String(request.headers.get('x-tenant-id') || '').trim()
@@ -181,7 +200,7 @@ function page(body) {
 
 function normalize(table, row) {
   const r={...row}
-  for (const key of ['details','bot_metadata','service_items','subscription_benefits','services','services_used','tags','metadata','parsed_intent','raw_response']) if (key in r) r[key]=jsonValue(r[key], ['service_items','services','tags'].includes(key)?[]:{})
+  for (const key of ['details','bot_metadata','service_items','subscription_benefits','services','services_used','tags','metadata','context','parsed_intent','raw_response']) if (key in r) r[key]=jsonValue(r[key], ['service_items','services','tags'].includes(key)?[]:{})
   if (table==='loyalty_settings') return {tenant_id:r.tenant_id,module_id:r.module_id,enabled:Boolean(r.enabled),points_per_real:num(r.points_per_currency),redemption_rate:num(r.redemption_rate_cents)/100,...obj(jsonValue(r.data_json,{})),updated_at:iso(r.updated_at_ms)}
   if (table==='loyalty_points') return {...r,points:num(r.points_delta),created_at:iso(r.created_at_ms)}
   if (table==='commission_rules') return {...r,...obj(jsonValue(r.data_json,{})),rate:num(r.rate_basis_points)/100,fixed_amount:num(r.fixed_cents)/100,active:r.status==='active',updated_at:iso(r.updated_at_ms)}
@@ -259,9 +278,9 @@ async function mutateClients(db, action, body, scope) {
 async function mutateProducts(db, action, body, scope) {
   const fs=filters(body.filters);checkScopeFilters(fs,scope);const idFilter=fs.find((f)=>f.op==='eq'&&f.column==='id');if(action==='delete'){const id=str(idFilter?.value);if(!id)throw new Error('WRITE_REQUIRES_ID');await db.prepare("UPDATE catalog_products SET status='inactive',updated_at_ms=? WHERE tenant_id=? AND module_id=? AND id=?").bind(Date.now(),scope.tenantId,scope.moduleId,id).run();return}
   const rows=Array.isArray(body.payload)?body.payload.map(obj):[obj(body.payload)]
-  for(const raw of rows){const now=Date.now(),id=str(idFilter?.value)||str(raw.id)||crypto.randomUUID();const old=await db.prepare('SELECT * FROM compat_products WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(scope.tenantId,scope.moduleId,id).first();const m={...old,...raw};await db.batch([
+  for(const raw of rows){const now=Date.now(),id=str(idFilter?.value)||str(raw.id)||crypto.randomUUID();const old=await db.prepare('SELECT * FROM compat_products WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(scope.tenantId,scope.moduleId,id).first();const m={...old,...raw};if(old&&Object.prototype.hasOwnProperty.call(raw,'stock_quantity'))throw new Error('STOCK_MUTATION_REQUIRES_INVENTORY_COMMAND');await db.batch([
     db.prepare("INSERT INTO catalog_products(tenant_id,module_id,id,name,barcode,category,description,price_cents,cost_cents,species_target,upsell_product_id,image_url,bot_metadata_json,status,created_at_ms,updated_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,module_id,id) DO UPDATE SET name=excluded.name,barcode=excluded.barcode,category=excluded.category,description=excluded.description,price_cents=excluded.price_cents,cost_cents=excluded.cost_cents,species_target=excluded.species_target,upsell_product_id=excluded.upsell_product_id,image_url=excluded.image_url,bot_metadata_json=excluded.bot_metadata_json,status=excluded.status,updated_at_ms=excluded.updated_at_ms").bind(scope.tenantId,scope.moduleId,id,str(m.name)||'',str(m.barcode),str(m.category),str(m.description),cents(m.price),cents(m.cost_price),str(m.species_target),str(m.upsell_product_id),str(m.image_url),jsonString(m.bot_metadata,{}),m.active===false?'inactive':'active',epoch(m.created_at,now),now),
-    db.prepare('INSERT INTO inventory_balances(tenant_id,module_id,product_id,on_hand_milliunits,reorder_milliunits,updated_at_ms) VALUES(?,?,?,?,?,?) ON CONFLICT(tenant_id,module_id,product_id) DO UPDATE SET on_hand_milliunits=excluded.on_hand_milliunits,reorder_milliunits=excluded.reorder_milliunits,updated_at_ms=excluded.updated_at_ms').bind(scope.tenantId,scope.moduleId,id,milli(m.stock_quantity),milli(m.min_stock),now),
+    db.prepare('INSERT INTO inventory_balances(tenant_id,module_id,product_id,on_hand_milliunits,reorder_milliunits,updated_at_ms) VALUES(?,?,?,?,?,?) ON CONFLICT(tenant_id,module_id,product_id) DO UPDATE SET reorder_milliunits=excluded.reorder_milliunits,updated_at_ms=excluded.updated_at_ms').bind(scope.tenantId,scope.moduleId,id,milli(m.stock_quantity),milli(m.min_stock),now),
   ])}
 }
 
@@ -285,8 +304,8 @@ function canonical(table, raw, scope) {
   if(table==='sale_items')return{...base,sale_id:str(raw.sale_id),position:Math.max(0,Math.round(num(raw.position))),item_type:str(raw.product_id)?'product':'service',product_id:str(raw.product_id),service_id:str(raw.service_id),item_name:str(raw.item_name??raw.name)||'Item',quantity_milliunits:Math.max(1,milli(raw.quantity||1)),unit_price_cents:Math.max(0,cents(raw.unit_price)),subtotal_cents:Math.max(0,cents(raw.subtotal??num(raw.quantity||1)*num(raw.unit_price))),upsell:flag(raw.upsell)}
   if(table==='sale_payment_splits')return{...base,id:str(raw.payment_id)||id,sale_id:str(raw.sale_id),operation_key:str(raw.operation_key)||`compat:${str(raw.sale_id)||'sale'}:${id}`,method:paymentMethod(raw.payment_method),amount_cents:Math.max(1,cents(raw.amount)),status:str(raw.status)||'received',provider:null,provider_reference:null,received_at_ms:epoch(raw.created_at,now),created_at_ms:epoch(raw.created_at,now),updated_at_ms:now}
   if(table==='service_delivery_orders')return{...base,id,sale_id:str(raw.sale_id),appointment_id:str(raw.appointment_id),client_id:str(raw.client_id),session_id:str(raw.session_id),source:str(raw.source)||'manual',order_type:str(raw.order_type)||'servico',status:str(raw.status)||'pendente',scheduled_for_ms:nullableEpoch(raw.scheduled_for),contact_phone:str(raw.contact_phone),payment_status:str(raw.payment_status),notes:str(raw.notes),delivery_address:str(raw.delivery_address),delivery_neighborhood:str(raw.delivery_neighborhood),delivery_city:str(raw.delivery_city),delivery_reference:str(raw.delivery_reference),transport_mode:str(raw.transport_mode),transport_label:str(raw.transport_label),assigned_staff_key:str(raw.assigned_staff_key),assigned_staff_name:str(raw.assigned_staff_name),delivery_value_cents:Math.max(0,cents(raw.delivery_value)),created_at_ms:epoch(raw.created_at,now),updated_at_ms:now}
-  if(table==='chat_sessions')return{...base,id,channel:str(raw.channel)||'whatsapp',external_thread_id:str(raw.phone??raw.external_thread_id),client_id:str(raw.client_id),pet_id:str(raw.pet_id),status:raw.status==='human'?'handoff':str(raw.status)||'open',last_message_at_ms:nullableEpoch(raw.last_message_at),created_at_ms:epoch(raw.created_at,now),updated_at_ms:now}
-  if(table==='chat_messages'){const role=str(raw.role)||'system',actor=role==='user'?'customer':role==='human_agent'?'human':role==='assistant'?'assistant':'system';return{...base,id,thread_id:str(raw.session_id??raw.thread_id),external_message_id:str(raw.external_message_id),direction:actor==='customer'?'inbound':'outbound',actor_type:actor,content_text:str(raw.content)||'',content_json:raw.content_json==null?null:jsonString(raw.content_json,{}),created_at_ms:epoch(raw.created_at,now)}}
+  if(table==='chat_sessions')return normalizeCompatChatSession(raw,scope,id,now)
+  if(table==='chat_messages'){const role=str(raw.role)||'system',actor=role==='user'?'customer':role==='human_agent'?'human':role==='assistant'?'assistant':'system',metadata=raw.content_json??raw.metadata;return{...base,id,thread_id:str(raw.session_id??raw.thread_id),external_message_id:str(raw.external_message_id),direction:actor==='customer'?'inbound':'outbound',actor_type:actor,content_text:str(raw.content)||'',content_json:metadata==null?null:jsonString(metadata,{}),created_at_ms:epoch(raw.sent_at??raw.created_at,now)}}
   if(table==='subscription_plans')return{...base,id,name:str(raw.name)||'',price_cents:Math.max(0,cents(raw.price)),billing_cycle:str(raw.billing_cycle)||'monthly',services_json:jsonString(raw.services,[]),status:raw.active===false?'inactive':'active',created_at_ms:epoch(raw.created_at,now),updated_at_ms:now}
   if(table==='client_subscriptions')return{...base,id,plan_id:str(raw.plan_id),client_id:str(raw.client_id),status:str(raw.status)||'pending_payment',started_at_ms:epoch(raw.started_at,now),next_billing_date:str(raw.next_billing_date),services_used_json:jsonString(raw.services_used,{}),cancelled_at_ms:nullableEpoch(raw.cancelled_at),created_at_ms:epoch(raw.created_at,now),updated_at_ms:now}
   if(table==='loyalty_settings')return{...base,enabled:raw.enabled===false?0:1,points_per_currency:Math.max(0,Math.round(num(raw.points_per_real,1))),redemption_rate_cents:Math.max(0,cents(raw.redemption_rate)),data_json:jsonString({points_per_service:num(raw.points_per_service,10),expiry_days:num(raw.expiry_days,365)},{}),updated_at_ms:now}
@@ -355,7 +374,7 @@ async function query(request, env) {
     if(mode==='single'){if(selected.rows.length!==1)return json({code:'ROW_NOT_SINGLE',count:selected.count},406);return json({data:selected.rows[0],count:selected.count})}
     if(mode==='maybeSingle'){if(selected.rows.length>1)return json({code:'ROW_NOT_SINGLE',count:selected.count},406);return json({data:selected.rows[0]||null,count:selected.count})}
     return json({data:selected.rows,count:selected.count})
-  }catch(error){const code=error instanceof Error?error.message:'COMPAT_QUERY_FAILED';if(['SCOPE_MISMATCH','INVALID_FILTER','INVALID_ORDER','WRITE_REQUIRES_ID','WRITE_NOT_SUPPORTED','APPOINTMENT_PARTY_REQUIRED','SERVICE_REQUIRED'].includes(code))return json({code},400);console.error('compat.query.failed',{table,action,code});return json({code:'COMPAT_QUERY_FAILED'},500)}
+  }catch(error){const code=error instanceof Error?error.message:'COMPAT_QUERY_FAILED';if(code==='STOCK_MUTATION_REQUIRES_INVENTORY_COMMAND')return json({code},409);if(code.includes('CASH_REGISTER_ALREADY_OPEN'))return json({code:'CASH_REGISTER_ALREADY_OPEN'},409);if(['SCOPE_MISMATCH','INVALID_FILTER','INVALID_ORDER','WRITE_REQUIRES_ID','WRITE_NOT_SUPPORTED','APPOINTMENT_PARTY_REQUIRED','SERVICE_REQUIRED'].includes(code))return json({code},400);console.error('compat.query.failed',{table,action,code});return json({code:'COMPAT_QUERY_FAILED'},500)}
 }
 
 async function rpc(request, env) {

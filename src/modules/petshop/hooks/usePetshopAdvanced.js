@@ -11,6 +11,8 @@ import {
   serviceSpeciesTarget,
 } from '../lib/appointmentServices'
 import { usePetshopAdvanced as usePetshopAdvancedCore } from './usePetshopAdvancedCore'
+import { useCatalogPlans } from './useCatalogPlans'
+import { cancelSubscriptionCommand } from '../lib/planCommands'
 
 export {
   BILLING_CYCLES,
@@ -92,11 +94,33 @@ const serviceGroup = (explicitGroup, fallbackSource) => (
     : inferCatalogServiceGroup(fallbackSource)
 )
 
+const buildCanonicalUsageSummary = (subscription = {}) => (
+  (subscription.subscription_plans?.services || []).map((service) => {
+    const key = service.service_type || service.service_code || service.code
+    const total = Math.max(0, Number(service.qty_per_cycle ?? service.quantity ?? service.qty ?? 0))
+    const used = Math.max(0, Number(subscription.services_used?.[key] || 0))
+    const reserved = Math.max(0, Number(subscription.services_reserved?.[key] || 0))
+    return {
+      service_type: key,
+      used,
+      reserved,
+      total,
+      remaining: Math.max(0, total - used - reserved),
+    }
+  })
+)
+
 export function usePetshopAdvanced() {
   const core = usePetshopAdvancedCore()
   const { activeModuleId } = useModuleCtx()
   const { activeTenantId } = useAuthCtx()
   const moduleId = activeModuleId || 'petshop'
+  const {
+    loadPlans: loadCanonicalPlans,
+    savePlan: saveCanonicalPlan,
+    loadSubscriptions: loadCanonicalSubscriptions,
+    saveSubscription: saveCanonicalSubscription,
+  } = useCatalogPlans()
   const runScoped = useCallback(
     (runner) => runWithTenantFallback(activeTenantId, runner),
     [activeTenantId],
@@ -282,8 +306,31 @@ export function usePetshopAdvanced() {
     return normalizeServices([{ ...saved, ...updated }])[0]
   }, [activeTenantId, core.savePetshopService, moduleId])
 
+  const loadClientSubscriptions = useCallback(async () => {
+    const rows = await loadCanonicalSubscriptions()
+    return (rows || []).map((subscription) => ({
+      ...subscription,
+      usage_summary: buildCanonicalUsageSummary(subscription),
+    }))
+  }, [loadCanonicalSubscriptions])
+
+  const saveClientSubscription = useCallback(async (payload = {}) => {
+    if (payload?.id && payload?.status === 'cancelled') {
+      return cancelSubscriptionCommand({
+        tenantId: activeTenantId,
+        moduleId,
+        subscriptionId: payload.id,
+      })
+    }
+    return saveCanonicalSubscription(payload)
+  }, [activeTenantId, moduleId, saveCanonicalSubscription])
+
   return {
     ...core,
+    loadPlans: loadCanonicalPlans,
+    savePlan: saveCanonicalPlan,
+    loadClientSubscriptions,
+    saveClientSubscription,
     loadPetshopServices,
     savePetshopService,
   }

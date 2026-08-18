@@ -3,14 +3,16 @@ import { DateTime } from 'luxon'
 
 import { useAuthCtx } from '../../../context/AuthContext'
 import { useModuleCtx } from '../../../context/ModuleContext'
-import { supabase, todayISO } from '../../../lib/supabase'
-import { applyTenantFilter, runWithTenantFallback } from '../../../lib/tenant'
+import { todayISO } from '../../../lib/supabase'
 import { normalizeCatalogPlanServices } from '../lib/catalogPlanServices'
-import { savePlanCommand, saveSubscriptionCommand } from '../lib/planCommands'
+import {
+  loadPlansCommand,
+  loadSubscriptionsCommand,
+  savePlanCommand,
+  saveSubscriptionCommand,
+} from '../lib/planCommands'
 
 const BILLING_CYCLE_DAYS = { monthly: 30, quarterly: 90 }
-const CLIENT_SELECT = 'id,name,phone,email,address,neighborhood,city,details'
-const PLAN_SELECT = 'id,name,price,billing_cycle,services,active'
 
 function addDays(value, days) {
   const date = DateTime.fromISO(String(value || ''), { zone: 'America/Sao_Paulo' })
@@ -18,49 +20,19 @@ function addDays(value, days) {
   return date.plus({ days }).toISODate()
 }
 
-function formatClient(client = {}) {
-  const details = client.details || {}
-  return {
-    id: client.id,
-    owner_name: client.name || '',
-    phone: client.phone || '',
-    email: client.email || '',
-    owner_address: client.address || '',
-    owner_neighborhood: client.neighborhood || '',
-    owner_city: client.city || '',
-    details,
-    pet_name: details.pet_name || client.name || '',
-    species: details.species || 'other',
-    breed: details.breed || '',
-  }
-}
-
 export function useCatalogPlans() {
   const { activeTenantId } = useAuthCtx()
   const { activeModuleId } = useModuleCtx()
   const moduleId = activeModuleId || 'petshop'
-  const runScoped = useCallback(
-    (runner) => runWithTenantFallback(activeTenantId, runner),
-    [activeTenantId],
-  )
 
   const loadPlans = useCallback(async () => {
-    const response = await runScoped(async (includeTenant) => {
-      let query = supabase
-        .from('subscription_plans')
-        .select('*')
-        .eq('module_id', moduleId)
-        .order('price', { ascending: true })
-      query = applyTenantFilter(query, activeTenantId, includeTenant)
-      return query
-    })
-
-    if (response.error) throw response.error
-    return (response.data || []).map((plan) => ({
+    if (!activeTenantId) return []
+    const rows = await loadPlansCommand({ tenantId: activeTenantId, moduleId })
+    return (rows || []).map((plan) => ({
       ...plan,
       services: normalizeCatalogPlanServices(plan.services),
     }))
-  }, [activeTenantId, moduleId, runScoped])
+  }, [activeTenantId, moduleId])
 
   const savePlan = useCallback(async (payload = {}) => {
     if (!activeTenantId) throw new Error('Selecione uma empresa ativa antes de salvar o plano.')
@@ -90,20 +62,10 @@ export function useCatalogPlans() {
   }, [activeTenantId, moduleId])
 
   const loadSubscriptions = useCallback(async () => {
-    const response = await runScoped(async (includeTenant) => {
-      let query = supabase
-        .from('client_subscriptions')
-        .select(`*,subscription_plans(${PLAN_SELECT}),clients(${CLIENT_SELECT})`)
-        .eq('module_id', moduleId)
-        .order('started_at', { ascending: false })
-      query = applyTenantFilter(query, activeTenantId, includeTenant)
-      return query
-    })
-
-    if (response.error) throw response.error
-    return (response.data || []).map((subscription) => ({
+    if (!activeTenantId) return []
+    const rows = await loadSubscriptionsCommand({ tenantId: activeTenantId, moduleId })
+    return (rows || []).map((subscription) => ({
       ...subscription,
-      client: formatClient(subscription.clients || {}),
       subscription_plans: subscription.subscription_plans
         ? {
             ...subscription.subscription_plans,
@@ -111,7 +73,7 @@ export function useCatalogPlans() {
           }
         : null,
     }))
-  }, [activeTenantId, moduleId, runScoped])
+  }, [activeTenantId, moduleId])
 
   const saveSubscription = useCallback(async (payload = {}) => {
     if (!activeTenantId) throw new Error('Selecione uma empresa ativa antes de salvar a assinatura.')

@@ -1,4 +1,5 @@
 import app from './app'
+import { handleAdminMaintenanceRequest } from './adminMaintenance'
 import { handleAiLabApiRequest } from './aiLabApi'
 import { handleAppApiRequest } from './appApi'
 import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
@@ -8,6 +9,7 @@ import { handleCheckoutApiRequest } from './checkoutApi'
 import { handleCompatApiRequest } from './compatApi'
 import { handleFinalReadiness } from './finalReadiness'
 import { handleFiscalApiRequest } from './fiscalApi'
+import { handleInventoryAdjustmentRequest } from './inventoryAdjustment'
 import { handleManagedUsersApiRequest } from './managedUsersApi'
 import { handleAiLabMigrationRequest } from './migration/aiLabMigrationHttp'
 import { handleAuthMigrationRequest } from './migration/authMigrationHttp'
@@ -84,6 +86,12 @@ export default {
 
     const managedUsersResponse = await handleManagedUsersApiRequest(request, bindings)
     if (managedUsersResponse) return respond(managedUsersResponse)
+
+    const adminMaintenanceResponse = await handleAdminMaintenanceRequest(request, bindings)
+    if (adminMaintenanceResponse) return respond(adminMaintenanceResponse)
+
+    const inventoryAdjustmentResponse = await handleInventoryAdjustmentRequest(request, bindings)
+    if (inventoryAdjustmentResponse) return respond(inventoryAdjustmentResponse)
 
     const petshopPlansResponse = await handlePetshopPlansApiRequest(request, bindings)
     if (petshopPlansResponse) return respond(petshopPlansResponse)
