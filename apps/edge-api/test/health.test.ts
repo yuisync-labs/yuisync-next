@@ -28,7 +28,7 @@ const authDb = {
 const versionOnlyMainDb = {
   prepare: (sql: string) => {
     if (sql.includes('_yuisync_system_metadata')) {
-      return { first: async () => ({ value: '29' }) }
+      return { first: async () => ({ value: '30' }) }
     }
     return {
       all: async () => ({
@@ -117,7 +117,7 @@ describe('YuiSync edge foundation', () => {
       status: 'not_ready',
       checks: expect.objectContaining({
         database: 'ready',
-        schema_version: '29',
+        schema_version: '30',
         schema_capabilities: 'ready',
         auth_database: 'not_configured',
         coordination: 'disabled',
@@ -127,7 +127,7 @@ describe('YuiSync edge foundation', () => {
     }))
   })
 
-  it('fica ready somente com D1 v29, AUTH_DB e Better Auth configurados', async () => {
+  it('fica ready somente com D1 v30, AUTH_DB e Better Auth configurados', async () => {
     const response = await request('/ready', undefined, readyBindings())
     const body = await response.json<{
       status: string
@@ -139,7 +139,7 @@ describe('YuiSync edge foundation', () => {
       status: 'ready',
       checks: {
         database: 'ready',
-        schema_version: '29',
+        schema_version: '30',
         schema_capabilities: 'ready',
         auth_database: 'configured',
         coordination: 'disabled',
@@ -149,7 +149,7 @@ describe('YuiSync edge foundation', () => {
     })
   })
 
-  it('falha fechado quando metadata v29 não corresponde às capacidades estruturais', async () => {
+  it('falha fechado quando metadata v30 não corresponde às capacidades estruturais', async () => {
     const response = await request('/ready', undefined, readyBindings({ DB: versionOnlyMainDb }))
     const body = await response.json<{
       status: string
@@ -162,7 +162,7 @@ describe('YuiSync edge foundation', () => {
       status: 'not_ready',
       checks: {
         database: 'incomplete',
-        schema_version: '29',
+        schema_version: '30',
         schema_capabilities: 'incomplete',
       },
     })
