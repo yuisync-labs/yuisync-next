@@ -4,14 +4,22 @@ import { hasCoordinationBinding, isEdgeCoordinationEnabled } from './coordinatio
 import { hasD1Binding, isEdgeDatabaseEnabled } from './databaseFeature'
 import { resolveRequestId } from './requestContext'
 
-const REQUIRED_MAIN_SCHEMA_VERSION = '28'
+const REQUIRED_MAIN_SCHEMA_VERSION = '29'
 
-type MainSchemaObject = { key: string; kind: 'table' | 'index'; name: string }
+type MainSchemaObject = { key: string; kind: 'table' | 'index' | 'trigger'; name: string }
 type MainSchemaColumnGroup = { table: string; columns: string[] }
 
 const REQUIRED_MAIN_SCHEMA_OBJECTS: MainSchemaObject[] = [
   // Operational integrity v25.
   { key: 'index:sales_scope_origin_idx', kind: 'index', name: 'sales_scope_origin_idx' },
+
+  // Package ledger projection/repair v29.
+  { key: 'trigger:client_subscription_base_usage_capacity_guard', kind: 'trigger', name: 'client_subscription_base_usage_capacity_guard' },
+  { key: 'trigger:client_subscription_usage_projection_from_base', kind: 'trigger', name: 'client_subscription_usage_projection_from_base' },
+  { key: 'trigger:subscription_usage_projection_after_allocation_insert', kind: 'trigger', name: 'subscription_usage_projection_after_allocation_insert' },
+  { key: 'trigger:subscription_usage_projection_after_allocation_update', kind: 'trigger', name: 'subscription_usage_projection_after_allocation_update' },
+  { key: 'trigger:subscription_usage_projection_after_allocation_delete', kind: 'trigger', name: 'subscription_usage_projection_after_allocation_delete' },
+  { key: 'trigger:package_allocation_from_late_service_consumption', kind: 'trigger', name: 'package_allocation_from_late_service_consumption' },
 
   // WhatsApp Cloud API v26-v28.
   { key: 'table:whatsapp_waba_accounts', kind: 'table', name: 'whatsapp_waba_accounts' },
@@ -58,7 +66,7 @@ function sqlLiteral(value: string): string {
 async function missingMainSchemaCapabilities(database: D1Database): Promise<string[]> {
   const objectNames=REQUIRED_MAIN_SCHEMA_OBJECTS.map((item)=>sqlLiteral(item.name)).join(',')
   const objectRows=await database
-    .prepare(`SELECT type,name FROM sqlite_schema WHERE type IN ('table','index') AND name IN (${objectNames})`)
+    .prepare(`SELECT type,name FROM sqlite_schema WHERE type IN ('table','index','trigger') AND name IN (${objectNames})`)
     .all<{type:string;name:string}>()
   const presentObjects=new Set(objectRows.results.map((item)=>`${item.type}:${item.name}`))
   const missing=REQUIRED_MAIN_SCHEMA_OBJECTS
