@@ -1,15 +1,15 @@
 name: PR60 codemod
 
 on:
-  push:
-    branches: [hardening/agenda-declarative-package-state]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   codemod:
-    if: ${{ !contains(github.event.head_commit.message, '[pr60-codemod]') }}
+    if: ${{ github.event.pull_request.head.ref == 'hardening/agenda-declarative-package-state' && !contains(github.event.pull_request.head.sha, '0000000') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
