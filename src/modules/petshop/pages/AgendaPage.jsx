@@ -45,6 +45,8 @@ import {
 } from '../lib/appointmentOperational'
 import { normalizeTransportOptions } from './agendaOperationalCore'
 import { appointmentCheckoutTotals, appointmentNeedsPayment, queueAppointmentCheckout } from './appointmentCheckoutFlow'
+import { AgendaBillingLabel } from '../components/AgendaBillingLabel'
+import { appointmentPackagePresentation } from '../lib/appointmentBillingPresentation'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const asAgendaServices = (services = []) =>
@@ -1229,11 +1231,14 @@ function AgendaTimelineView({
   const appointmentCard = (appt) => {
     const sb = statusBadge(appt.status)
     const assigned = staffById.get(appt.responsible_staff_key)
+    const billingPresentation = appointmentPackagePresentation(appt)
     return (
       <div
         key={appt.id}
         data-yuisync-native-agenda-card="true"
         data-yuisync-native-appointment-id={String(appt.id)}
+        data-yuisync-card-kind={billingPresentation.cardKind}
+        data-yuisync-benefit-state={billingPresentation.benefitState || ''}
         className={`yuisync-agenda-card-surface relative w-full rounded-lg border p-2 text-left shadow-sm ${agendaCardTone(appt.status)}`}
       >
         <button type="button" onClick={() => onEdit(appt)} className="yuisync-card-content w-full text-left">
@@ -1246,7 +1251,7 @@ function AgendaTimelineView({
             <p className="yuisync-card-tutor truncate text-[11px] font-semibold text-text/90">Tutor: {appt.pets?.owner_name || 'Cliente'}</p>
             <div className="yuisync-card-service flex items-center justify-between gap-2 text-[10px] text-muted">
               <span className="truncate">{serviceLabel(appt)}</span>
-              <span className="shrink-0 font-bold text-emerald-400">{fmtCurrency(appt.price)}</span>
+              <AgendaBillingLabel appointment={appt}/>
             </div>
             <MotodogAgendaInfo appt={appt} compact/>
             <p className={`yuisync-card-responsible truncate text-[10px] ${assigned ? "text-muted" : "text-amber-300"}`}>

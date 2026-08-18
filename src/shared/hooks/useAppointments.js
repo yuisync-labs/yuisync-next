@@ -9,7 +9,7 @@ const APPOINTMENT_BASE_FIELDS = `
   employee_id, groomer_id, responsible_staff_key, responsible_staff_name,
   delivery_staff_key, delivery_staff_name,
   transport_mode, transport_label, transport_address, transport_neighborhood, transport_city, transport_reference,
-  live_status, checkin_at, ready_at, subscription_id, subscription_benefit_used
+  live_status, checkin_at, ready_at, subscription_id, subscription_benefit_used, subscription_benefit_status, billing_intent_type, billing_intent_subscription_id
 `
 const APPOINTMENT_SELECT = `${APPOINTMENT_BASE_FIELDS},
   clients ( id, name, document, phone, email, address, neighborhood, city, notes, details )
