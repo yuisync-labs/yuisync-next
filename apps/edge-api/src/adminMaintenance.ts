@@ -1,6 +1,9 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 
-type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
+type Bindings = BetterAuthRuntimeBindings & {
+  DB?: D1Database
+  MAINTENANCE_TEST_TENANT_ID?: string
+}
 type SessionResolver = typeof getBetterAuthSession
 export type AdminMaintenanceDependencies = { getSession?: SessionResolver }
 
@@ -38,22 +41,46 @@ async function resolveAdminScope(
   const moduleId = validModule(body.moduleId ?? body.module_id)
   if (!tenantId || !moduleId) throw new AdminMaintenanceError('INVALID_SCOPE', 400, 'Tenant/módulo inválido.')
 
+  const allowedTestTenant = validId(bindings.MAINTENANCE_TEST_TENANT_ID)
+  if (!allowedTestTenant || tenantId !== allowedTestTenant) {
+    throw new AdminMaintenanceError(
+      'MAINTENANCE_TEST_TENANT_REQUIRED',
+      403,
+      'Esta manutenção só pode ser executada no tenant de testes configurado.',
+    )
+  }
+
   const session = await getSession(request, bindings)
   const userId = validId(session?.user?.id, 255)
   if (!userId) throw new AdminMaintenanceError('UNAUTHENTICATED', 401, 'Sessão necessária.')
 
-  const membership = await bindings.DB.prepare(`
-    SELECT membership.role,tenant.status AS tenant_status
+  const access = await bindings.DB.prepare(`
+    SELECT principal.id AS principal_id,principal.email,membership.status AS membership_status,tenant.status AS tenant_status
     FROM identity_principals principal
     JOIN tenant_memberships membership ON membership.principal_id=principal.id
     JOIN tenants tenant ON tenant.id=membership.tenant_id
     WHERE principal.provider='better-auth' AND principal.subject=?1 AND principal.status='active'
       AND membership.tenant_id=?2 AND membership.status='active'
     LIMIT 1
-  `).bind(userId, tenantId).first<{ role: string; tenant_status: string }>()
+  `).bind(userId, tenantId).first<{
+    principal_id: string
+    email: string | null
+    membership_status: string
+    tenant_status: string
+  }>()
+  if (!access || access.tenant_status !== 'active') {
+    throw new AdminMaintenanceError('FORBIDDEN', 403, 'Sem acesso ao tenant informado.')
+  }
 
-  if (!membership || membership.tenant_status !== 'active' || !['owner', 'admin'].includes(membership.role)) {
-    throw new AdminMaintenanceError('FORBIDDEN', 403, 'A manutenção exige administrador do tenant.')
+  const globalAdmin = await bindings.DB.prepare(`
+    SELECT role,active
+    FROM profiles
+    WHERE active=1 AND role='admin'
+      AND (id=?1 OR (?2 IS NOT NULL AND lower(email)=lower(?2)))
+    LIMIT 1
+  `).bind(access.principal_id, access.email).first<{ role: string; active: number }>()
+  if (!globalAdmin) {
+    throw new AdminMaintenanceError('FORBIDDEN', 403, 'A manutenção exige administrador global.')
   }
   return { tenantId, moduleId }
 }
