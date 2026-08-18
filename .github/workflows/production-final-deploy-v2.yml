@@ -42,7 +42,8 @@ jobs:
           if(auth!=='AUTHORIZE_PRODUCTION_FINAL_V2') throw new Error('AUTHORIZATION_REQUIRED')
           if(domain!=='yuisync.app') throw new Error('DOMAIN_INVALID')
           execFileSync('git',['fetch','origin','main'],{stdio:'inherit'})
-          execFileSync('git',['merge-base','--is-ancestor',release,'origin/main'],{stdio:'ignore'})
+          const currentMain=execFileSync('git',['rev-parse','origin/main'],{encoding:'utf8'}).trim().toLowerCase()
+          if(release!==currentMain) throw new Error(`RELEASE_NOT_CURRENT_MAIN:${release}:${currentMain}`)
           const repo=process.env.GITHUB_REPOSITORY
           const runs=(wf)=>JSON.parse(execFileSync('gh',['api',`repos/${repo}/actions/workflows/${wf}/runs`,'-f',`head_sha=${release}`,'-f','status=success','-f','per_page=100','-X','GET'],{encoding:'utf8',env:process.env})).workflow_runs||[]
           const q=runs('quality.yml').filter(r=>r.head_sha===release&&r.conclusion==='success')
@@ -87,7 +88,7 @@ jobs:
           node scripts/migration/production-dns.mjs inspect
           node scripts/migration/production-cloudflare.mjs resolve
           node scripts/migration/production-domain.mjs workers-url
-      - name: Prove production prerequisites
+      - name: Prove production prerequisites and migration starting point
         working-directory: apps/edge-api
         shell: bash
         run: |
@@ -99,19 +100,77 @@ jobs:
           node --input-type=module <<'NODE'
           const flat=(s)=>{const p=JSON.parse(s);return (Array.isArray(p)?p:[p]).flatMap(e=>Array.isArray(e?.results)?e.results:[])}
           const secrets=JSON.parse(process.env.SECRETS||'[]')
-          const version=String(flat(process.env.VERSION)[0]?.value??'')
+          const version=Number(flat(process.env.VERSION)[0]?.value??NaN)
           const auth=flat(process.env.AUTH).map(r=>String(r.name)).sort().join(',')
           if(!secrets.some(r=>r?.name==='BETTER_AUTH_SECRET')) throw new Error('BETTER_AUTH_SECRET_REQUIRED')
-          if(version!=='25') throw new Error(`SCHEMA_VERSION_INVALID:${version}`)
+          if(!Number.isInteger(version)||version<25||version>30) throw new Error(`SCHEMA_VERSION_UNSUPPORTED:${version}`)
           if(auth!=='account,session,user,verification') throw new Error(`AUTH_SCHEMA_INVALID:${auth}`)
           console.log(JSON.stringify({status:'production-prerequisites-ready',schema_version:version,better_auth_secret:true}))
           NODE
+      - name: Capture production D1 rollback bookmarks
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../../.artifacts/production-release
+          npx wrangler d1 time-travel info DB --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json > ../../.artifacts/production-release/db-before-migration.json
+          npx wrangler d1 time-travel info AUTH_DB --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json > ../../.artifacts/production-release/auth-db-before-migration.json
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises'
+          const evidence={
+            schema:'yuisync-production-migration-evidence/v1',
+            release_sha:process.env.RELEASE_SHA,
+            captured_at:new Date().toISOString(),
+            db:JSON.parse(await readFile('../../.artifacts/production-release/db-before-migration.json','utf8')),
+            auth_db:JSON.parse(await readFile('../../.artifacts/production-release/auth-db-before-migration.json','utf8')),
+          }
+          await writeFile('../../.artifacts/production-release/migration-evidence.json',`${JSON.stringify(evidence,null,2)}\n`)
+          NODE
+      - name: Apply production D1 migrations through v30
+        id: migrate
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 migrations apply DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+          npx wrangler d1 migrations apply AUTH_DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+      - name: Prove production schema v30 after migration
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT value FROM _yuisync_system_metadata WHERE key='schema_version';")"
+          export VERSION
+          node --input-type=module <<'NODE'
+          const p=JSON.parse(process.env.VERSION||'[]')
+          const rows=(Array.isArray(p)?p:[p]).flatMap(e=>Array.isArray(e?.results)?e.results:[])
+          const version=String(rows[0]?.value??'')
+          if(version!=='30') throw new Error(`SCHEMA_VERSION_INVALID_AFTER_MIGRATION:${version}`)
+          console.log(JSON.stringify({status:'production-schema-ready',schema_version:version}))
+          NODE
+      - name: Upload production migration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-migration-evidence-${{ env.RELEASE_SHA }}
+          path: .artifacts/production-release/
+          if-no-files-found: error
+          retention-days: 30
       - name: Attach custom domain configuration
         run: YUISYNC_PRODUCTION_ATTACH_DOMAIN=true node scripts/migration/production-cloudflare.mjs resolve
       - name: Deploy exact certified runtime
         id: deploy
         working-directory: apps/edge-api
-        run: npx wrangler deploy --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            if npx wrangler deploy --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"; then
+              exit 0
+            fi
+            [ "$attempt" = 2 ] && exit 1
+            sleep 5
+          done
       - name: Wait for new version on custom domain
         shell: bash
         run: |
@@ -125,7 +184,7 @@ jobs:
           import {readFile} from 'node:fs/promises'
           const h=JSON.parse(await readFile('/tmp/h.json','utf8'))
           const r=JSON.parse(await readFile('/tmp/r.json','utf8'))
-          const ok=h?.status==='ok'&&h?.environment==='production'&&r?.status==='ready'&&r?.environment==='production'&&r?.checks?.database==='ready'&&String(r?.checks?.schema_version)==='25'&&r?.checks?.auth_database==='configured'&&r?.checks?.coordination==='ready'&&r?.checks?.better_auth==='enabled'&&r?.checks?.migration_capabilities==='closed'
+          const ok=h?.status==='ok'&&h?.environment==='production'&&r?.status==='ready'&&r?.environment==='production'&&r?.checks?.database==='ready'&&String(r?.checks?.schema_version)==='30'&&r?.checks?.auth_database==='configured'&&r?.checks?.coordination==='ready'&&r?.checks?.better_auth==='enabled'&&r?.checks?.migration_capabilities==='closed'&&r?.checks?.schema_capabilities==='ready'
           if(!ok) process.exit(1)
           NODE
               then echo 'new-version-ready'; break; fi
@@ -160,15 +219,17 @@ jobs:
           export YUISYNC_E2E_BASE_URL=https://yuisync.app
           export YUISYNC_E2E_WRANGLER_CONFIG="$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
           node scripts/migration/staging-e2e-fixtures.mjs cleanup
-      - name: Roll back Worker on post-deploy failure
-        if: failure() && steps.deploy.outcome == 'success'
-        working-directory: apps/edge-api
-        run: npx wrangler rollback --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --message "Automatic rollback after failed YuiSync Next final v2 deploy $RELEASE_SHA"
+      - name: Preserve v30 state for explicit recovery decision
+        if: failure() && steps.migrate.outcome == 'success'
+        run: |
+          echo '::warning::Production D1 reached the v30 migration path. Automatic D1 Time Travel restore is intentionally disabled because restore overwrites the database in place. Use the uploaded pre-migration bookmarks only after an explicit recovery decision.'
+          echo '::warning::Do not roll the Worker back independently to a schema-v25 readiness contract after the database has reached v30.'
       - name: Release summary
         if: success()
         run: |
           echo '### YuiSync Next production' >> "$GITHUB_STEP_SUMMARY"
           echo "- Runtime: \`$RELEASE_SHA\`" >> "$GITHUB_STEP_SUMMARY"
-          echo '- D1 schema: v25' >> "$GITHUB_STEP_SUMMARY"
+          echo '- D1 schema: v30' >> "$GITHUB_STEP_SUMMARY"
+          echo '- pre-migration D1 + AUTH_DB bookmarks: archived' >> "$GITHUB_STEP_SUMMARY"
           echo '- yuisync.app /health + /ready: passed after propagation' >> "$GITHUB_STEP_SUMMARY"
           echo '- authenticated production E2E: passed' >> "$GITHUB_STEP_SUMMARY"
