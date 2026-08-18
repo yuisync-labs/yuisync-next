@@ -308,9 +308,9 @@ async function saveSubscription(request: Request, bindings: Bindings, subscripti
     const result = await bindings.DB!.prepare(`
       UPDATE client_subscriptions
       SET plan_id=?4,client_id=?5,status=?6,started_at_ms=?7,next_billing_date=?8,
-          benefit_ledger_base_used_json=?9,cancelled_at_ms=?10,updated_at_ms=?11
+          cancelled_at_ms=?9,updated_at_ms=?10
       WHERE tenant_id=?1 AND module_id=?2 AND id=?3
-    `).bind(tenantId, moduleId, id, planId, clientId, status, startedAtMs, nextBillingDate, JSON.stringify(servicesUsed), cancelledAtMs, now).run()
+    `).bind(tenantId, moduleId, id, planId, clientId, status, startedAtMs, nextBillingDate, cancelledAtMs, now).run()
     if (!result.meta.changes) return json({ code: 'SUBSCRIPTION_NOT_FOUND' }, 404)
   } else {
     await bindings.DB!.prepare(`

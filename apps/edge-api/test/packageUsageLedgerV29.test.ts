@@ -126,6 +126,12 @@ describe('package usage ledger v29', () => {
   it('creates the canonical consumed allocation when coverage is marked on a service after appointment completion', async () => {
     const seeded = await seed()
     try {
+      await db.prepare(`
+        UPDATE subscription_benefit_allocations
+        SET state='released',released_at_ms=?3,updated_at_ms=?3
+        WHERE tenant_id=?1 AND subscription_id=?2 AND state='reserved'
+      `).bind(seeded.tenantId, seeded.subscriptionId, seeded.now + 100).run()
+
       await db.prepare(`INSERT INTO appointments(
         tenant_id,module_id,id,client_id,pet_id,scheduled_at_ms,duration_min,service_group,status,source,
         subtotal_cents,transport_fee_cents,notes,version,created_at_ms,updated_at_ms,
