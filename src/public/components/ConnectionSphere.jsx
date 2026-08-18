@@ -70,7 +70,7 @@ export default function ConnectionSphere() {
   useEffect(() => {
     const element = sphereRef.current
     if (!element || typeof IntersectionObserver === 'undefined') return undefined
-    const observer = new IntersectionObserver(([entry]) => setIsVisible(entry.isIntersecting), { rootMargin: '220px 0px', threshold: 0.01 })
+    const observer = new IntersectionObserver(([entry]) => setIsVisible(entry.isIntersecting), { rootMargin: '160px 0px', threshold: 0.01 })
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
@@ -78,7 +78,7 @@ export default function ConnectionSphere() {
   return (
     <motion.div
       ref={sphereRef}
-      className="relative mx-auto aspect-square w-full max-w-[590px] lg:max-w-[540px] xl:max-w-[560px]"
+      className="relative mx-auto aspect-square w-full max-w-[540px] lg:max-w-[500px] xl:max-w-[520px]"
       aria-label="Esfera de partículas representando os módulos conectados do YuiSync"
       initial={prefersReducedMotion ? false : { opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
@@ -89,7 +89,7 @@ export default function ConnectionSphere() {
         {isVisible && (
           <Suspense fallback={<div className="h-full w-full rounded-full bg-white/[0.035] blur-2xl" />}>
             <ParticleSphere
-              particlesCount={isMobile ? 2600 : 6500}
+              particlesCount={isMobile ? 1200 : 2800}
               particleScale={isMobile ? 2.5 : 2.8}
               speed={prefersReducedMotion ? -1.25 : 3}
               smoothing={8}
@@ -98,10 +98,10 @@ export default function ConnectionSphere() {
               rotationDirection="clockwise"
               dragSpeed={3}
               drag={!prefersReducedMotion && !isMobile}
-              cursorOn={!prefersReducedMotion && !isMobile}
-              cursorRadiusUI={92}
-              cursorStrengthUI={2}
-              clickForce={1.5}
+              cursorOn={false}
+              cursorRadiusUI={0}
+              cursorStrengthUI={0}
+              clickForce={0}
               sphereColor="#FFFFFF"
               style={{ width: '100%', height: '100%' }}
             />
