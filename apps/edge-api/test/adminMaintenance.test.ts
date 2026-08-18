@@ -1,8 +1,9 @@
 import { env } from 'cloudflare:workers'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   AdminMaintenanceError,
+  handleAdminMaintenanceRequest,
   resetChatHistoryForScope,
   resetStockForScope,
 } from '../src/adminMaintenance'
@@ -30,6 +31,28 @@ async function cleanupTenant(tenantId: string) {
 }
 
 describe('admin maintenance integrity', () => {
+  it('fails closed before session lookup unless the configured test tenant matches', async () => {
+    const getSession = vi.fn(async () => null)
+    const request = new Request('https://edge.test/api/admin/maintenance/reset-chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'tenant-test-1', moduleId: 'petshop', confirm: 'RESET_CHAT_HISTORY' }),
+    })
+
+    const missingGate = await handleAdminMaintenanceRequest(request.clone(), { DB: db } as any, { getSession: getSession as any })
+    expect(missingGate?.status).toBe(403)
+    await expect(missingGate?.json()).resolves.toMatchObject({ code: 'MAINTENANCE_TEST_TENANT_REQUIRED' })
+    expect(getSession).not.toHaveBeenCalled()
+
+    const wrongTenant = await handleAdminMaintenanceRequest(request.clone(), {
+      DB: db,
+      MAINTENANCE_TEST_TENANT_ID: 'another-test-tenant',
+    } as any, { getSession: getSession as any })
+    expect(wrongTenant?.status).toBe(403)
+    await expect(wrongTenant?.json()).resolves.toMatchObject({ code: 'MAINTENANCE_TEST_TENANT_REQUIRED' })
+    expect(getSession).not.toHaveBeenCalled()
+  })
+
   it('resets chat state in dependency order and removes operation effects with the checkpoint', async () => {
     const { tenantId, now } = await seedTenant('chat-reset')
     const threadId = `thread-${crypto.randomUUID()}`
