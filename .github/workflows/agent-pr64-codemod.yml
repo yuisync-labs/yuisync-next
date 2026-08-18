@@ -1,0 +1,28 @@
+name: PR64 codemod
+
+on:
+  pull_request:
+    types: [reopened]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  codemod:
+    if: ${{ github.event.pull_request.head.ref == 'hardening/package-ledger-and-tab-db-audit' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: hardening/package-ledger-and-tab-db-audit
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/agent-pr64-codemod.mjs
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/edge-api/src/petshopPlansApi.ts apps/edge-api/test/packageUsageLedgerV29.test.ts src/modules/petshop/hooks/usePetshopAdvanced.js
+          git commit -m "fix(packages): unify active tabs on canonical ledger [pr64-codemod]"
+          git push origin HEAD:hardening/package-ledger-and-tab-db-audit
