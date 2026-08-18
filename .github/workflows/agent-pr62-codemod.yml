@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-      - run: node scripts/agent-pr62-runner-v4.mjs
+      - run: node scripts/agent-pr62-runner-v5.mjs
       - run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
