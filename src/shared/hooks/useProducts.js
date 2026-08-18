@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useModuleCtx } from '../../context/ModuleContext'
 import { useAuthCtx } from '../../context/AuthContext'
 import { applyTenantFilter, buildTenantPayload, runWithTenantFallback } from '../../lib/tenant'
+import { adjustInventoryCommand } from '../lib/inventoryCommands'
 
 const BASE_SELECT = `
   id, name, category, description, price, cost_price, stock_quantity,
@@ -113,6 +114,10 @@ export function useProducts() {
     assertActiveTenant(activeTenantId, 'salvar o produto')
     const payloadClean = { ...payload }
     if (payloadClean.upsell_product) delete payloadClean.upsell_product
+    const requestedStock = Object.prototype.hasOwnProperty.call(payloadClean, 'stock_quantity')
+      ? Math.max(0, Number(payloadClean.stock_quantity) || 0)
+      : null
+    delete payloadClean.stock_quantity
 
     const { data, error } = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
       let q = supabase
@@ -127,8 +132,24 @@ export function useProducts() {
     })
 
     if (error) throw error
-    setProducts(prev => prev.map(p => p.id === id ? data : p))
-    return data
+    let next = data
+    if (requestedStock !== null) {
+      const currentStock = Number(data?.stock_quantity || 0)
+      const delta = requestedStock - currentStock
+      if (Math.abs(delta) > 0.0005) {
+        const adjustment = await adjustInventoryCommand({
+          tenantId: activeTenantId,
+          moduleId: activeModuleId,
+          productId: id,
+          delta,
+          movementType: 'adjustment',
+          reason: 'Ajuste de estoque pela edição do produto',
+        })
+        next = { ...data, stock_quantity: adjustment.stock_after }
+      }
+    }
+    setProducts(prev => prev.map(p => p.id === id ? next : p))
+    return next
   }, [activeModuleId, activeTenantId])
 
   // Novo: Processar entrada de mercadoria via XML (Sincronização sugerida)
@@ -156,49 +177,65 @@ export function useProducts() {
       product = data
     }
 
+    const quantity = Math.max(0, Number.parseFloat(item.qnt) || 0)
+    const newCost = Math.max(0, Number.parseFloat(item.val) || 0)
+
     if (product) {
-      // PRODUTO JÁ EXISTE: Aumentar estoque e atualizar custo
-      const newQty = (product.stock_quantity || 0) + parseFloat(item.qnt)
-      
-      // Atualizamos o custo se o novo for diferente
-      const newCost = parseFloat(item.val)
-      
-      return await update(product.id, { 
-        stock_quantity: newQty,
+      if (quantity > 0) {
+        await adjustInventoryCommand({
+          tenantId: activeTenantId,
+          moduleId: activeModuleId,
+          productId: product.id,
+          delta: quantity,
+          movementType: 'purchase',
+          reason: 'Entrada de mercadoria via XML',
+          unitCostCents: Math.round(newCost * 100),
+        })
+      }
+      return update(product.id, {
         cost_price: newCost,
-        updated_at: new Date().toISOString()
-      })
-    } else {
-      // PRODUTO NOVO: Criar no banco
-      return await create({
-        name: item.name,
-        barcode: item.barcode !== 'SEM GTIN' ? item.barcode : null,
-        stock_quantity: parseFloat(item.qnt),
-        cost_price: parseFloat(item.val),
-        price: parseFloat(item.val) * 1.5, // Sugestão de margem de 50% inicial
-        category: 'Importação XML',
-        active: true,
-        min_stock: 1
+        updated_at: new Date().toISOString(),
       })
     }
-  }, [activeModuleId, getByBarcode, update, create])
+
+    const created = await create({
+      name: item.name,
+      barcode: item.barcode !== 'SEM GTIN' ? item.barcode : null,
+      stock_quantity: 0,
+      cost_price: newCost,
+      price: newCost * 1.5, // Sugestão de margem de 50% inicial
+      category: 'Importação XML',
+      active: true,
+      min_stock: 1,
+    })
+    if (quantity <= 0) return created
+    const adjustment = await adjustInventoryCommand({
+      tenantId: activeTenantId,
+      moduleId: activeModuleId,
+      productId: created.id,
+      delta: quantity,
+      movementType: 'purchase',
+      reason: 'Entrada inicial de mercadoria via XML',
+      unitCostCents: Math.round(newCost * 100),
+    })
+    const next = { ...created, stock_quantity: adjustment.stock_after }
+    setProducts(prev => prev.map(p => p.id === created.id ? next : p))
+    return next
+  }, [activeModuleId, activeTenantId, getByBarcode, update, create])
 
   const adjustStock = useCallback(async (id, delta) => {
     assertActiveTenant(activeTenantId, 'ajustar o estoque')
-    const { data: current } = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
-      let q = supabase
-        .from('products')
-        .select('stock_quantity')
-        .eq('id', id)
-        .eq('module_id', activeModuleId)
-        .single()
-      q = applyTenantFilter(q, activeTenantId, includeTenant)
-      return q
+    const adjustment = await adjustInventoryCommand({
+      tenantId: activeTenantId,
+      moduleId: activeModuleId,
+      productId: id,
+      delta,
+      movementType: 'adjustment',
+      reason: 'Ajuste manual de estoque',
     })
-
-    const newQty = Math.max(0, (current?.stock_quantity || 0) + delta)
-    return update(id, { stock_quantity: newQty })
-  }, [activeModuleId, activeTenantId, update])
+    setProducts(prev => prev.map(p => p.id === id ? { ...p, stock_quantity: adjustment.stock_after } : p))
+    return adjustment
+  }, [activeModuleId, activeTenantId])
 
   const remove = useCallback(async (id) => {
     assertActiveTenant(activeTenantId, 'remover o produto')
