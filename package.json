@@ -47,6 +47,7 @@
     "check:product-ui": "node scripts/check-product-ui-boundaries.mjs",
     "check:no-domain-state-from-dom": "node scripts/check-no-domain-state-from-dom.mjs",
     "check:appointment-edit-semantics": "node scripts/check-appointment-edit-semantics.mjs",
+    "check:planos-native-commands": "node scripts/check-planos-native-commands.mjs",
     "check:no-runtime-supabase": "node scripts/check-no-runtime-supabase.mjs",
     "check:edge-compat-surface": "node scripts/check-edge-compat-surface.mjs",
     "check:whatsapp-edge-boundaries": "node scripts/check-whatsapp-edge-boundaries.mjs",

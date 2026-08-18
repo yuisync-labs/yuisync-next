@@ -13,6 +13,7 @@ import { handleAiLabMigrationRequest } from './migration/aiLabMigrationHttp'
 import { handleAuthMigrationRequest } from './migration/authMigrationHttp'
 import { handleClientsPetsMigrationRequest } from './migration/clientsPetsMigrationHttp'
 import { handleOperationalMigrationRequest } from './migration/operationalMigrationHttp'
+import { handlePetshopPlansApiRequest } from './petshopPlansApi'
 import { handlePetshopServicesApiRequest } from './petshopServicesApi'
 import { handleAsyncQueue } from './queueHandler'
 import { handleRealtimeApiRequest, scheduleRealtimeInvalidation } from './realtimeApi'
@@ -83,6 +84,9 @@ export default {
 
     const managedUsersResponse = await handleManagedUsersApiRequest(request, bindings)
     if (managedUsersResponse) return respond(managedUsersResponse)
+
+    const petshopPlansResponse = await handlePetshopPlansApiRequest(request, bindings)
+    if (petshopPlansResponse) return respond(petshopPlansResponse)
 
     const petshopServicesResponse = await handlePetshopServicesApiRequest(request, bindings)
     if (petshopServicesResponse) return respond(petshopServicesResponse)
