@@ -77,6 +77,25 @@ function assertNoIncrease(current, previous) {
   }
 }
 
+function selfVerifyRatchet() {
+  const previous = { files: { 'src/a.js': { from: 2, rpc: 1 } } }
+  assertNoIncrease({ files: { 'src/a.js': { from: 1, rpc: 1 } } }, previous)
+
+  for (const candidate of [
+    { files: { 'src/a.js': { from: 3, rpc: 1 } } },
+    { files: { 'src/a.js': { from: 2, rpc: 2 } } },
+    { files: { 'src/a.js': { from: 2, rpc: 1 }, 'src/new.js': { from: 1, rpc: 0 } } },
+  ]) {
+    let rejected = false
+    try {
+      assertNoIncrease(candidate, previous)
+    } catch {
+      rejected = true
+    }
+    if (!rejected) throw new Error('Frontend compatibility ratchet self-check failed to reject an increase.')
+  }
+}
+
 const write = process.argv.includes('--write')
 const baseIndex = process.argv.indexOf('--base')
 const base = baseIndex >= 0 ? process.argv[baseIndex + 1] : ''
@@ -88,6 +107,8 @@ if (write) {
   console.log(`Wrote ${BASELINE_PATH}: ${current.totals.from} .from() / ${current.totals.rpc} .rpc() across ${Object.keys(current.files).length} files.`)
   process.exit(0)
 }
+
+selfVerifyRatchet()
 
 if (!fs.existsSync(BASELINE_PATH)) {
   throw new Error(`Missing compatibility baseline: ${BASELINE_PATH}`)
