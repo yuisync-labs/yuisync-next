@@ -19,10 +19,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-      - run: node scripts/agent-pr64-inventory-codemod.mjs
+      - run: node scripts/agent-pr64-chat-codemod.mjs
       - run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/edge-api/src/index.ts apps/edge-api/src/compatApiRuntime.js src/shared/hooks/useProducts.js
-          git commit -m "fix(inventory): make stock writes atomic [pr64-codemod]"
+          git add apps/edge-api/src/compatApiRuntime.js
+          git commit -m "fix(chat): align legacy UI state with D1 [pr64-codemod]"
           git push origin HEAD:hardening/package-ledger-and-tab-db-audit
