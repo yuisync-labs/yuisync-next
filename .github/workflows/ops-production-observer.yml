@@ -1,0 +1,70 @@
+name: Ops production observer
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ops-production-observer.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      TARGET_SHA: 5e9083e8eb77894395ba51b46fabc2d3e82c2399
+      TARGET_WORKFLOW: production-final-deploy-v2.yml
+    steps:
+      - name: Find production run for exact release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${TARGET_WORKFLOW}/runs?event=issues&per_page=30" > /tmp/runs.json
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const payload = JSON.parse(await readFile('/tmp/runs.json', 'utf8'))
+          const target = String(process.env.TARGET_SHA).toLowerCase()
+          const matches = (payload.workflow_runs || [])
+            .filter((run) => String(run.head_sha || '').toLowerCase() === target)
+            .map((run) => ({
+              id: run.id,
+              status: run.status,
+              conclusion: run.conclusion,
+              attempt: run.run_attempt,
+              created_at: run.created_at,
+              updated_at: run.updated_at,
+              url: run.html_url,
+            }))
+          if (!matches.length) throw new Error(`PRODUCTION_RUN_NOT_FOUND:${target}`)
+          console.log(JSON.stringify({ target_sha: target, production_runs: matches }, null, 2))
+          NODE
+
+      - name: Probe live YuiSync production
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 20 https://yuisync.app/health -o /tmp/health.json
+          curl --fail --silent --show-error --max-time 20 https://yuisync.app/ready -o /tmp/ready.json
+          curl --fail --silent --show-error --max-time 20 https://yuisync.app/ -o /tmp/home.html
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const health = JSON.parse(await readFile('/tmp/health.json', 'utf8'))
+          const ready = JSON.parse(await readFile('/tmp/ready.json', 'utf8'))
+          const home = await readFile('/tmp/home.html', 'utf8')
+          if (health?.status !== 'ok' || health?.environment !== 'production') throw new Error('LIVE_HEALTH_NOT_OK')
+          if (ready?.status !== 'ready' || ready?.environment !== 'production') throw new Error('LIVE_READY_NOT_READY')
+          if (!home.includes('YuiSync — Plataforma de operação conectada')) throw new Error('NEW_LANDING_TITLE_NOT_LIVE')
+          if (!home.includes('/brand/yuisync-mascot-favicon.svg')) throw new Error('YUI_MASCOT_ASSET_NOT_LIVE')
+          console.log(JSON.stringify({
+            health: health.status,
+            ready: ready.status,
+            environment: ready.environment,
+            schema_version: ready?.checks?.schema_version,
+            landing_title_live: true,
+            mascot_asset_live: true,
+          }, null, 2))
+          NODE
