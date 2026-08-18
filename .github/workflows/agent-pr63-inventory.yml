@@ -1,0 +1,28 @@
+name: PR63 inventory
+
+on:
+  pull_request:
+    types: [opened, reopened]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  inventory:
+    if: ${{ github.event.pull_request.head.ref == 'hardening/frontend-compat-ratchet' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: hardening/frontend-compat-ratchet
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/check-frontend-compat-ratchet.mjs --write
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/migration/frontend-compat-surface.json
+          git commit -m "test(compat): capture initial frontend surface"
+          git push origin HEAD:hardening/frontend-compat-ratchet
