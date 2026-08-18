@@ -6,8 +6,7 @@ on:
 
 permissions:
   contents: read
-  actions: read
-  issues: read
+  issues: write
 
 concurrency:
   group: yuisync-migration-intake-schema
@@ -20,7 +19,7 @@ jobs:
   preflight:
     if: startsWith(github.event.issue.title, 'Migration intake schema — ') && (github.event.issue.author_association == 'OWNER' || github.event.issue.author_association == 'MEMBER')
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 35
     outputs:
       release_sha: ${{ steps.gates.outputs.release_sha }}
     steps:
@@ -28,8 +27,6 @@ jobs:
         with:
           fetch-depth: 0
       - id: gates
-        env:
-          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -50,20 +47,44 @@ jobs:
 
           execFileSync('git', ['fetch', 'origin', 'main'], { stdio: 'inherit' })
           const currentMain = execFileSync('git', ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim().toLowerCase()
+          const checkedOut = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim().toLowerCase()
           if (release !== currentMain) throw new Error(`RELEASE_NOT_CURRENT_MAIN:${release}:${currentMain}`)
+          if (checkedOut !== release) throw new Error(`CHECKOUT_NOT_AUTHORIZED_MAIN:${checkedOut}:${release}`)
           await access(`apps/edge-api/migrations/${process.env.INTAKE_MIGRATION}`)
-
-          const repo = process.env.GITHUB_REPOSITORY
-          const runs = JSON.parse(execFileSync('gh', [
-            'api', `repos/${repo}/actions/workflows/quality.yml/runs`,
-            '-f', `head_sha=${release}`, '-f', 'status=success', '-f', 'per_page=100', '-X', 'GET',
-          ], { encoding: 'utf8', env: process.env })).workflow_runs || []
-          if (!runs.some((run) => run.head_sha === release && run.conclusion === 'success')) {
-            throw new Error('EXACT_MAIN_QUALITY_REQUIRED')
-          }
           await appendFile(process.env.GITHUB_OUTPUT, `release_sha=${release}\n`)
-          console.log(JSON.stringify({ status: 'preflight-ready', release_sha: release, quality: 'success', scope }))
+          console.log(JSON.stringify({ status: 'authorization-gates-ready', release_sha: release, scope }))
           NODE
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - run: npm ci
+      - name: Certify authorized main before any Cloudflare write
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run audit:ci
+          npm run check:no-runtime-supabase
+          npm run check:edge-compat-surface
+          node scripts/check-inventory-write-boundary.mjs
+          npm run check:whatsapp-edge-boundaries
+          npm run typecheck
+          npm run typecheck:contracts
+          npm run check:contract-boundaries
+          npm run check:product-ui
+          npm run check:no-domain-state-from-dom
+          npm run check:appointment-edit-semantics
+          npm run check:planos-native-commands
+          npm run test:contracts
+          npm run test
+          npm run test:petbot
+          npm run test:luna:unit
+          npm run test:luna:regressions
+          npm run test:transactions
+          npm run build
+          npm run edge:check
+          echo '{"status":"exact-main-certified"}'
 
   staging:
     needs: preflight
@@ -247,8 +268,44 @@ jobs:
         run: |
           echo '### Migration intake terrain' >> "$GITHUB_STEP_SUMMARY"
           echo "- exact main: \`$RELEASE_SHA\`" >> "$GITHUB_STEP_SUMMARY"
-          echo '- staging: intake schema installed, empty, schema v30' >> "$GITHUB_STEP_SUMMARY"
-          echo '- production: intake schema installed, empty, schema v30' >> "$GITHUB_STEP_SUMMARY"
+          echo '- staging: intake schema installed/verified empty, schema v30' >> "$GITHUB_STEP_SUMMARY"
+          echo '- production: intake schema installed/verified empty, schema v30' >> "$GITHUB_STEP_SUMMARY"
           echo '- oversized source payloads: gzip + chunk landing supported' >> "$GITHUB_STEP_SUMMARY"
           echo '- production /health + /ready: unchanged and healthy' >> "$GITHUB_STEP_SUMMARY"
           echo '- source tenant data imported: no' >> "$GITHUB_STEP_SUMMARY"
+
+  report:
+    if: always() && startsWith(github.event.issue.title, 'Migration intake schema — ') && (github.event.issue.author_association == 'OWNER' || github.event.issue.author_association == 'MEMBER')
+    needs: [preflight, staging, production]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+      STAGING_RESULT: ${{ needs.staging.result }}
+      PRODUCTION_RESULT: ${{ needs.production.result }}
+    steps:
+      - name: Record immutable installation result on authorization issue
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          STATUS="FAILED"
+          if [ "$PREFLIGHT_RESULT" = success ] && [ "$STAGING_RESULT" = success ] && [ "$PRODUCTION_RESULT" = success ]; then
+            STATUS="SUCCESS"
+          fi
+          BODY=$(cat <<EOF
+          ### Migration intake schema installer — ${STATUS}
+
+          - Authorized SHA: \`${{ needs.preflight.outputs.release_sha || 'unresolved' }}\`
+          - Exact-main certification: **${PREFLIGHT_RESULT}**
+          - Staging empty intake schema: **${STAGING_RESULT}**
+          - Production empty intake schema + live readiness: **${PRODUCTION_RESULT}**
+          - Source tenant data imported: **NO**
+          - Workflow run: ${RUN_URL}
+          EOF
+          )
+          gh issue comment "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          if [ "$STATUS" = SUCCESS ]; then
+            gh issue close "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY" --reason completed
+          fi
