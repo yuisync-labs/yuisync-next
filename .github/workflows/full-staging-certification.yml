@@ -44,6 +44,16 @@ jobs:
           console.log(JSON.stringify({ status: 'staging-certification-authorized', release_sha: release }))
           NODE
 
+      - name: Publish run start to authorization issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RELEASE_SHA: ${{ steps.gates.outputs.release_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Staging certification started\n\n- Release-SHA: \`$RELEASE_SHA\`\n- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\n- Attempt: \`$GITHUB_RUN_ATTEMPT\`\n\nThis run is staging-only."
+
   certify:
     name: Certify real Cloudflare staging
     needs: preflight
