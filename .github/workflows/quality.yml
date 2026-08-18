@@ -65,6 +65,7 @@ jobs:
       - run: npm run typecheck:contracts
       - run: npm run check:contract-boundaries
       - run: npm run check:product-ui
+      - run: npm run check:no-domain-state-from-dom
       - run: npm run test:contracts
       - run: npm run test
       - run: npm run test:petbot
