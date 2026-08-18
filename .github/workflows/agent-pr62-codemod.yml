@@ -2,7 +2,7 @@ name: PR62 codemod
 
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [reopened]
     branches: [main]
 
 permissions:
@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-      - run: node scripts/agent-pr62-codemod.mjs
+      - run: node scripts/agent-pr62-runner.mjs
       - run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
