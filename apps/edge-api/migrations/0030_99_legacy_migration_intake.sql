@@ -2,6 +2,8 @@
 -- additive: it stages legacy snapshots before canonical domain import.
 -- Secrets never belong in migration_source_records; they are stored only as
 -- AES-GCM ciphertext in migration_secret_vault by the operator-side migration CLI.
+-- Source payloads that would approach D1 row/statement limits are gzip-compressed
+-- and split across migration_source_payload_chunks.
 
 CREATE TABLE IF NOT EXISTS migration_runs (
   id TEXT PRIMARY KEY NOT NULL,
@@ -46,7 +48,11 @@ CREATE TABLE IF NOT EXISTS migration_source_records (
   data_class TEXT NOT NULL
     CHECK (data_class IN ('operational','pii','configuration','technical','identity')),
   destination_hint TEXT,
-  payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
+  payload_mode TEXT NOT NULL DEFAULT 'inline' CHECK (payload_mode IN ('inline','chunked')),
+  payload_encoding TEXT NOT NULL DEFAULT 'json' CHECK (payload_encoding IN ('json','gzip+base64')),
+  payload_json TEXT,
+  payload_bytes INTEGER NOT NULL CHECK (payload_bytes >= 0),
+  payload_chunk_count INTEGER NOT NULL DEFAULT 0 CHECK (payload_chunk_count >= 0),
   payload_checksum TEXT NOT NULL,
   secret_names_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(secret_names_json)),
   source_created_at_ms INTEGER,
@@ -59,13 +65,36 @@ CREATE TABLE IF NOT EXISTS migration_source_records (
   CHECK (length(trim(tenant_id)) BETWEEN 1 AND 160),
   CHECK (module_id IS NULL OR length(trim(module_id)) BETWEEN 1 AND 64),
   CHECK (module_id IS NULL OR module_id = lower(module_id)),
-  CHECK (length(payload_checksum) = 64)
+  CHECK (length(payload_checksum) = 64),
+  CHECK (
+    (payload_mode='inline' AND payload_encoding='json' AND payload_json IS NOT NULL AND json_valid(payload_json) AND payload_chunk_count=0)
+    OR
+    (payload_mode='chunked' AND payload_encoding='gzip+base64' AND payload_json IS NULL AND payload_chunk_count>0)
+  )
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS migration_source_records_table_idx
   ON migration_source_records (run_id,source_table,source_key);
 CREATE INDEX IF NOT EXISTS migration_source_records_scope_idx
   ON migration_source_records (tenant_id,module_id,disposition,source_table);
+
+CREATE TABLE IF NOT EXISTS migration_source_payload_chunks (
+  run_id TEXT NOT NULL,
+  source_table TEXT NOT NULL,
+  source_key TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+  payload_chunk_b64 TEXT NOT NULL,
+  chunk_bytes INTEGER NOT NULL CHECK (chunk_bytes BETWEEN 1 AND 32000),
+  created_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (run_id,source_table,source_key,chunk_index),
+  FOREIGN KEY (run_id,source_table,source_key)
+    REFERENCES migration_source_records(run_id,source_table,source_key)
+    ON UPDATE RESTRICT ON DELETE CASCADE,
+  CHECK (length(payload_chunk_b64) BETWEEN 4 AND 50000)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS migration_source_payload_chunks_record_idx
+  ON migration_source_payload_chunks (run_id,source_table,source_key,chunk_index);
 
 CREATE TABLE IF NOT EXISTS migration_secret_vault (
   run_id TEXT NOT NULL,
