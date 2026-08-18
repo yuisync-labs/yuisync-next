@@ -68,6 +68,9 @@ jobs:
       - run: npm run check:no-domain-state-from-dom
       - run: npm run check:appointment-edit-semantics
       - run: npm run check:planos-native-commands
+      - run: >-
+          npm run check:frontend-compat-ratchet --
+          --base "${{ github.event.pull_request.base.sha || github.event.before }}"
       - run: npm run test:contracts
       - run: npm run test
       - run: npm run test:petbot
