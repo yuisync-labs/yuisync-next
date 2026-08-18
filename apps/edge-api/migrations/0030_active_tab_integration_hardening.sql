@@ -20,6 +20,12 @@ SELECT
   external_thread_id AS phone,
   external_thread_id AS customer_phone,
   customer_name,
+  CASE
+    WHEN json_extract(context_json,'$.legacy_channel')='instagram' THEN 'instagram'
+    WHEN channel='web' THEN 'website'
+    WHEN channel='internal' THEN 'interno'
+    ELSE 'whatsapp'
+  END AS channel,
   CASE status
     WHEN 'open' THEN 'bot'
     WHEN 'handoff' THEN 'human'
