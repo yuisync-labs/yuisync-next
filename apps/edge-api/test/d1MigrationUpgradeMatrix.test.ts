@@ -30,7 +30,19 @@ async function setSchemaSnapshot(version: number) {
   }
 }
 
+async function dropVersion29() {
+  await db.exec(`
+    DROP TRIGGER IF EXISTS client_subscription_base_usage_capacity_guard;
+    DROP TRIGGER IF EXISTS client_subscription_usage_projection_from_base;
+    DROP TRIGGER IF EXISTS subscription_usage_projection_after_allocation_insert;
+    DROP TRIGGER IF EXISTS subscription_usage_projection_after_allocation_update;
+    DROP TRIGGER IF EXISTS subscription_usage_projection_after_allocation_delete;
+    DROP TRIGGER IF EXISTS package_allocation_from_late_service_consumption;
+  `)
+}
+
 async function dropVersion28() {
+  await dropVersion29()
   await db.exec(`
     DROP TABLE IF EXISTS whatsapp_delivery_receipts;
     DROP TABLE IF EXISTS whatsapp_outbound_messages;
@@ -54,7 +66,7 @@ async function dropVersion26() {
 async function assertLatestSchema() {
   const version = await db.prepare("SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'")
     .first<{ value: string }>()
-  expect(version?.value).toBe('28')
+  expect(version?.value).toBe('29')
 
   const tables = await db.prepare(`
     SELECT name FROM sqlite_schema
@@ -83,6 +95,26 @@ async function assertLatestSchema() {
     expect(names.has(required)).toBe(true)
   }
 
+  const triggers = await db.prepare(`
+    SELECT name FROM sqlite_schema
+    WHERE type='trigger' AND name IN (
+      'client_subscription_base_usage_capacity_guard',
+      'client_subscription_usage_projection_from_base',
+      'subscription_usage_projection_after_allocation_insert',
+      'subscription_usage_projection_after_allocation_update',
+      'subscription_usage_projection_after_allocation_delete',
+      'package_allocation_from_late_service_consumption'
+    )
+  `).all<{ name: string }>()
+  expect(new Set(triggers.results.map((row) => row.name))).toEqual(new Set([
+    'client_subscription_base_usage_capacity_guard',
+    'client_subscription_usage_projection_from_base',
+    'subscription_usage_projection_after_allocation_insert',
+    'subscription_usage_projection_after_allocation_update',
+    'subscription_usage_projection_after_allocation_delete',
+    'package_allocation_from_late_service_consumption',
+  ]))
+
   const indexes = await db.prepare(`
     SELECT name FROM sqlite_schema
     WHERE type='index' AND name IN (
@@ -103,7 +135,12 @@ async function assertLatestSchema() {
 }
 
 describe('D1 recent migration upgrade matrix', () => {
-  it('upgrades v27, v26 and v25 snapshots to v28 using the repository migrations', async () => {
+  it('upgrades v28, v27, v26 and v25 snapshots to v29 using the repository migrations', async () => {
+    await dropVersion29()
+    await setSchemaSnapshot(28)
+    await applyD1Migrations(db, migrationsFrom(28))
+    await assertLatestSchema()
+
     await dropVersion28()
     await setSchemaSnapshot(27)
     await applyD1Migrations(db, migrationsFrom(27))
