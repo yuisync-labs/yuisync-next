@@ -73,7 +73,6 @@ async function assertLatestSchema() {
 
   const outboundColumns = await db.prepare('PRAGMA table_info(whatsapp_outbound_messages)').all<{ name: string }>()
   const names = new Set(outboundColumns.results.map((row) => row.name))
-  expect(names).toEqual(expect.objectContaining ? names : names)
   for (const required of ['idempotency_key', 'internal_message_id', 'provider_message_id', 'status', 'last_provider_status_at_ms']) {
     expect(names.has(required)).toBe(true)
   }
