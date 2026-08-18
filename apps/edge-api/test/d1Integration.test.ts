@@ -9,7 +9,7 @@ describe('D1 integration in workerd', () => {
   it('aplica todas as migrations no banco isolado de testes', async () => {
     const row = await testEnv.DB.prepare('SELECT value FROM _yuisync_system_metadata WHERE key = ?')
       .bind('schema_version').first<{ value: string }>()
-    expect(row).toEqual({ value: '28' })
+    expect(row).toEqual({ value: '29' })
 
     const required = [
       'clients','pets','catalog_products','services','inventory_balances','inventory_movements',
@@ -44,6 +44,11 @@ describe('D1 integration in workerd', () => {
     const membershipColumnNames = new Set(membershipColumns.results.map((column)=>column.name))
     expect(membershipColumnNames.has('role')).toBe(true)
     expect(membershipColumnNames.has('module_permissions_json')).toBe(true)
+
+    const triggers = await testEnv.DB.prepare(`SELECT name FROM sqlite_schema WHERE type='trigger'`).all<{name:string}>()
+    const triggerNames = new Set(triggers.results.map((trigger)=>trigger.name))
+    expect(triggerNames.has('client_subscription_base_usage_capacity_guard')).toBe(true)
+    expect(triggerNames.has('package_allocation_from_late_service_consumption')).toBe(true)
   })
 
   it('executa o canário pelo binding D1 real do ambiente de teste', async () => {
