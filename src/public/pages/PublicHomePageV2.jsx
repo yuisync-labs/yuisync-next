@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { motion, useReducedMotion } from 'framer-motion'
 import {
   AlertTriangle,
   ArrowRight,
@@ -6,55 +8,71 @@ import {
   CalendarDays,
   Check,
   ChevronRight,
-  Clock3,
   LayoutDashboard,
+  Menu,
   MessageSquare,
   PawPrint,
   ShieldCheck,
   ShoppingCart,
   TrendingUp,
   UsersRound,
+  X,
 } from 'lucide-react'
+import YuiMascot from '../components/YuiMascot'
+import ConnectionSphere from '../components/ConnectionSphere'
+import MotionReveal from '../components/MotionReveal'
+import { PlatformGrid } from '../components/PlatformMotion'
 
-const PRODUCT_AREAS = [
-  { icon: CalendarDays, label: 'Agenda' },
-  { icon: ShoppingCart, label: 'PDV' },
-  { icon: Boxes, label: 'Estoque' },
-  { icon: PawPrint, label: 'Clientes & Pets' },
-  { icon: UsersRound, label: 'Equipe' },
-]
+const HERO_ITEM = {
+  hidden: { opacity: 0, y: 18 },
+  visible: { opacity: 1, y: 0 },
+}
+
+const HERO_SEQUENCE = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.09, delayChildren: 0.08 } },
+}
+
+const DEMO_HREF = 'mailto:gabrielboalento3004@gmail.com?subject=Demonstra%C3%A7%C3%A3o%20do%20YuiSync&body=Ol%C3%A1%2C%20quero%20conhecer%20o%20YuiSync.%0A%0AEmpresa%3A%0ANome%3A%0ATelefone%3A'
 
 const BENEFITS = [
   {
-    eyebrow: 'Agenda',
-    title: 'Enxergue o dia inteiro sem depender de papel, planilha ou memória.',
-    text: 'Atendimentos, horários e contexto do cliente ficam organizados em uma visão única para a equipe.',
+    eyebrow: 'Operação',
+    title: 'Enxergue o trabalho acontecendo em uma única visão.',
+    text: 'Agenda, vendas e rotinas deixam de viver em telas soltas e passam a compartilhar o mesmo contexto.',
     icon: CalendarDays,
   },
   {
-    eyebrow: 'PDV + estoque',
-    title: 'Venda com mais segurança e mantenha o estoque acompanhando a operação.',
-    text: 'O caixa trabalha com o catálogo do sistema e as movimentações de estoque permanecem ligadas à venda.',
+    eyebrow: 'Gestão',
+    title: 'Transforme cada ação da equipe em informação útil para decidir.',
+    text: 'O que acontece no atendimento, no caixa e no estoque permanece conectado à gestão da operação.',
     icon: ShoppingCart,
   },
   {
-    eyebrow: 'Clientes & pets',
-    title: 'Histórico e cadastro no lugar em que sua equipe realmente trabalha.',
-    text: 'Centralize informações importantes de clientes e pets para reduzir retrabalho e atendimento desencontrado.',
-    icon: PawPrint,
+    eyebrow: 'Relacionamento',
+    title: 'Mantenha o histórico perto de quem atende e vende.',
+    text: 'Clientes, conversas e atendimentos ficam ligados para reduzir retrabalho e preservar o contexto.',
+    icon: MessageSquare,
   },
 ]
 
 const START_STEPS = [
-  { number: '01', title: 'Entendemos sua operação', text: 'Mapeamos a rotina do petshop e definimos a configuração inicial do ambiente.' },
+  { number: '01', title: 'Entendemos sua operação', text: 'Mapeamos a rotina do negócio e definimos a configuração inicial do ambiente.' },
   { number: '02', title: 'Organizamos o ambiente', text: 'Equipe, acessos e dados essenciais entram de forma estruturada para você começar com controle.' },
   { number: '03', title: 'Você entra em operação', text: 'O time passa a trabalhar no YuiSync com acompanhamento durante a implantação.' },
 ]
 
+const TRUST_SIGNALS = [
+  { icon: LayoutDashboard, title: 'Interface real', text: 'Produto demonstrado na página' },
+  { icon: UsersRound, title: 'Implantação acompanhada', text: 'Configuração com contexto' },
+  { icon: ShieldCheck, title: 'Acessos por função', text: 'Controle para cada equipe' },
+  { icon: PawPrint, title: 'Disponível para petshops', text: 'Primeira solução vertical' },
+]
+
 const FAQS = [
   {
-    question: 'O YuiSync atende somente petshops?',
-    answer: 'Hoje o produto está focado na operação de petshops. A plataforma foi estruturada para evoluir sem comprometer a experiência do produto atual.',
+    question: 'O YuiSync é uma plataforma ou um sistema para petshops?',
+    answer: 'O YuiSync é a plataforma de operação conectada. Petshops são a primeira solução vertical disponível, com fluxos próprios de agenda, clientes, pets, vendas e estoque.',
   },
   {
     question: 'O sistema inclui agenda, PDV e estoque?',
@@ -68,6 +86,18 @@ const FAQS = [
     question: 'Como funciona a contratação?',
     answer: 'Você escolhe o plano e passa por um onboarding guiado para preparar o ambiente antes de colocar a operação no sistema.',
   },
+  {
+    question: 'Consigo trazer dados que já tenho?',
+    answer: 'Durante a implantação, avaliamos os cadastros e formatos disponíveis para organizar a entrada dos dados essenciais no novo ambiente.',
+  },
+  {
+    question: 'Preciso instalar o YuiSync nos computadores?',
+    answer: 'Não. O YuiSync funciona pela web e pode ser acessado em dispositivos compatíveis com navegador e conexão à internet.',
+  },
+  {
+    question: 'Como o YuiSync trata privacidade e acessos?',
+    answer: 'A plataforma separa usuários, cargos e permissões. O tratamento de dados e os canais para solicitações estão descritos na Política de Privacidade do YuiSync.',
+  },
 ]
 
 const DEMO_APPOINTMENTS = [
@@ -77,7 +107,23 @@ const DEMO_APPOINTMENTS = [
 ]
 
 function scrollToSection(id) {
-  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const target = document.getElementById(id)
+  if (!target) return
+
+  const scroller = target.closest('.public-home')
+  const header = scroller?.querySelector('header')
+
+  if (!scroller) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    return
+  }
+
+  const top = scroller.scrollTop
+    + target.getBoundingClientRect().top
+    - scroller.getBoundingClientRect().top
+    - (header?.offsetHeight ?? 0)
+
+  scroller.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
 }
 
 function DemoKpi({ label, value, sub, icon: Icon, tone = 'emerald' }) {
@@ -97,27 +143,27 @@ function DemoKpi({ label, value, sub, icon: Icon, tone = 'emerald' }) {
         </span>
       </div>
       <p className="mt-3 text-lg font-bold tracking-tight text-white sm:text-xl">{value}</p>
-      <p className="mt-1 text-[8px] leading-4 text-white/35 sm:text-[9px]">{sub}</p>
+      <p className="mt-1 text-[9px] leading-4 text-white/42 sm:text-[10px]">{sub}</p>
     </div>
   )
 }
 
-function ProductPreview() {
+function DesktopProductPreview() {
   return (
     <div className="relative">
-      <div className="absolute -inset-10 -z-10 bg-[radial-gradient(circle_at_center,rgba(43,127,255,0.12),transparent_62%)]" />
+      <div className="absolute -inset-10 -z-10 bg-[radial-gradient(circle_at_center,rgba(17,17,17,0.09),transparent_62%)]" />
 
       <div className="overflow-hidden border border-slate-200 bg-[#0F1219] shadow-[0_28px_90px_rgba(24,28,45,0.16)]">
         <div className="flex items-center justify-between border-b border-white/[0.08] bg-[#11151D] px-4 py-3">
           <div className="flex items-center gap-2.5">
-            <img src="/brand/yuisync-mark.png" alt="" className="h-5 w-5 object-contain" />
+            <YuiMascot inverted monochrome decorative className="h-5 w-5" />
             <div>
               <p className="text-[11px] font-bold leading-none text-white">YuiSync</p>
-              <p className="mt-1 text-[8px] font-medium text-white/35">PetShop CRM</p>
+              <p className="mt-1 text-[9px] font-medium text-white/45">Operação para petshops</p>
             </div>
           </div>
           <div className="flex items-center gap-2 text-[8px] font-semibold text-white/35">
-            <span className="hidden sm:inline">Quatro Patas Demo</span>
+            <span className="hidden sm:inline">Ambiente demonstrativo</span>
             <span className="h-6 w-6 rounded-md border border-white/10 bg-white/[0.04]" />
           </div>
         </div>
@@ -125,7 +171,7 @@ function ProductPreview() {
         <div className="grid min-h-[470px] grid-cols-[112px_1fr] bg-[#0F1219] sm:grid-cols-[145px_1fr]">
           <aside className="border-r border-white/[0.08] bg-[#11151D] px-2.5 py-4">
             <p className="mb-2.5 px-2 text-[7px] font-bold uppercase tracking-[0.18em] text-white/25 sm:text-[8px]">Menu principal</p>
-            <div className="space-y-1 text-[8px] font-semibold sm:text-[9px]">
+            <div className="space-y-1 text-[9px] font-semibold sm:text-[10px]">
               <div className="flex items-center gap-2 rounded-lg border border-emerald-500/15 bg-emerald-500/10 px-2 py-2 text-emerald-400">
                 <LayoutDashboard size={12} /> Dashboard
               </div>
@@ -152,7 +198,7 @@ function ProductPreview() {
               <h3 className="text-sm font-bold tracking-tight text-white sm:text-base">
                 Bom dia! <span className="font-normal text-white/25">/ Dashboard</span>
               </h3>
-              <p className="mt-1 text-[8px] text-white/30 sm:text-[9px]">terça-feira, 11 de agosto de 2026</p>
+              <p className="mt-1 text-[9px] text-white/40 sm:text-[10px]">terça-feira, 11 de agosto de 2026</p>
             </div>
 
             <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -224,140 +270,261 @@ function ProductPreview() {
   )
 }
 
-export default function PublicHomePageV2({ isAuthenticated = false }) {
-  const entryHref = isAuthenticated ? '/' : '/entrar'
+const MOBILE_PREVIEW_TABS = [
+  { id: 'agenda', label: 'Agenda', icon: CalendarDays },
+  { id: 'venda', label: 'Venda', icon: ShoppingCart },
+  { id: 'equipe', label: 'Equipe', icon: UsersRound },
+]
+
+function MobileProductPreview() {
+  const [activeTab, setActiveTab] = useState('agenda')
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[#F7F7F5] text-[#11131A]">
-      <header className="sticky top-0 z-50 border-b border-black/[0.06] bg-[#F7F7F5]/90 backdrop-blur-xl">
+    <div className="overflow-hidden border border-slate-200 bg-[#0F1219] shadow-[0_24px_65px_rgba(24,28,45,0.18)]">
+      <div className="flex items-center justify-between border-b border-white/[0.08] bg-[#11151D] px-4 py-3.5">
+        <div className="flex items-center gap-2.5"><YuiMascot inverted monochrome decorative className="h-6 w-6" /><div><p className="text-xs font-bold text-white">YuiSync</p><p className="text-[9px] text-white/45">Visualização adaptada</p></div></div>
+        <span className="rounded-full border border-white/10 px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-white/45">Demo</span>
+      </div>
+
+      <div className="grid grid-cols-3 border-b border-white/[0.08] bg-[#11151D] p-2" role="tablist" aria-label="Áreas demonstradas do produto">
+        {MOBILE_PREVIEW_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-[10px] font-bold transition-colors ${activeTab === tab.id ? 'bg-white text-black' : 'text-white/50 hover:text-white'}`}
+          >
+            <tab.icon size={12} /> {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="min-h-[360px] p-4 text-white">
+        {activeTab === 'agenda' && (
+          <div role="tabpanel">
+            <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-white/40">Hoje · 3 atendimentos</p>
+            <h3 className="mt-2 text-xl font-bold">Agenda do dia</h3>
+            <div className="mt-5 divide-y divide-white/[0.07] border-y border-white/[0.08]">
+              {DEMO_APPOINTMENTS.map(([time, pet, breed, service, status]) => (
+                <div key={`${time}-${pet}`} className="grid grid-cols-[46px_1fr_auto] items-center gap-3 py-3">
+                  <span className="text-xs font-bold text-amber-400">{time}</span>
+                  <span><strong className="block text-xs text-white">{pet} · {service}</strong><span className="mt-1 block text-[9px] text-white/38">{breed}</span></span>
+                  <span className={`rounded px-2 py-1 text-[8px] font-bold ${status === 'Confirmado' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>{status}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'venda' && (
+          <div role="tabpanel">
+            <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-white/40">Venda #2481</p>
+            <h3 className="mt-2 text-xl font-bold">Venda concluída</h3>
+            <div className="mt-5 border border-white/[0.08] bg-[#171B24] p-4">
+              <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold">Banho + tosa</p><p className="mt-1 text-[10px] text-white/42">Thor · Golden Retriever</p></div><strong className="text-sm text-emerald-400">R$ 120,00</strong></div>
+              <div className="mt-4 flex items-center gap-2 border-t border-white/[0.07] pt-4 text-[10px] text-white/60"><Boxes size={14} className="text-white/80" /> Produtos usados baixados do estoque</div>
+            </div>
+            <div className="mt-3 flex items-center gap-3 rounded-lg border border-emerald-500/15 bg-emerald-500/[0.07] p-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400"><Check size={15} /></span><span><strong className="block text-xs">Gestão atualizada</strong><span className="text-[9px] text-white/40">A informação continua no mesmo fluxo.</span></span></div>
+          </div>
+        )}
+
+        {activeTab === 'equipe' && (
+          <div role="tabpanel">
+            <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-white/40">Controle operacional</p>
+            <h3 className="mt-2 text-xl font-bold">Acessos por função</h3>
+            <div className="mt-5 divide-y divide-white/[0.07] border-y border-white/[0.08]">
+              {[
+                ['Rafaela', 'Administrador', 'Todos os módulos'],
+                ['Marina', 'Atendimento', 'Agenda · Clientes'],
+                ['Lucas', 'Caixa', 'PDV · Estoque'],
+              ].map(([name, role, access]) => (
+                <div key={name} className="grid grid-cols-[1fr_auto] gap-3 py-3"><span><strong className="block text-xs">{name}</strong><span className="mt-1 block text-[9px] text-white/40">{role}</span></span><span className="self-center text-right text-[9px] font-semibold text-white/55">{access}</span></div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-center gap-2 border-t border-white/[0.07] px-4 py-3 text-[9px] text-white/42"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Interface real · dados demonstrativos</div>
+    </div>
+  )
+}
+
+function ProductPreview() {
+  return <><div className="hidden md:block"><DesktopProductPreview /></div><div className="md:hidden"><MobileProductPreview /></div></>
+}
+
+export default function PublicHomePageV2({ isAuthenticated = false }) {
+  const entryHref = isAuthenticated ? '/' : '/entrar'
+  const prefersReducedMotion = useReducedMotion()
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+
+  const goToSection = (id) => {
+    setMobileMenuOpen(false)
+    requestAnimationFrame(() => scrollToSection(id))
+  }
+
+  return (
+    <div className="public-home min-h-screen overflow-x-hidden bg-[#F5F5F3] text-[#111111]">
+      <header className="sticky top-0 z-50 border-b border-white/[0.08] bg-[#050505]/95 text-white backdrop-blur-xl">
         <div className="mx-auto flex h-[72px] max-w-7xl items-center justify-between px-5 sm:px-8">
           <Link to="/" className="flex items-center gap-2.5" aria-label="YuiSync">
-            <img src="/brand/yuisync-mark.png" alt="YuiSync" className="h-8 w-8 object-contain" />
-            <span className="text-[16px] font-extrabold tracking-[-0.025em] text-[#151823]">YuiSync</span>
+            <YuiMascot inverted monochrome className="h-8 w-8" />
+            <span className="text-[16px] font-extrabold tracking-[-0.025em] text-white">YuiSync</span>
           </Link>
 
-          <nav className="hidden items-center gap-8 text-sm font-medium text-slate-600 md:flex">
-            <button type="button" onClick={() => scrollToSection('produto')} className="transition-colors hover:text-slate-950">Produto</button>
-            <button type="button" onClick={() => scrollToSection('recursos')} className="transition-colors hover:text-slate-950">Recursos</button>
-            <button type="button" onClick={() => scrollToSection('como-funciona')} className="transition-colors hover:text-slate-950">Como funciona</button>
-            <Link to="/vendas" className="transition-colors hover:text-slate-950">Planos</Link>
+          <nav className="hidden items-center gap-8 text-sm font-medium text-white/65 md:flex">
+            <button type="button" onClick={() => scrollToSection('produto')} className="transition-colors hover:text-white">Plataforma</button>
+            <button type="button" onClick={() => scrollToSection('recursos')} className="transition-colors hover:text-white">Recursos</button>
+            <button type="button" onClick={() => scrollToSection('solucoes')} className="transition-colors hover:text-white">Soluções</button>
+            <Link to="/vendas" className="transition-colors hover:text-white">Planos</Link>
           </nav>
 
           <div className="flex items-center gap-2">
-            <Link to={entryHref} className="hidden rounded-lg px-3.5 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-black/[0.04] sm:inline-flex">
+            <Link to={entryHref} className="hidden rounded-lg px-3.5 py-2 text-sm font-semibold text-white/65 transition-colors hover:bg-white/[0.05] hover:text-white sm:inline-flex">
               {isAuthenticated ? 'Abrir painel' : 'Entrar'}
             </Link>
-            <Link to="/vendas" className="inline-flex items-center gap-1.5 rounded-lg bg-[#151823] px-4 py-2.5 text-sm font-semibold text-white transition-transform hover:-translate-y-0.5">
-              Conhecer <ArrowRight size={14} />
-            </Link>
+            <button type="button" aria-expanded={mobileMenuOpen} aria-controls="mobile-navigation" aria-label={mobileMenuOpen ? 'Fechar menu' : 'Abrir menu'} onClick={() => setMobileMenuOpen((open) => !open)} className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 text-white/75 hover:bg-white/[0.06] hover:text-white md:hidden">{mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}</button>
+            <a href={DEMO_HREF} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-white px-3.5 py-2.5 text-sm font-semibold text-black transition-transform hover:-translate-y-0.5 hover:bg-neutral-200 sm:px-4">
+              <span className="min-[351px]:hidden">Demo</span><span className="hidden min-[351px]:inline sm:hidden">Agendar demo</span><span className="hidden sm:inline">Agendar demonstração</span> <ArrowRight size={14} />
+            </a>
           </div>
         </div>
+        {mobileMenuOpen && (
+          <motion.nav id="mobile-navigation" initial={prefersReducedMotion ? false : { opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="absolute inset-x-0 top-[72px] border-b border-white/10 bg-[#050505] px-5 py-4 shadow-2xl md:hidden">
+            <div className="mx-auto grid max-w-7xl gap-1 text-sm font-semibold text-white/70">
+              <button type="button" onClick={() => goToSection('produto')} className="rounded-lg px-3 py-3 text-left hover:bg-white/[0.06] hover:text-white">Plataforma</button>
+              <button type="button" onClick={() => goToSection('recursos')} className="rounded-lg px-3 py-3 text-left hover:bg-white/[0.06] hover:text-white">Recursos</button>
+              <button type="button" onClick={() => goToSection('solucoes')} className="rounded-lg px-3 py-3 text-left hover:bg-white/[0.06] hover:text-white">Soluções</button>
+              <Link to="/vendas" onClick={() => setMobileMenuOpen(false)} className="rounded-lg px-3 py-3 hover:bg-white/[0.06] hover:text-white">Planos</Link>
+              <Link to={entryHref} onClick={() => setMobileMenuOpen(false)} className="rounded-lg px-3 py-3 hover:bg-white/[0.06] hover:text-white">{isAuthenticated ? 'Abrir painel' : 'Entrar'}</Link>
+            </div>
+          </motion.nav>
+        )}
       </header>
 
       <main>
-        <section className="mx-auto grid max-w-7xl items-center gap-14 px-5 pb-20 pt-16 sm:px-8 md:pt-24 lg:grid-cols-[0.86fr_1.14fr] lg:gap-16 lg:pb-28">
-          <div>
-            <div className="mb-7 flex items-center gap-3 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-              <span className="h-px w-8 bg-gradient-to-r from-cyan-500 to-violet-500" />
-              Software para petshops
-            </div>
-            <h1 className="max-w-2xl text-[48px] font-extrabold leading-[0.98] tracking-[-0.055em] text-[#11131A] sm:text-[64px] lg:text-[72px]">
-              Seu petshop.
-              <span className="block bg-gradient-to-r from-[#07AEEA] via-[#2478F3] to-[#8B3FF6] bg-clip-text text-transparent">Sob controle.</span>
-            </h1>
-            <p className="mt-7 max-w-xl text-lg leading-8 text-slate-600">
-              Agenda, clientes, pets, estoque e vendas conectados em um único sistema para sua equipe trabalhar com menos retrabalho e mais clareza.
-            </p>
-            <div className="mt-9 flex flex-wrap items-center gap-3">
-              <button type="button" onClick={() => scrollToSection('produto')} className="inline-flex items-center gap-2 rounded-lg bg-[#151823] px-5 py-3 text-sm font-bold text-white transition-all hover:-translate-y-0.5 hover:bg-black">
-                Conhecer o YuiSync <ArrowRight size={15} />
-              </button>
-              <Link to="/vendas" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-800 transition-colors hover:border-slate-400">
-                Ver planos <ChevronRight size={15} />
-              </Link>
-            </div>
-            <div className="mt-9 flex flex-wrap gap-x-6 gap-y-2 text-xs font-medium text-slate-500">
-              <span className="inline-flex items-center gap-1.5"><Check size={13} /> Onboarding guiado</span>
-              <span className="inline-flex items-center gap-1.5"><Check size={13} /> Controle de equipe</span>
-              <span className="inline-flex items-center gap-1.5"><Check size={13} /> Operação integrada</span>
-            </div>
+        <section className="relative overflow-hidden bg-[#050505] text-white">
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.025)_1px,transparent_1px)] bg-[size:54px_54px] [mask-image:linear-gradient(to_bottom,black,transparent_92%)]" />
+          <div className="pointer-events-none absolute left-[-15%] top-[-30%] h-[620px] w-[620px] rounded-full bg-white/[0.035] blur-[130px]" />
+          <div className="relative mx-auto grid min-h-[680px] max-w-7xl items-center gap-10 px-5 pb-16 pt-12 sm:px-8 md:pt-16 lg:min-h-[calc(100svh-72px)] lg:grid-cols-[1.05fr_0.95fr] lg:gap-6 lg:py-8">
+            <motion.div
+              className="relative z-10"
+              variants={HERO_SEQUENCE}
+              initial={prefersReducedMotion ? false : 'hidden'}
+              animate="visible"
+            >
+              <motion.div variants={HERO_ITEM} transition={{ duration: 0.55 }} className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-white/60">
+                <span className="h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.45)]" /> Plataforma de operação conectada
+              </motion.div>
+              <motion.h1 variants={HERO_ITEM} transition={{ duration: 0.62 }} className="max-w-2xl text-[48px] font-extrabold leading-[0.98] tracking-[-0.055em] text-white sm:text-[60px] lg:text-[64px] xl:text-[68px]">
+                Tudo em sincronia.
+                <span className="block text-white/64">Seu negócio em movimento.</span>
+              </motion.h1>
+              <motion.p variants={HERO_ITEM} transition={{ duration: 0.58 }} className="mt-5 max-w-xl text-base leading-7 text-white/[0.68] sm:text-[17px] sm:leading-7">
+                Conecte atendimento, clientes, agenda, vendas, estoque e equipe em uma única plataforma construída para acompanhar sua operação.
+              </motion.p>
+              <motion.div variants={HERO_ITEM} transition={{ duration: 0.55 }} className="mt-7 flex flex-wrap items-center gap-3">
+                <a href={DEMO_HREF} className="inline-flex items-center gap-2 rounded-lg bg-white px-5 py-3 text-sm font-bold text-black transition-all hover:-translate-y-0.5 hover:bg-neutral-200">
+                  Agendar demonstração <ArrowRight size={15} />
+                </a>
+                <button type="button" onClick={() => scrollToSection('produto')} className="inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-bold text-white transition-colors hover:bg-white/[0.08]">
+                  Ver o produto <ChevronRight size={15} />
+                </button>
+              </motion.div>
+              <motion.div variants={HERO_ITEM} transition={{ duration: 0.55 }} className="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-xs font-medium text-white/52">
+                <span className="inline-flex items-center gap-1.5"><Check size={13} className="text-white/70" /> Contexto compartilhado</span>
+                <span className="inline-flex items-center gap-1.5"><Check size={13} className="text-white/70" /> Controle de equipe</span>
+                <span className="inline-flex items-center gap-1.5"><Check size={13} className="text-white/70" /> Operação integrada</span>
+              </motion.div>
+            </motion.div>
+            <ConnectionSphere />
           </div>
-          <ProductPreview />
         </section>
 
-        <section aria-label="Áreas do produto" className="border-y border-black/[0.06] bg-white">
-          <div className="mx-auto grid max-w-7xl grid-cols-2 divide-x divide-y divide-slate-200 px-5 sm:px-8 md:grid-cols-5 md:divide-y-0">
-            {PRODUCT_AREAS.map((item) => (
-              <div key={item.label} className="flex items-center justify-center gap-2.5 px-3 py-5 text-sm font-semibold text-slate-600">
-                <item.icon size={16} strokeWidth={1.8} /> {item.label}
+        <section aria-label="Sinais de confiança do produto" className="border-t border-white/[0.08] bg-[#0A0A0A] text-white">
+          <div className="mx-auto grid max-w-7xl divide-y divide-white/[0.08] px-5 sm:grid-cols-2 sm:divide-x sm:divide-y-0 sm:px-8 lg:grid-cols-4">
+            {TRUST_SIGNALS.map((signal) => (
+              <div key={signal.title} className="flex items-center gap-3 py-5 sm:px-5 first:pl-0 last:pr-0">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/75"><signal.icon size={16} strokeWidth={1.8} /></span>
+                <span><strong className="block text-xs font-bold text-white">{signal.title}</strong><span className="mt-0.5 block text-[11px] text-white/48">{signal.text}</span></span>
               </div>
             ))}
           </div>
         </section>
 
-        <section id="produto" className="scroll-mt-24 mx-auto max-w-7xl px-5 py-24 sm:px-8 lg:py-32">
-          <div className="grid gap-14 lg:grid-cols-[0.78fr_1.22fr] lg:items-end">
+        <section id="produto" className="scroll-mt-[72px] mx-auto max-w-7xl px-5 py-16 sm:px-8 lg:py-[72px]">
+          <MotionReveal className="grid gap-14 lg:grid-cols-[0.78fr_1.22fr] lg:items-end">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">Um único fluxo</p>
-              <h2 className="mt-4 max-w-xl text-4xl font-extrabold leading-[1.05] tracking-[-0.04em] text-[#11131A] sm:text-5xl">Da agenda ao caixa, sem trocar de sistema.</h2>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-500">Uma base. Vários fluxos.</p>
+              <h2 className="mt-4 max-w-xl text-4xl font-extrabold leading-[1.05] tracking-[-0.04em] text-[#111111] sm:text-5xl">A operação inteira compartilha o mesmo contexto.</h2>
             </div>
-            <p className="max-w-2xl text-lg leading-8 text-slate-600">O YuiSync foi desenhado para a rotina de um petshop: a informação entra onde o trabalho acontece e continua disponível para quem precisa dela depois.</p>
-          </div>
+            <p className="max-w-2xl text-lg leading-8 text-slate-600">No YuiSync, a informação entra onde o trabalho acontece e continua disponível para o próximo processo, para a próxima pessoa e para a gestão.</p>
+          </MotionReveal>
 
-          <div className="mt-14 grid overflow-hidden border border-slate-200 bg-white lg:grid-cols-3">
-            <div className="p-7 sm:p-9">
-              <CalendarDays className="text-blue-600" size={22} strokeWidth={1.8} />
-              <h3 className="mt-8 text-xl font-bold tracking-tight">Organize o dia</h3>
-              <p className="mt-3 text-sm leading-6 text-slate-600">Agenda clara para acompanhar horários, serviços e o contexto de cada atendimento.</p>
+          <MotionReveal className="mt-9" delay={0.08}><ProductPreview /></MotionReveal>
+
+          <MotionReveal className="mt-8 grid overflow-hidden border border-slate-200 bg-white lg:grid-cols-3" delay={0.12}>
+            <div className="p-7 transition-colors hover:bg-neutral-100 sm:p-8">
+              <CalendarDays className="text-neutral-700" size={22} strokeWidth={1.8} />
+              <h3 className="mt-5 text-xl font-bold tracking-tight">Conecte a operação</h3>
+              <p className="mt-3 text-sm leading-6 text-slate-600">Processos e atendimentos organizados para cada etapa começar com o contexto da anterior.</p>
             </div>
-            <div className="border-y border-slate-200 p-7 sm:p-9 lg:border-x lg:border-y-0">
-              <ShoppingCart className="text-violet-600" size={22} strokeWidth={1.8} />
-              <h3 className="mt-8 text-xl font-bold tracking-tight">Venda com confiança</h3>
-              <p className="mt-3 text-sm leading-6 text-slate-600">PDV conectado ao catálogo e à movimentação de estoque para reduzir divergências na operação.</p>
+            <div className="border-y border-slate-200 p-7 transition-colors hover:bg-neutral-100 sm:p-8 lg:border-x lg:border-y-0">
+              <ShoppingCart className="text-neutral-700" size={22} strokeWidth={1.8} />
+              <h3 className="mt-5 text-xl font-bold tracking-tight">Centralize a gestão</h3>
+              <p className="mt-3 text-sm leading-6 text-slate-600">Dados operacionais reunidos para acompanhar o negócio sem consolidar planilhas manualmente.</p>
             </div>
-            <div className="p-7 sm:p-9">
-              <UsersRound className="text-cyan-600" size={22} strokeWidth={1.8} />
-              <h3 className="mt-8 text-xl font-bold tracking-tight">Trabalhe em equipe</h3>
-              <p className="mt-3 text-sm leading-6 text-slate-600">Usuários, cargos e acessos organizados para cada pessoa entrar no que realmente precisa.</p>
+            <div className="p-7 transition-colors hover:bg-neutral-100 sm:p-8">
+              <UsersRound className="text-neutral-700" size={22} strokeWidth={1.8} />
+              <h3 className="mt-5 text-xl font-bold tracking-tight">Evolua por solução</h3>
+              <p className="mt-3 text-sm leading-6 text-slate-600">Uma plataforma comum que ganha fluxos específicos para cada tipo de operação atendida.</p>
             </div>
-          </div>
+          </MotionReveal>
         </section>
 
-        <section id="recursos" className="scroll-mt-24 bg-[#11131A] text-white">
-          <div className="mx-auto max-w-7xl px-5 py-24 sm:px-8 lg:py-32">
-            <div className="max-w-3xl">
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-300">Rotina real</p>
-              <h2 className="mt-4 text-4xl font-extrabold leading-[1.06] tracking-[-0.04em] text-white sm:text-5xl">Menos telas soltas. Mais operação conectada.</h2>
-              <p className="mt-5 max-w-2xl text-lg leading-8 text-white/60">O YuiSync organiza os pontos que mais geram perda de tempo no dia a dia, sem transformar tecnologia em complicação para a equipe.</p>
-            </div>
-            <div className="mt-16 divide-y divide-white/10 border-y border-white/10">
-              {BENEFITS.map((benefit) => (
-                <article key={benefit.eyebrow} className="grid gap-6 py-9 md:grid-cols-[170px_1fr_1fr] md:items-center">
-                  <div className="flex items-center gap-3 text-sm font-semibold text-white/55"><benefit.icon size={18} className="text-cyan-300" strokeWidth={1.8} />{benefit.eyebrow}</div>
-                  <h3 className="max-w-lg text-2xl font-bold leading-tight tracking-[-0.025em] text-white">{benefit.title}</h3>
-                  <p className="max-w-lg text-sm leading-7 text-white/55">{benefit.text}</p>
-                </article>
+        <PlatformGrid />
+
+        <section id="recursos" className="scroll-mt-[72px] bg-[#090909] text-white">
+          <div className="mx-auto max-w-7xl px-5 py-16 sm:px-8 lg:py-[72px]">
+            <MotionReveal className="max-w-3xl">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-white/58">Rotina real</p>
+              <h2 className="mt-3 text-4xl font-extrabold leading-[1.06] tracking-[-0.04em] text-white sm:text-[46px]">Menos telas soltas. Mais operação conectada.</h2>
+              <p className="mt-4 max-w-2xl text-base leading-7 text-white/70">O YuiSync organiza os pontos que mais geram perda de tempo no dia a dia, sem transformar tecnologia em complicação para a equipe.</p>
+            </MotionReveal>
+            <div className="mt-8 divide-y divide-white/10 border-y border-white/10">
+              {BENEFITS.map((benefit, index) => (
+                <MotionReveal key={benefit.eyebrow} delay={index * 0.06} distance={20}>
+                  <article className="group grid gap-6 py-7 md:grid-cols-[170px_1fr_1fr] md:items-center">
+                    <div className="flex items-center gap-3 text-sm font-semibold text-white/68 transition-colors group-hover:text-white"><benefit.icon size={18} className="text-white/78" strokeWidth={1.8} />{benefit.eyebrow}</div>
+                    <h3 className="max-w-lg text-2xl font-bold leading-tight tracking-[-0.025em] text-white">{benefit.title}</h3>
+                    <p className="max-w-lg text-sm leading-7 text-white/68">{benefit.text}</p>
+                  </article>
+                </MotionReveal>
               ))}
             </div>
           </div>
         </section>
 
-        <section className="mx-auto max-w-7xl px-5 py-24 sm:px-8 lg:py-32">
+        <section id="solucoes" className="scroll-mt-[72px] mx-auto max-w-7xl px-5 py-16 sm:px-8 lg:py-[72px]">
           <div className="grid gap-14 lg:grid-cols-2 lg:items-center">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-violet-600">Equipe & controle</p>
-              <h2 className="mt-4 max-w-xl text-4xl font-extrabold leading-[1.05] tracking-[-0.04em] sm:text-5xl">O sistema acompanha o crescimento da sua equipe.</h2>
-              <p className="mt-6 max-w-xl text-lg leading-8 text-slate-600">Crie usuários, organize responsabilidades e limite acessos sem compartilhar a mesma conta entre todo mundo.</p>
+            <MotionReveal>
+              <div className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-neutral-600"><span className="h-1.5 w-1.5 rounded-full bg-neutral-900" /> Disponível agora</div>
+              <p className="mt-6 text-xs font-bold uppercase tracking-[0.18em] text-neutral-500">Soluções sobre o YuiSync</p>
+              <h2 className="mt-4 max-w-xl text-4xl font-extrabold leading-[1.05] tracking-[-0.04em] sm:text-5xl">YuiSync para petshops.</h2>
+              <p className="mt-6 max-w-xl text-lg leading-8 text-slate-600">A primeira solução vertical da plataforma conecta agenda, clientes, pets, PDV, estoque e equipe em uma rotina única.</p>
               <div className="mt-8 space-y-4 text-sm font-semibold text-slate-700">
-                <div className="flex gap-3"><ShieldCheck size={19} className="mt-0.5 shrink-0 text-blue-600" /> Permissões validadas pelo servidor.</div>
-                <div className="flex gap-3"><UsersRound size={19} className="mt-0.5 shrink-0 text-violet-600" /> Usuários e cargos administrados no próprio YuiSync.</div>
-                <div className="flex gap-3"><Clock3 size={19} className="mt-0.5 shrink-0 text-cyan-600" /> Implantação acompanhada para começar organizado.</div>
+                <div className="flex gap-3"><CalendarDays size={19} className="mt-0.5 shrink-0 text-neutral-700" /> Agenda e histórico no centro do atendimento.</div>
+                <div className="flex gap-3"><ShoppingCart size={19} className="mt-0.5 shrink-0 text-neutral-700" /> PDV e estoque acompanhando a mesma operação.</div>
+                <div className="flex gap-3"><ShieldCheck size={19} className="mt-0.5 shrink-0 text-neutral-700" /> Usuários, cargos e acessos separados por função.</div>
               </div>
-            </div>
-            <div className="border border-slate-200 bg-white p-6 shadow-[0_16px_50px_rgba(24,28,45,0.08)] sm:p-8">
+            </MotionReveal>
+            <MotionReveal className="border border-slate-200 bg-white p-6 shadow-[0_16px_50px_rgba(24,28,45,0.08)] sm:p-8" delay={0.1}>
               <div className="flex items-center justify-between border-b border-slate-200 pb-5">
-                <div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Equipe</p><p className="mt-1 text-xl font-bold tracking-tight">Acessos do petshop</p></div>
-                <span className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500">5 usuários</span>
+                <div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Exemplo de permissões</p><p className="mt-1 text-xl font-bold tracking-tight">Acessos do petshop</p></div>
+                <span className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500">4 usuários</span>
               </div>
               {[
                 ['Rafaela', 'Administrador', 'Todos os módulos'],
@@ -370,45 +537,72 @@ export default function PublicHomePageV2({ isAuthenticated = false }) {
                   <p className="self-center text-right text-[11px] font-semibold text-slate-400">{access}</p>
                 </div>
               ))}
-            </div>
+            </MotionReveal>
           </div>
         </section>
 
-        <section id="como-funciona" className="scroll-mt-24 border-y border-black/[0.06] bg-white">
-          <div className="mx-auto max-w-7xl px-5 py-24 sm:px-8 lg:py-28">
+        <section id="como-funciona" className="scroll-mt-[72px] border-y border-black/[0.06] bg-white">
+          <div className="mx-auto max-w-7xl px-5 py-16 sm:px-8 lg:py-20">
             <div className="grid gap-12 lg:grid-cols-[0.7fr_1.3fr]">
-              <div><p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">Implantação</p><h2 className="mt-4 text-4xl font-extrabold leading-[1.08] tracking-[-0.04em]">Começar não precisa virar outro projeto dentro da empresa.</h2></div>
-              <div className="divide-y divide-slate-200 border-y border-slate-200">
+              <MotionReveal><p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-500">Implantação</p><h2 className="mt-4 text-4xl font-extrabold leading-[1.08] tracking-[-0.04em]">Começar não precisa virar outro projeto dentro da empresa.</h2></MotionReveal>
+              <MotionReveal className="divide-y divide-slate-200 border-y border-slate-200" delay={0.08}>
                 {START_STEPS.map((step) => (
                   <div key={step.number} className="grid gap-4 py-7 sm:grid-cols-[52px_180px_1fr] sm:items-start">
                     <span className="text-xs font-bold tracking-[0.16em] text-slate-400">{step.number}</span><h3 className="text-base font-bold text-slate-900">{step.title}</h3><p className="text-sm leading-6 text-slate-600">{step.text}</p>
                   </div>
                 ))}
-              </div>
+              </MotionReveal>
             </div>
           </div>
         </section>
 
-        <section id="faq" className="scroll-mt-24 mx-auto max-w-5xl px-5 py-24 sm:px-8 lg:py-28">
-          <div className="text-center"><p className="text-xs font-bold uppercase tracking-[0.18em] text-violet-600">Dúvidas frequentes</p><h2 className="mt-4 text-4xl font-extrabold tracking-[-0.04em]">Antes de começar.</h2></div>
-          <div className="mt-12 divide-y divide-slate-200 border-y border-slate-200">
+        <section id="confianca" className="scroll-mt-[72px] border-b border-black/[0.06] bg-[#EFEFEC]">
+          <div className="mx-auto max-w-7xl px-5 py-16 sm:px-8 lg:py-20">
+            <MotionReveal className="grid gap-8 lg:grid-cols-[0.75fr_1.25fr] lg:items-end">
+              <div><p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-500">Confiança para operar</p><h2 className="mt-4 text-4xl font-extrabold leading-[1.06] tracking-[-0.04em]">Clareza antes, durante e depois da implantação.</h2></div>
+              <p className="max-w-2xl text-base leading-7 text-slate-600">A proposta do YuiSync é reduzir incerteza: explicar como os dados são tratados, separar os acessos da equipe e acompanhar a entrada da operação no sistema.</p>
+            </MotionReveal>
+            <MotionReveal className="mt-10 grid overflow-hidden border border-slate-200 bg-white md:grid-cols-3" delay={0.08}>
+              <Link to="/privacidade" className="group p-6 transition-colors hover:bg-neutral-100 sm:p-7"><ShieldCheck size={21} className="text-neutral-700" /><h3 className="mt-5 text-base font-bold">Privacidade documentada</h3><p className="mt-2 text-sm leading-6 text-slate-600">Política pública com finalidade de uso, compartilhamento e direitos do titular.</p><span className="mt-5 inline-flex items-center gap-1 text-xs font-bold text-slate-800">Ler política <ArrowRight size={12} className="transition-transform group-hover:translate-x-0.5" /></span></Link>
+              <div className="border-y border-slate-200 p-6 sm:p-7 md:border-x md:border-y-0"><UsersRound size={21} className="text-neutral-700" /><h3 className="mt-5 text-base font-bold">Acessos separados</h3><p className="mt-2 text-sm leading-6 text-slate-600">Usuários, cargos e permissões ajudam cada pessoa a trabalhar no contexto correto.</p></div>
+              <a href={DEMO_HREF} className="group p-6 transition-colors hover:bg-neutral-100 sm:p-7"><MessageSquare size={21} className="text-neutral-700" /><h3 className="mt-5 text-base font-bold">Conversa antes de contratar</h3><p className="mt-2 text-sm leading-6 text-slate-600">A demonstração ajuda a validar aderência, implantação e próximos passos.</p><span className="mt-5 inline-flex items-center gap-1 text-xs font-bold text-slate-800">Agendar demonstração <ArrowRight size={12} className="transition-transform group-hover:translate-x-0.5" /></span></a>
+            </MotionReveal>
+          </div>
+        </section>
+
+        <section id="faq" className="scroll-mt-[72px] mx-auto max-w-5xl px-5 py-16 sm:px-8 lg:py-20">
+          <MotionReveal className="text-center"><p className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-500">Dúvidas frequentes</p><h2 className="mt-4 text-4xl font-extrabold tracking-[-0.04em]">Antes de começar.</h2></MotionReveal>
+          <MotionReveal className="mt-12 divide-y divide-slate-200 border-y border-slate-200" delay={0.08}>
             {FAQS.map((faq) => (
               <details key={faq.question} className="group py-5"><summary className="flex cursor-pointer list-none items-center justify-between gap-6 text-base font-bold text-slate-900">{faq.question}<span className="text-xl font-normal text-slate-400 transition-transform group-open:rotate-45">+</span></summary><p className="max-w-3xl pb-1 pt-4 text-sm leading-7 text-slate-600">{faq.answer}</p></details>
             ))}
-          </div>
+          </MotionReveal>
         </section>
 
         <section className="px-5 pb-8 sm:px-8">
-          <div className="mx-auto max-w-7xl overflow-hidden bg-[#151823] px-7 py-12 text-white sm:px-12 sm:py-14 lg:flex lg:items-end lg:justify-between lg:gap-12">
-            <div><img src="/brand/yuisync-mark.png" alt="" className="h-11 w-11 object-contain" /><h2 className="mt-7 max-w-2xl text-4xl font-extrabold leading-[1.05] tracking-[-0.04em] text-white sm:text-5xl">Seu petshop pode operar de um jeito mais simples.</h2><p className="mt-5 max-w-xl text-base leading-7 text-white/60">Conheça os planos e veja como colocar sua operação no YuiSync.</p></div>
-            <div className="mt-9 flex flex-wrap gap-3 lg:mt-0"><Link to="/vendas" className="inline-flex items-center gap-2 rounded-lg bg-white px-5 py-3 text-sm font-bold text-[#151823]">Ver planos <ArrowRight size={15} /></Link><Link to={entryHref} className="inline-flex items-center rounded-lg border border-white/20 px-5 py-3 text-sm font-bold text-white">{isAuthenticated ? 'Abrir painel' : 'Entrar'}</Link></div>
-          </div>
+          <MotionReveal className="mx-auto max-w-7xl overflow-hidden bg-[#090909] px-7 py-12 text-white sm:px-12 sm:py-14 lg:flex lg:items-end lg:justify-between lg:gap-12">
+            <div><YuiMascot animated inverted monochrome decorative className="h-11 w-11" /><h2 className="mt-7 max-w-2xl text-4xl font-extrabold leading-[1.05] tracking-[-0.04em] text-white sm:text-5xl">Sua operação pode trabalhar como um só sistema.</h2><p className="mt-5 max-w-xl text-base leading-7 text-white/60">Conheça o YuiSync e veja como conectar processos, pessoas e informação.</p></div>
+            <div className="mt-9 flex flex-wrap gap-3 lg:mt-0"><a href={DEMO_HREF} className="inline-flex items-center gap-2 rounded-lg bg-white px-5 py-3 text-sm font-bold text-black">Agendar demonstração <ArrowRight size={15} /></a><Link to="/vendas" className="inline-flex items-center rounded-lg border border-white/20 px-5 py-3 text-sm font-bold text-white">Ver planos</Link></div>
+          </MotionReveal>
         </section>
       </main>
 
-      <footer className="mx-auto flex max-w-7xl flex-col gap-5 px-5 py-9 text-sm text-slate-500 sm:px-8 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-2.5"><img src="/brand/yuisync-mark.png" alt="" className="h-6 w-6 object-contain" /><span className="font-bold text-slate-700">YuiSync</span><span className="text-slate-300">•</span><span>yuisync.app</span></div>
-        <div className="flex flex-wrap items-center gap-5 text-xs font-semibold"><Link to="/vendas" className="hover:text-slate-900">Planos</Link><button type="button" onClick={() => scrollToSection('faq')} className="hover:text-slate-900">FAQ</button><Link to={entryHref} className="hover:text-slate-900">{isAuthenticated ? 'Painel' : 'Entrar'}</Link></div>
+      <footer className="border-t border-black/[0.07] bg-white">
+        <div className="mx-auto grid max-w-7xl gap-8 px-5 py-10 text-sm text-slate-500 sm:px-8 md:grid-cols-[1fr_auto] md:items-start">
+          <div>
+            <div className="flex items-center gap-2.5"><YuiMascot monochrome decorative className="h-7 w-7" /><span className="font-bold text-slate-800">YuiSync</span><span className="text-slate-300">•</span><span>yuisync.app</span></div>
+            <p className="mt-3 max-w-md text-xs leading-5 text-slate-500">Plataforma de operação conectada. Agenda, clientes, vendas, estoque e equipe trabalhando com o mesmo contexto.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-x-12 gap-y-3 text-xs font-semibold sm:grid-cols-3">
+            <Link to="/vendas" className="hover:text-slate-900">Planos</Link>
+            <button type="button" onClick={() => scrollToSection('faq')} className="text-left hover:text-slate-900">FAQ</button>
+            <Link to={entryHref} className="hover:text-slate-900">{isAuthenticated ? 'Painel' : 'Entrar'}</Link>
+            <Link to="/privacidade" className="hover:text-slate-900">Privacidade</Link>
+            <Link to="/termos" className="hover:text-slate-900">Termos</Link>
+            <a href={DEMO_HREF} className="hover:text-slate-900">Contato</a>
+          </div>
+        </div>
+        <div className="mx-auto max-w-7xl border-t border-slate-100 px-5 py-4 text-[11px] text-slate-400 sm:px-8">© 2026 YuiSync. Todos os direitos reservados.</div>
       </footer>
     </div>
   )
