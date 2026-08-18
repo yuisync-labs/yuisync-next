@@ -1,0 +1,254 @@
+name: Migration intake schema install
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  actions: read
+  issues: read
+
+concurrency:
+  group: yuisync-migration-intake-schema
+  cancel-in-progress: false
+
+env:
+  INTAKE_MIGRATION: 0030_99_legacy_migration_intake.sql
+
+jobs:
+  preflight:
+    if: startsWith(github.event.issue.title, 'Migration intake schema — ') && (github.event.issue.author_association == 'OWNER' || github.event.issue.author_association == 'MEMBER')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      release_sha: ${{ steps.gates.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFile, access, readFile } from 'node:fs/promises'
+          import { execFileSync } from 'node:child_process'
+
+          const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, 'utf8'))
+          const body = String(event?.issue?.body || '')
+          const release = /^Release-SHA:\s*([0-9a-f]{40})\s*$/im.exec(body)?.[1]?.toLowerCase()
+          const auth = /^Authorization:\s*(\S+)\s*$/im.exec(body)?.[1]
+          const scope = /^Scope:\s*(\S+)\s*$/im.exec(body)?.[1]?.toLowerCase()
+          const association = String(event?.issue?.author_association || '')
+          if (!['OWNER', 'MEMBER'].includes(association)) throw new Error(`ISSUE_AUTHOR_NOT_TRUSTED:${association}`)
+          if (!release) throw new Error('RELEASE_SHA_REQUIRED')
+          if (auth !== 'AUTHORIZE_MIGRATION_INTAKE_SCHEMA_V1') throw new Error('AUTHORIZATION_REQUIRED')
+          if (scope !== 'staging+production') throw new Error(`SCOPE_INVALID:${scope || 'missing'}`)
+
+          execFileSync('git', ['fetch', 'origin', 'main'], { stdio: 'inherit' })
+          const currentMain = execFileSync('git', ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim().toLowerCase()
+          if (release !== currentMain) throw new Error(`RELEASE_NOT_CURRENT_MAIN:${release}:${currentMain}`)
+          await access(`apps/edge-api/migrations/${process.env.INTAKE_MIGRATION}`)
+
+          const repo = process.env.GITHUB_REPOSITORY
+          const runs = JSON.parse(execFileSync('gh', [
+            'api', `repos/${repo}/actions/workflows/quality.yml/runs`,
+            '-f', `head_sha=${release}`, '-f', 'status=success', '-f', 'per_page=100', '-X', 'GET',
+          ], { encoding: 'utf8', env: process.env })).workflow_runs || []
+          if (!runs.some((run) => run.head_sha === release && run.conclusion === 'success')) {
+            throw new Error('EXACT_MAIN_QUALITY_REQUIRED')
+          }
+          await appendFile(process.env.GITHUB_OUTPUT, `release_sha=${release}\n`)
+          console.log(JSON.stringify({ status: 'preflight-ready', release_sha: release, quality: 'success', scope }))
+          NODE
+
+  staging:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      RELEASE_SHA: ${{ needs.preflight.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - run: npm ci
+      - name: Prove staging has no unrelated pending D1 migration
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(npx wrangler d1 execute DB --env staging --remote --config wrangler.jsonc --json --command "SELECT value FROM _yuisync_system_metadata WHERE key='schema_version';")"
+          LEDGER="$(npx wrangler d1 execute DB --env staging --remote --config wrangler.jsonc --json --command "SELECT name FROM d1_migrations ORDER BY id;")"
+          export VERSION LEDGER
+          node --input-type=module <<'NODE'
+          import { readdir } from 'node:fs/promises'
+          const rows = (raw) => {
+            const parsed = JSON.parse(raw || '[]')
+            return (Array.isArray(parsed) ? parsed : [parsed]).flatMap((entry) => Array.isArray(entry?.results) ? entry.results : [])
+          }
+          const version = String(rows(process.env.VERSION)[0]?.value ?? '')
+          if (version !== '30') throw new Error(`STAGING_SCHEMA_VERSION_INVALID:${version}`)
+          const applied = new Set(rows(process.env.LEDGER).map((row) => String(row.name)))
+          const files = (await readdir('migrations')).filter((name) => name.endsWith('.sql')).sort()
+          const pending = files.filter((name) => !applied.has(name))
+          if (pending.length > 1 || (pending.length === 1 && pending[0] !== process.env.INTAKE_MIGRATION)) {
+            throw new Error(`UNRELATED_STAGING_MIGRATIONS_PENDING:${pending.join(',')}`)
+          }
+          console.log(JSON.stringify({ status: 'staging-ledger-safe', pending }))
+          NODE
+      - name: Capture staging D1 bookmark
+        working-directory: apps/edge-api
+        run: |
+          mkdir -p ../../.artifacts/migration-intake-schema/staging
+          npx wrangler d1 time-travel info DB --env staging --config wrangler.jsonc --json > ../../.artifacts/migration-intake-schema/staging/db-before.json
+      - name: Apply intake schema to staging
+        working-directory: apps/edge-api
+        run: npx wrangler d1 migrations apply DB --env staging --remote --config wrangler.jsonc
+      - name: Verify staging intake schema is empty and v30
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERIFY="$(npx wrangler d1 execute DB --env staging --remote --config wrangler.jsonc --json --command "SELECT (SELECT value FROM _yuisync_system_metadata WHERE key='schema_version') AS schema_version,(SELECT COUNT(*) FROM migration_runs) AS migration_runs,(SELECT COUNT(*) FROM migration_source_records) AS migration_source_records,(SELECT COUNT(*) FROM migration_source_payload_chunks) AS migration_source_payload_chunks,(SELECT COUNT(*) FROM migration_secret_vault) AS migration_secret_vault,(SELECT COUNT(*) FROM migration_table_checkpoints) AS migration_table_checkpoints,(SELECT COUNT(*) FROM migration_reconciliation) AS migration_reconciliation;")"
+          LEDGER="$(npx wrangler d1 execute DB --env staging --remote --config wrangler.jsonc --json --command "SELECT COUNT(*) AS n FROM d1_migrations WHERE name='${INTAKE_MIGRATION}';")"
+          export VERIFY LEDGER
+          node --input-type=module <<'NODE'
+          const rows = (raw) => {
+            const parsed = JSON.parse(raw || '[]')
+            return (Array.isArray(parsed) ? parsed : [parsed]).flatMap((entry) => Array.isArray(entry?.results) ? entry.results : [])
+          }
+          const row = rows(process.env.VERIFY)[0] || {}
+          if (String(row.schema_version) !== '30') throw new Error(`STAGING_SCHEMA_VERSION_CHANGED:${row.schema_version}`)
+          for (const name of ['migration_runs','migration_source_records','migration_source_payload_chunks','migration_secret_vault','migration_table_checkpoints','migration_reconciliation']) {
+            if (Number(row[name]) !== 0) throw new Error(`STAGING_INTAKE_NOT_EMPTY:${name}:${row[name]}`)
+          }
+          if (Number(rows(process.env.LEDGER)[0]?.n) !== 1) throw new Error('STAGING_INTAKE_MIGRATION_NOT_LEDGERED')
+          console.log(JSON.stringify({ status: 'staging-intake-ready', schema_version: 30, empty: true }))
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: migration-intake-schema-staging-${{ env.RELEASE_SHA }}
+          path: .artifacts/migration-intake-schema/staging/
+          if-no-files-found: error
+          retention-days: 30
+
+  production:
+    needs: [preflight, staging]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: cloudflare-production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      RELEASE_SHA: ${{ needs.preflight.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - run: npm ci
+      - name: Resolve isolated production D1
+        run: node scripts/migration/production-cloudflare.mjs resolve
+      - name: Prove production has no unrelated pending D1 migration
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT value FROM _yuisync_system_metadata WHERE key='schema_version';")"
+          LEDGER="$(npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT name FROM d1_migrations ORDER BY id;")"
+          export VERSION LEDGER
+          node --input-type=module <<'NODE'
+          import { readdir } from 'node:fs/promises'
+          const rows = (raw) => {
+            const parsed = JSON.parse(raw || '[]')
+            return (Array.isArray(parsed) ? parsed : [parsed]).flatMap((entry) => Array.isArray(entry?.results) ? entry.results : [])
+          }
+          const version = String(rows(process.env.VERSION)[0]?.value ?? '')
+          if (version !== '30') throw new Error(`PRODUCTION_SCHEMA_VERSION_INVALID:${version}`)
+          const applied = new Set(rows(process.env.LEDGER).map((row) => String(row.name)))
+          const files = (await readdir('migrations')).filter((name) => name.endsWith('.sql')).sort()
+          const pending = files.filter((name) => !applied.has(name))
+          if (pending.length > 1 || (pending.length === 1 && pending[0] !== process.env.INTAKE_MIGRATION)) {
+            throw new Error(`UNRELATED_PRODUCTION_MIGRATIONS_PENDING:${pending.join(',')}`)
+          }
+          console.log(JSON.stringify({ status: 'production-ledger-safe', pending }))
+          NODE
+      - name: Capture production D1 bookmark
+        working-directory: apps/edge-api
+        run: |
+          mkdir -p ../../.artifacts/migration-intake-schema/production
+          npx wrangler d1 time-travel info DB --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json > ../../.artifacts/migration-intake-schema/production/db-before.json
+      - name: Apply intake schema to production
+        working-directory: apps/edge-api
+        run: npx wrangler d1 migrations apply DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+      - name: Verify production intake schema is empty and v30
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERIFY="$(npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT (SELECT value FROM _yuisync_system_metadata WHERE key='schema_version') AS schema_version,(SELECT COUNT(*) FROM migration_runs) AS migration_runs,(SELECT COUNT(*) FROM migration_source_records) AS migration_source_records,(SELECT COUNT(*) FROM migration_source_payload_chunks) AS migration_source_payload_chunks,(SELECT COUNT(*) FROM migration_secret_vault) AS migration_secret_vault,(SELECT COUNT(*) FROM migration_table_checkpoints) AS migration_table_checkpoints,(SELECT COUNT(*) FROM migration_reconciliation) AS migration_reconciliation;")"
+          LEDGER="$(npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT COUNT(*) AS n FROM d1_migrations WHERE name='${INTAKE_MIGRATION}';")"
+          export VERIFY LEDGER
+          node --input-type=module <<'NODE'
+          const rows = (raw) => {
+            const parsed = JSON.parse(raw || '[]')
+            return (Array.isArray(parsed) ? parsed : [parsed]).flatMap((entry) => Array.isArray(entry?.results) ? entry.results : [])
+          }
+          const row = rows(process.env.VERIFY)[0] || {}
+          if (String(row.schema_version) !== '30') throw new Error(`PRODUCTION_SCHEMA_VERSION_CHANGED:${row.schema_version}`)
+          for (const name of ['migration_runs','migration_source_records','migration_source_payload_chunks','migration_secret_vault','migration_table_checkpoints','migration_reconciliation']) {
+            if (Number(row[name]) !== 0) throw new Error(`PRODUCTION_INTAKE_NOT_EMPTY:${name}:${row[name]}`)
+          }
+          if (Number(rows(process.env.LEDGER)[0]?.n) !== 1) throw new Error('PRODUCTION_INTAKE_MIGRATION_NOT_LEDGERED')
+          console.log(JSON.stringify({ status: 'production-intake-ready', schema_version: 30, empty: true }))
+          NODE
+      - name: Re-prove live production readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error https://yuisync.app/health > /tmp/health.json
+          curl --fail --silent --show-error https://yuisync.app/ready > /tmp/ready.json
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const health = JSON.parse(await readFile('/tmp/health.json', 'utf8'))
+          const ready = JSON.parse(await readFile('/tmp/ready.json', 'utf8'))
+          if (health?.status !== 'ok' || health?.environment !== 'production') throw new Error('PRODUCTION_HEALTH_FAILED')
+          if (ready?.status !== 'ready' || ready?.environment !== 'production') throw new Error('PRODUCTION_READY_FAILED')
+          if (String(ready?.checks?.schema_version) !== '30' || ready?.checks?.database !== 'ready' || ready?.checks?.auth_database !== 'configured') {
+            throw new Error('PRODUCTION_READINESS_CONTRACT_CHANGED')
+          }
+          console.log(JSON.stringify({ status: 'live-production-still-ready', schema_version: 30 }))
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: migration-intake-schema-production-${{ env.RELEASE_SHA }}
+          path: .artifacts/migration-intake-schema/production/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Summary
+        run: |
+          echo '### Migration intake terrain' >> "$GITHUB_STEP_SUMMARY"
+          echo "- exact main: \`$RELEASE_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo '- staging: intake schema installed, empty, schema v30' >> "$GITHUB_STEP_SUMMARY"
+          echo '- production: intake schema installed, empty, schema v30' >> "$GITHUB_STEP_SUMMARY"
+          echo '- oversized source payloads: gzip + chunk landing supported' >> "$GITHUB_STEP_SUMMARY"
+          echo '- production /health + /ready: unchanged and healthy' >> "$GITHUB_STEP_SUMMARY"
+          echo '- source tenant data imported: no' >> "$GITHUB_STEP_SUMMARY"
