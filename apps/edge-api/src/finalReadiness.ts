@@ -4,7 +4,7 @@ import { hasCoordinationBinding, isEdgeCoordinationEnabled } from './coordinatio
 import { hasD1Binding, isEdgeDatabaseEnabled } from './databaseFeature'
 import { resolveRequestId } from './requestContext'
 
-const REQUIRED_MAIN_SCHEMA_VERSION = '29'
+const REQUIRED_MAIN_SCHEMA_VERSION = '30'
 
 type MainSchemaObject = { key: string; kind: 'table' | 'index' | 'trigger'; name: string }
 type MainSchemaColumnGroup = { table: string; columns: string[] }
@@ -20,6 +20,10 @@ const REQUIRED_MAIN_SCHEMA_OBJECTS: MainSchemaObject[] = [
   { key: 'trigger:subscription_usage_projection_after_allocation_update', kind: 'trigger', name: 'subscription_usage_projection_after_allocation_update' },
   { key: 'trigger:subscription_usage_projection_after_allocation_delete', kind: 'trigger', name: 'subscription_usage_projection_after_allocation_delete' },
   { key: 'trigger:package_allocation_from_late_service_consumption', kind: 'trigger', name: 'package_allocation_from_late_service_consumption' },
+
+  // Active-tab integration v30.
+  { key: 'trigger:cash_register_single_open_insert_guard', kind: 'trigger', name: 'cash_register_single_open_insert_guard' },
+  { key: 'trigger:cash_register_single_open_reopen_guard', kind: 'trigger', name: 'cash_register_single_open_reopen_guard' },
 
   // WhatsApp Cloud API v26-v28.
   { key: 'table:whatsapp_waba_accounts', kind: 'table', name: 'whatsapp_waba_accounts' },
@@ -45,6 +49,9 @@ const REQUIRED_MAIN_SCHEMA_COLUMNS: MainSchemaColumnGroup[] = [
   { table: 'sales', columns: ['origin_type', 'origin_id'] },
   { table: 'services', columns: ['min_weight_grams', 'max_weight_grams'] },
   { table: 'appointment_services', columns: ['min_weight_grams', 'max_weight_grams'] },
+
+  // Active-tab integration v30: dashboard chat state that must survive D1 round-trips.
+  { table: 'chat_threads', columns: ['customer_name', 'intent', 'assigned_staff_key', 'csat_score', 'closed_at_ms', 'context_json'] },
 
   // WhatsApp v27-v28: encrypted credentials and outbound reconciliation/idempotency.
   { table: 'whatsapp_access_credentials', columns: ['token_ciphertext', 'token_iv', 'key_version'] },
