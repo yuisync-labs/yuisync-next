@@ -26,6 +26,14 @@ const COMMAND = String(process.argv[2] || '').trim().toLowerCase()
 const SAFE_TABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const E2E_TENANT_LIKE = 'e2e-%-tenant'
 const E2E_EMAIL_LIKE = 'e2e-%@staging.invalid'
+const MIGRATION_CONTROL_TABLES = new Set([
+  'migration_runs',
+  'migration_source_records',
+  'migration_source_payload_chunks',
+  'migration_secret_vault',
+  'migration_table_checkpoints',
+  'migration_reconciliation',
+])
 
 if (!/^[A-Za-z0-9_-]+$/.test(WRANGLER_ENV)) throw new Error(`INVALID_WRANGLER_ENV:${WRANGLER_ENV}`)
 
@@ -113,6 +121,11 @@ function tenantScopedDeleteOrder(schemaRows) {
   const definitions = schemaRows
     .map((row) => ({ name: String(row?.name || ''), sql: String(row?.sql || '') }))
     .filter((row) => SAFE_TABLE_NAME.test(row.name) && row.sql)
+    // Migration intake/control state is not application tenant data and must
+    // never be swept by ephemeral release fixtures. Excluding the whole
+    // control subgraph also prevents its run_id children from being mistaken
+    // for unscoped tenant children of migration_runs/source_records.
+    .filter((row) => !MIGRATION_CONTROL_TABLES.has(row.name))
 
   const scoped = definitions
     .filter((row) => row.name !== 'tenants' && row.name !== 'identity_principals' && /\btenant_id\b/i.test(row.sql))
@@ -133,8 +146,6 @@ function tenantScopedDeleteOrder(schemaRows) {
   const incoming = new Map(scoped.map((name) => [name, 0]))
   const parents = new Map(scoped.map((name) => [
     name,
-    // A self-FK is handled inside the table-wide tenant DELETE and is not an
-    // inter-table dependency for the cleanup topological order.
     (referencesByTable.get(name) || []).filter((parent) => scopedSet.has(parent) && parent !== name),
   ]))
   for (const tableParents of parents.values()) {
