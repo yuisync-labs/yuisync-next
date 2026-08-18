@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: read
-  issues: read
+  issues: write
 
 concurrency:
   group: edge-staging-deployment
@@ -199,3 +199,26 @@ jobs:
           echo '- Queue: real canary + idempotent rerun' >> "$GITHUB_STEP_SUMMARY"
           echo '- D1 + AUTH_DB pre-migration bookmarks: captured' >> "$GITHUB_STEP_SUMMARY"
           echo '- Production/cutover: untouched' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish auditable result to authorization issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body=$(cat <<EOF
+          Staging certification result
+
+          - Release-SHA: \`$RELEASE_SHA\`
+          - Runtime schema target: \`30\`
+          - Result: **$JOB_STATUS**
+          - Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          - Attempt: \`$GITHUB_RUN_ATTEMPT\`
+
+          This result is staging-only and does not authorize production.
+          EOF
+          )
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
