@@ -19,9 +19,20 @@ async function nativeRequest(path, { tenantId, moduleId = 'petshop', ...options 
     const error = new Error(payload.message || payload.error?.message || payload.code || 'Falha na operação do pacote.')
     error.code = payload.code || payload.error?.code || ''
     error.status = response.status
+    error.details = payload
     throw error
   }
   return payload
+}
+
+export function loadPlansCommand({ tenantId, moduleId = 'petshop' }) {
+  return nativeRequest('/petshop/plans', { tenantId, moduleId, method: 'GET' })
+    .then((result) => result.plans || [])
+}
+
+export function loadSubscriptionsCommand({ tenantId, moduleId = 'petshop' }) {
+  return nativeRequest('/petshop/subscriptions', { tenantId, moduleId, method: 'GET' })
+    .then((result) => result.subscriptions || [])
 }
 
 export function savePlanCommand({ tenantId, moduleId = 'petshop', id, ...payload }) {
