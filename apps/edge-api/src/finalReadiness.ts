@@ -6,26 +6,14 @@ import { resolveRequestId } from './requestContext'
 
 const REQUIRED_MAIN_SCHEMA_VERSION = '28'
 
-type MainSchemaCapability =
-  | { key: string; kind: 'table' | 'index'; name: string }
-  | { key: string; kind: 'column'; table: string; name: string }
+type MainSchemaObject = { key: string; kind: 'table' | 'index'; name: string }
+type MainSchemaColumnGroup = { table: string; columns: string[] }
 
-const REQUIRED_MAIN_SCHEMA_CAPABILITIES: MainSchemaCapability[] = [
-  // Operational integrity v25. These are the columns/indexes that keep appointment
-  // billing, subscription benefits, sale origins and canonical weight boundaries explicit.
-  { key: 'column:appointments.billing_intent_type', kind: 'column', table: 'appointments', name: 'billing_intent_type' },
-  { key: 'column:appointments.billing_intent_subscription_id', kind: 'column', table: 'appointments', name: 'billing_intent_subscription_id' },
-  { key: 'column:client_subscriptions.benefit_ledger_base_used_json', kind: 'column', table: 'client_subscriptions', name: 'benefit_ledger_base_used_json' },
-  { key: 'column:sales.origin_type', kind: 'column', table: 'sales', name: 'origin_type' },
-  { key: 'column:sales.origin_id', kind: 'column', table: 'sales', name: 'origin_id' },
+const REQUIRED_MAIN_SCHEMA_OBJECTS: MainSchemaObject[] = [
+  // Operational integrity v25.
   { key: 'index:sales_scope_origin_idx', kind: 'index', name: 'sales_scope_origin_idx' },
-  { key: 'column:services.min_weight_grams', kind: 'column', table: 'services', name: 'min_weight_grams' },
-  { key: 'column:services.max_weight_grams', kind: 'column', table: 'services', name: 'max_weight_grams' },
-  { key: 'column:appointment_services.min_weight_grams', kind: 'column', table: 'appointment_services', name: 'min_weight_grams' },
-  { key: 'column:appointment_services.max_weight_grams', kind: 'column', table: 'appointment_services', name: 'max_weight_grams' },
 
-  // WhatsApp Cloud API v26-v28. Version metadata is insufficient if any one of
-  // these tenant-scoped persistence/idempotency/status objects is missing.
+  // WhatsApp Cloud API v26-v28.
   { key: 'table:whatsapp_waba_accounts', kind: 'table', name: 'whatsapp_waba_accounts' },
   { key: 'table:whatsapp_phone_connections', kind: 'table', name: 'whatsapp_phone_connections' },
   { key: 'table:whatsapp_ingress_receipts', kind: 'table', name: 'whatsapp_ingress_receipts' },
@@ -40,14 +28,19 @@ const REQUIRED_MAIN_SCHEMA_CAPABILITIES: MainSchemaCapability[] = [
   { key: 'index:whatsapp_outbound_provider_message_unique', kind: 'index', name: 'whatsapp_outbound_provider_message_unique' },
   { key: 'index:whatsapp_outbound_phone_status_idx', kind: 'index', name: 'whatsapp_outbound_phone_status_idx' },
   { key: 'index:whatsapp_delivery_receipts_message_idx', kind: 'index', name: 'whatsapp_delivery_receipts_message_idx' },
-  { key: 'column:whatsapp_access_credentials.token_ciphertext', kind: 'column', table: 'whatsapp_access_credentials', name: 'token_ciphertext' },
-  { key: 'column:whatsapp_access_credentials.token_iv', kind: 'column', table: 'whatsapp_access_credentials', name: 'token_iv' },
-  { key: 'column:whatsapp_access_credentials.key_version', kind: 'column', table: 'whatsapp_access_credentials', name: 'key_version' },
-  { key: 'column:whatsapp_outbound_messages.idempotency_key', kind: 'column', table: 'whatsapp_outbound_messages', name: 'idempotency_key' },
-  { key: 'column:whatsapp_outbound_messages.internal_message_id', kind: 'column', table: 'whatsapp_outbound_messages', name: 'internal_message_id' },
-  { key: 'column:whatsapp_outbound_messages.provider_message_id', kind: 'column', table: 'whatsapp_outbound_messages', name: 'provider_message_id' },
-  { key: 'column:whatsapp_outbound_messages.status', kind: 'column', table: 'whatsapp_outbound_messages', name: 'status' },
-  { key: 'column:whatsapp_outbound_messages.last_provider_status_at_ms', kind: 'column', table: 'whatsapp_outbound_messages', name: 'last_provider_status_at_ms' },
+]
+
+const REQUIRED_MAIN_SCHEMA_COLUMNS: MainSchemaColumnGroup[] = [
+  // Operational integrity v25: explicit billing/allocation semantics and canonical units.
+  { table: 'appointments', columns: ['billing_intent_type', 'billing_intent_subscription_id'] },
+  { table: 'client_subscriptions', columns: ['benefit_ledger_base_used_json'] },
+  { table: 'sales', columns: ['origin_type', 'origin_id'] },
+  { table: 'services', columns: ['min_weight_grams', 'max_weight_grams'] },
+  { table: 'appointment_services', columns: ['min_weight_grams', 'max_weight_grams'] },
+
+  // WhatsApp v27-v28: encrypted credentials and outbound reconciliation/idempotency.
+  { table: 'whatsapp_access_credentials', columns: ['token_ciphertext', 'token_iv', 'key_version'] },
+  { table: 'whatsapp_outbound_messages', columns: ['idempotency_key', 'internal_message_id', 'provider_message_id', 'status', 'last_provider_status_at_ms'] },
 ]
 
 export type FinalReadinessBindings={
@@ -58,11 +51,32 @@ export type FinalReadinessBindings={
   EDGE_OPERATIONAL_MIGRATION_ENABLED?:string;EDGE_AUTH_MIGRATION_ENABLED?:string;
 }
 
-function schemaCapabilitySql(capability: MainSchemaCapability): string {
-  if (capability.kind === 'column') {
-    return `SELECT '${capability.key}' AS capability, EXISTS(SELECT 1 FROM pragma_table_info('${capability.table}') WHERE name='${capability.name}') AS present`
+function sqlLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+async function missingMainSchemaCapabilities(database: D1Database): Promise<string[]> {
+  const objectNames=REQUIRED_MAIN_SCHEMA_OBJECTS.map((item)=>sqlLiteral(item.name)).join(',')
+  const objectRows=await database
+    .prepare(`SELECT type,name FROM sqlite_schema WHERE type IN ('table','index') AND name IN (${objectNames})`)
+    .all<{type:string;name:string}>()
+  const presentObjects=new Set(objectRows.results.map((item)=>`${item.type}:${item.name}`))
+  const missing=REQUIRED_MAIN_SCHEMA_OBJECTS
+    .filter((item)=>!presentObjects.has(`${item.kind}:${item.name}`))
+    .map((item)=>item.key)
+
+  // D1 supports classic PRAGMA table_info reliably. Keep the list fixed and validated
+  // at build time instead of interpolating any request/user-controlled identifier.
+  for(const group of REQUIRED_MAIN_SCHEMA_COLUMNS){
+    if(!/^[a-z0-9_]+$/i.test(group.table))throw new Error('Invalid readiness schema identifier')
+    const columnRows=await database.prepare(`PRAGMA table_info(${group.table})`).all<{name:string}>()
+    const presentColumns=new Set(columnRows.results.map((item)=>item.name))
+    for(const column of group.columns){
+      if(!presentColumns.has(column))missing.push(`column:${group.table}.${column}`)
+    }
   }
-  return `SELECT '${capability.key}' AS capability, EXISTS(SELECT 1 FROM sqlite_schema WHERE type='${capability.kind}' AND name='${capability.name}') AS present`
+
+  return missing
 }
 
 async function mainSchema(database:D1Database|undefined){
@@ -74,13 +88,7 @@ async function mainSchema(database:D1Database|undefined){
       return{status:'wrong_version',version,capabilities:'not_checked',missingCapabilities:[] as string[]}
     }
 
-    const capabilityQuery=REQUIRED_MAIN_SCHEMA_CAPABILITIES.map(schemaCapabilitySql).join(' UNION ALL ')
-    const result=await database.prepare(capabilityQuery).all<{capability:string;present:number}>()
-    const observed=new Map(result.results.map((item)=>[item.capability,Number(item.present)]))
-    const missingCapabilities=REQUIRED_MAIN_SCHEMA_CAPABILITIES
-      .map((capability)=>capability.key)
-      .filter((key)=>observed.get(key)!==1)
-
+    const missingCapabilities=await missingMainSchemaCapabilities(database)
     return missingCapabilities.length===0
       ?{status:'ready',version,capabilities:'ready',missingCapabilities}
       :{status:'incomplete',version,capabilities:'incomplete',missingCapabilities}
