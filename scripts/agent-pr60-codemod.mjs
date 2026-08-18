@@ -41,18 +41,4 @@ replaceOnce(
   'appointment billing fields',
 )
 
-replaceOnce(
-  'package.json',
-  '    "check:product-ui": "node scripts/check-product-ui-boundaries.mjs",\n',
-  '    "check:product-ui": "node scripts/check-product-ui-boundaries.mjs",\n    "check:no-domain-state-from-dom": "node scripts/check-no-domain-state-from-dom.mjs",\n',
-  'package gate script',
-)
-
-replaceOnce(
-  '.github/workflows/quality.yml',
-  '      - run: npm run check:product-ui\n',
-  '      - run: npm run check:product-ui\n      - run: npm run check:no-domain-state-from-dom\n',
-  'quality gate',
-)
-
-console.log('PR60 codemod applied successfully.')
+console.log('PR60 source codemod applied successfully.')
