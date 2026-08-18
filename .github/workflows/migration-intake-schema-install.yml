@@ -122,7 +122,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERIFY="$(npx wrangler d1 execute DB --env staging --remote --config wrangler.jsonc --json --command "SELECT (SELECT value FROM _yuisync_system_metadata WHERE key='schema_version') AS schema_version,(SELECT COUNT(*) FROM migration_runs) AS migration_runs,(SELECT COUNT(*) FROM migration_source_records) AS migration_source_records,(SELECT COUNT(*) FROM migration_secret_vault) AS migration_secret_vault,(SELECT COUNT(*) FROM migration_table_checkpoints) AS migration_table_checkpoints,(SELECT COUNT(*) FROM migration_reconciliation) AS migration_reconciliation;")"
+          VERIFY="$(npx wrangler d1 execute DB --env staging --remote --config wrangler.jsonc --json --command "SELECT (SELECT value FROM _yuisync_system_metadata WHERE key='schema_version') AS schema_version,(SELECT COUNT(*) FROM migration_runs) AS migration_runs,(SELECT COUNT(*) FROM migration_source_records) AS migration_source_records,(SELECT COUNT(*) FROM migration_source_payload_chunks) AS migration_source_payload_chunks,(SELECT COUNT(*) FROM migration_secret_vault) AS migration_secret_vault,(SELECT COUNT(*) FROM migration_table_checkpoints) AS migration_table_checkpoints,(SELECT COUNT(*) FROM migration_reconciliation) AS migration_reconciliation;")"
           LEDGER="$(npx wrangler d1 execute DB --env staging --remote --config wrangler.jsonc --json --command "SELECT COUNT(*) AS n FROM d1_migrations WHERE name='${INTAKE_MIGRATION}';")"
           export VERIFY LEDGER
           node --input-type=module <<'NODE'
@@ -132,7 +132,7 @@ jobs:
           }
           const row = rows(process.env.VERIFY)[0] || {}
           if (String(row.schema_version) !== '30') throw new Error(`STAGING_SCHEMA_VERSION_CHANGED:${row.schema_version}`)
-          for (const name of ['migration_runs','migration_source_records','migration_secret_vault','migration_table_checkpoints','migration_reconciliation']) {
+          for (const name of ['migration_runs','migration_source_records','migration_source_payload_chunks','migration_secret_vault','migration_table_checkpoints','migration_reconciliation']) {
             if (Number(row[name]) !== 0) throw new Error(`STAGING_INTAKE_NOT_EMPTY:${name}:${row[name]}`)
           }
           if (Number(rows(process.env.LEDGER)[0]?.n) !== 1) throw new Error('STAGING_INTAKE_MIGRATION_NOT_LEDGERED')
@@ -204,7 +204,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERIFY="$(npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT (SELECT value FROM _yuisync_system_metadata WHERE key='schema_version') AS schema_version,(SELECT COUNT(*) FROM migration_runs) AS migration_runs,(SELECT COUNT(*) FROM migration_source_records) AS migration_source_records,(SELECT COUNT(*) FROM migration_secret_vault) AS migration_secret_vault,(SELECT COUNT(*) FROM migration_table_checkpoints) AS migration_table_checkpoints,(SELECT COUNT(*) FROM migration_reconciliation) AS migration_reconciliation;")"
+          VERIFY="$(npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT (SELECT value FROM _yuisync_system_metadata WHERE key='schema_version') AS schema_version,(SELECT COUNT(*) FROM migration_runs) AS migration_runs,(SELECT COUNT(*) FROM migration_source_records) AS migration_source_records,(SELECT COUNT(*) FROM migration_source_payload_chunks) AS migration_source_payload_chunks,(SELECT COUNT(*) FROM migration_secret_vault) AS migration_secret_vault,(SELECT COUNT(*) FROM migration_table_checkpoints) AS migration_table_checkpoints,(SELECT COUNT(*) FROM migration_reconciliation) AS migration_reconciliation;")"
           LEDGER="$(npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT COUNT(*) AS n FROM d1_migrations WHERE name='${INTAKE_MIGRATION}';")"
           export VERIFY LEDGER
           node --input-type=module <<'NODE'
@@ -214,7 +214,7 @@ jobs:
           }
           const row = rows(process.env.VERIFY)[0] || {}
           if (String(row.schema_version) !== '30') throw new Error(`PRODUCTION_SCHEMA_VERSION_CHANGED:${row.schema_version}`)
-          for (const name of ['migration_runs','migration_source_records','migration_secret_vault','migration_table_checkpoints','migration_reconciliation']) {
+          for (const name of ['migration_runs','migration_source_records','migration_source_payload_chunks','migration_secret_vault','migration_table_checkpoints','migration_reconciliation']) {
             if (Number(row[name]) !== 0) throw new Error(`PRODUCTION_INTAKE_NOT_EMPTY:${name}:${row[name]}`)
           }
           if (Number(rows(process.env.LEDGER)[0]?.n) !== 1) throw new Error('PRODUCTION_INTAKE_MIGRATION_NOT_LEDGERED')
@@ -249,5 +249,6 @@ jobs:
           echo "- exact main: \`$RELEASE_SHA\`" >> "$GITHUB_STEP_SUMMARY"
           echo '- staging: intake schema installed, empty, schema v30' >> "$GITHUB_STEP_SUMMARY"
           echo '- production: intake schema installed, empty, schema v30' >> "$GITHUB_STEP_SUMMARY"
+          echo '- oversized source payloads: gzip + chunk landing supported' >> "$GITHUB_STEP_SUMMARY"
           echo '- production /health + /ready: unchanged and healthy' >> "$GITHUB_STEP_SUMMARY"
           echo '- source tenant data imported: no' >> "$GITHUB_STEP_SUMMARY"
