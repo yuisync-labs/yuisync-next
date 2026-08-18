@@ -1,0 +1,112 @@
+.yui-mascot {
+  --yui-mascot-navy-light: #0d2d55;
+  --yui-mascot-navy: #071c38;
+  --yui-mascot-cyan-light: #35b2d2;
+  --yui-mascot-cyan: #279ebd;
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+
+.yui-mascot--inverted {
+  --yui-mascot-navy-light: #fffaf1;
+  --yui-mascot-navy: #f4f0e8;
+}
+
+.yui-mascot--monochrome {
+  --yui-mascot-navy-light: #202020;
+  --yui-mascot-navy: #080808;
+  --yui-mascot-cyan-light: #cfcfcf;
+  --yui-mascot-cyan: #a8a8a8;
+}
+
+.yui-mascot--monochrome.yui-mascot--inverted {
+  --yui-mascot-navy-light: #ffffff;
+  --yui-mascot-navy: #dddddd;
+  --yui-mascot-cyan-light: #a8a8a8;
+  --yui-mascot-cyan: #777777;
+}
+
+.yui-mascot__float,
+.yui-mascot__base,
+.yui-mascot__fold,
+.yui-mascot__face,
+.yui-mascot__eyes {
+  transform-box: fill-box;
+}
+
+.yui-mascot__float {
+  transform-origin: center;
+}
+
+.yui-mascot__fold--left {
+  transform-origin: 70% 8%;
+}
+
+.yui-mascot__fold--right {
+  transform-origin: 14% 7%;
+}
+
+.yui-mascot__face,
+.yui-mascot__eyes {
+  transform-origin: center;
+}
+
+.yui-mascot--animated .yui-mascot__float {
+  animation: yui-mascot-float 5.4s ease-in-out infinite;
+}
+
+.yui-mascot--animated .yui-mascot__fold--left {
+  animation: yui-mascot-fold-left 5.4s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+
+.yui-mascot--animated .yui-mascot__fold--right {
+  animation: yui-mascot-fold-right 5.4s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+
+.yui-mascot--animated .yui-mascot__face {
+  animation: yui-mascot-breathe 5.4s ease-in-out infinite;
+}
+
+.yui-mascot--animated .yui-mascot__eyes {
+  animation: yui-mascot-blink 5.4s ease-in-out infinite;
+}
+
+@keyframes yui-mascot-float {
+  0%, 100% { transform: translateY(0); }
+  44% { transform: translateY(0); }
+  58% { transform: translateY(-3px); }
+  72% { transform: translateY(0); }
+}
+
+@keyframes yui-mascot-fold-left {
+  0%, 35%, 100% { transform: rotate(0deg) scale(1); }
+  47% { transform: rotate(1.5deg) scale(0.985, 1.008); }
+  61% { transform: rotate(-0.4deg) scale(1.003, 0.997); }
+}
+
+@keyframes yui-mascot-fold-right {
+  0%, 39%, 100% { transform: rotate(0deg) scale(1); }
+  51% { transform: rotate(-1.5deg) scale(0.985, 1.008); }
+  65% { transform: rotate(0.4deg) scale(1.003, 0.997); }
+}
+
+@keyframes yui-mascot-breathe {
+  0%, 39%, 100% { transform: scale(1); }
+  53% { transform: scale(1.025, 0.98); }
+  67% { transform: scale(0.995, 1.01); }
+}
+
+@keyframes yui-mascot-blink {
+  0%, 17%, 21%, 100% { transform: scaleY(1); }
+  19% { transform: scaleY(0.12); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yui-mascot--animated .yui-mascot__float,
+  .yui-mascot--animated .yui-mascot__fold,
+  .yui-mascot--animated .yui-mascot__face,
+  .yui-mascot--animated .yui-mascot__eyes {
+    animation: none;
+  }
+}

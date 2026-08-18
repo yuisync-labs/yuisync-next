@@ -75,6 +75,7 @@
     "react-router-dom": "^7.18.1",
     "read-excel-file": "9.3.5",
     "recharts": "^3.9.2",
+    "three": "^0.185.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

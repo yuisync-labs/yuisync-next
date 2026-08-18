@@ -301,6 +301,11 @@ body {
 
 #root { height: 100vh; display: flex; flex-direction: column; }
 
+.public-home :where(a, button, summary):focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 3px;
+}
+
 /* Evita "cursor/caret de digitação" em conteúdo estático */
 *:not(input):not(textarea):not(select):not([contenteditable="true"]):not([contenteditable="plaintext-only"]) {
   caret-color: transparent;

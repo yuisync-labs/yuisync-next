@@ -1,0 +1,18 @@
+.public-home {
+  height: 100%;
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .framer-animate-grid-card,
+  .framer-animate-grid-card img,
+  .framer-animate-grid-glow-big,
+  .framer-animate-grid-glow-small {
+    animation: none !important;
+    transition: none !important;
+  }
+}
