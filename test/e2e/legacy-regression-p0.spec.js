@@ -170,6 +170,8 @@ async function createAndStartPackageSale(page) {
   await modal.getByRole('button', { name: new RegExp(escapeRegExp(tutorName)) }).first().click()
   await expect(modal.getByText('Escolha qual pet receberá o pacote')).toBeVisible()
   await modal.getByRole('button', { name: new RegExp(`^${escapeRegExp(firstPetName)}`) }).click()
+  await controlForLabel(modal, 'Primeiro atendimento do ciclo').fill(scheduledDate)
+  await modal.getByLabel('Horario fixo semanal do pacote').fill('09:00')
   await modal.getByRole('button', { name: 'Continuar para pagamento' }).click()
   await expect(modal).toBeHidden({ timeout: 15_000 })
   await expect(page).toHaveURL(/\/petshop\/ordens/, { timeout: 15_000 })
