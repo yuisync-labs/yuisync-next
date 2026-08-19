@@ -20,13 +20,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: legacy-regression-browser-staging
+  group: edge-staging-deployment
   cancel-in-progress: true
 
 jobs:
   regression:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     environment: cloudflare-staging
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -36,8 +36,10 @@ jobs:
       CI: 'true'
 
     steps:
-      - name: Checkout
+      - name: Checkout PR
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -62,6 +64,7 @@ jobs:
       - name: Workerd and D1 operational invariants
         run: |
           npm run test --workspace @yuisync/edge-api -- \
+            test/compatApiLegacyQueryAdapter.test.ts \
             test/appointmentCommandIntegration.test.ts \
             test/operationalIntegrityV25.test.ts \
             test/packageReconciliationIntegration.test.ts \
@@ -74,19 +77,17 @@ jobs:
             test/realtimeDurableObject.test.ts \
             test/realtimeApi.test.ts
 
-      - name: Require preinstalled Chrome
+      - name: Require preinstalled Chrome and Cloudflare credentials
         shell: bash
         run: |
           set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
           CHROME="$(command -v google-chrome-stable || command -v google-chrome || command -v chromium || true)"
-          if [ -z "$CHROME" ]; then
-            echo 'Preinstalled Chrome not found; failing fast instead of downloading a browser during QA.' >&2
-            exit 1
-          fi
+          test -n "$CHROME" || { echo 'Preinstalled Chrome not found; refusing browser download.' >&2; exit 1; }
           echo "PLAYWRIGHT_CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
-          echo 'Using preinstalled Chrome'
 
-      - name: Prove staging healthy before fixtures
+      - name: Prove staging healthy before temporary PR deploy
         shell: bash
         run: |
           set -euo pipefail
@@ -96,10 +97,31 @@ jobs:
           import { readFile } from 'node:fs/promises'
           const health = JSON.parse(await readFile('/tmp/legacy-health.json', 'utf8'))
           const ready = JSON.parse(await readFile('/tmp/legacy-ready.json', 'utf8'))
-          if (health?.status !== 'ok') throw new Error('STAGING_HEALTH_NOT_OK')
-          if (ready?.status !== 'ready') throw new Error('STAGING_NOT_READY')
-          if (String(ready?.checks?.schema_version) !== '30') throw new Error(`STAGING_SCHEMA_INVALID:${ready?.checks?.schema_version}`)
+          if (health?.status !== 'ok' || ready?.status !== 'ready' || String(ready?.checks?.schema_version) !== '30') throw new Error('STAGING_PRECHECK_FAILED')
           NODE
+
+      - name: Build PR SPA for Worker assets
+        run: npm run build
+
+      - name: Temporarily deploy PR backend to staging
+        id: pr-deploy
+        working-directory: apps/edge-api
+        run: npx wrangler deploy --env staging
+
+      - name: Wait for PR backend ready
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error "$YUISYNC_STAGING_URL/ready" >/tmp/legacy-pr-ready.json && node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const ready = JSON.parse(await readFile('/tmp/legacy-pr-ready.json', 'utf8'))
+          if (ready?.status !== 'ready' || String(ready?.checks?.schema_version) !== '30') process.exit(1)
+          NODE
+            then exit 0; fi
+            sleep 2
+          done
+          exit 1
 
       - name: Create disposable staging tenant and users
         id: base-fixtures
@@ -115,10 +137,7 @@ jobs:
           VITE_DEV_API_PROXY_TARGET="$YUISYNC_STAGING_URL" nohup npx vite --host 127.0.0.1 --port 3080 >/tmp/yuisync-legacy-vite.log 2>&1 &
           echo "VITE_PID=$!" >> "$GITHUB_ENV"
           for attempt in $(seq 1 20); do
-            if curl --fail --silent --show-error http://127.0.0.1:3080/entrar >/dev/null; then
-              echo 'PR frontend ready on localhost:3080'
-              exit 0
-            fi
+            if curl --fail --silent --show-error http://127.0.0.1:3080/entrar >/dev/null; then exit 0; fi
             sleep 1
           done
           cat /tmp/yuisync-legacy-vite.log
@@ -143,6 +162,31 @@ jobs:
         if: always() && steps.base-fixtures.outcome == 'success'
         run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
 
+      - name: Restore current main to staging
+        if: always() && steps.pr-deploy.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout --detach origin/main
+          npm ci
+          npm run build
+          cd apps/edge-api
+          npx wrangler deploy --env staging
+
+      - name: Verify restored staging
+        if: always() && steps.pr-deploy.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error "$YUISYNC_STAGING_URL/health" >/dev/null
+          curl --fail --silent --show-error "$YUISYNC_STAGING_URL/ready" >/tmp/legacy-restored-ready.json
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const ready = JSON.parse(await readFile('/tmp/legacy-restored-ready.json', 'utf8'))
+          if (ready?.status !== 'ready' || String(ready?.checks?.schema_version) !== '30') throw new Error('STAGING_RESTORE_FAILED')
+          NODE
+
       - name: Upload browser evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -161,6 +205,7 @@ jobs:
           echo '## Legacy P0 regression matrix' >> "$GITHUB_STEP_SUMMARY"
           echo '- Frontend semantic invariants: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Workerd/D1 historical invariants: passed' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Local PR frontend -> staging backend: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- PR frontend + PR backend on staging: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Disposable fixtures + cleanup: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Main restored to staging: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- 12 browser scenarios: passed' >> "$GITHUB_STEP_SUMMARY"
