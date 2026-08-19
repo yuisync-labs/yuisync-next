@@ -139,16 +139,29 @@ test.describe.serial('legacy incident staging browser matrix', () => {
 
   test('01 - rotas historicamente criticas abrem sem erro de UI/API', async ({ page }) => {
     const consoleErrors = []
+    const pageErrors = []
     const apiErrors = []
+    const networkErrors = []
+
     page.on('console', (message) => {
-      if (message.type() === 'error') consoleErrors.push(message.text())
+      if (message.type() !== 'error') return
+      // A navegacao entre rotas cancela fetches ainda em voo. O requestfailed abaixo
+      // classifica o transporte com precisao; mantemos qualquer outro console.error.
+      if (/Failed to fetch/i.test(message.text())) return
+      consoleErrors.push(message.text())
     })
-    page.on('pageerror', (error) => consoleErrors.push(error.message))
+    page.on('pageerror', (error) => pageErrors.push(error.message))
     page.on('response', (response) => {
       const url = new URL(response.url())
       if (url.pathname.startsWith('/api/') && response.status() >= 400) {
         apiErrors.push(`${response.status()} ${response.request().method()} ${url.pathname}`)
       }
+    })
+    page.on('requestfailed', (request) => {
+      const failure = request.failure()?.errorText || 'unknown-network-error'
+      if (failure === 'net::ERR_ABORTED') return
+      const url = new URL(request.url())
+      networkErrors.push(`${failure} ${request.method()} ${url.pathname}`)
     })
 
     for (const route of routes) {
@@ -158,6 +171,8 @@ test.describe.serial('legacy incident staging browser matrix', () => {
     }
 
     expect(apiErrors).toEqual([])
+    expect(networkErrors).toEqual([])
+    expect(pageErrors).toEqual([])
     expect(consoleErrors).toEqual([])
   })
 
