@@ -1,0 +1,105 @@
+name: Legacy regression browser matrix
+
+on:
+  pull_request:
+    paths:
+      - 'test/e2e/legacy-regression-p0.spec.js'
+      - 'playwright.legacy-regression.config.js'
+      - '.github/workflows/legacy-regression-browser.yml'
+      - 'src/modules/petshop/**'
+      - 'apps/edge-api/**'
+      - 'scripts/check-appointment-edit-semantics.mjs'
+      - 'scripts/check-appointment-semantic-update-boundary.mjs'
+      - 'scripts/check-no-domain-state-from-dom.mjs'
+      - 'test/agendaOperationalInfrastructure.test.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: legacy-regression-browser-staging
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      YUISYNC_STAGING_URL: https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev
+      YUISYNC_WRANGLER_ENV: staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Frontend semantic invariants
+        run: |
+          npm run check:appointment-edit-semantics
+          npm run check:appointment-semantic-update-boundary
+          npm run check:no-domain-state-from-dom
+          npx vitest run \
+            src/modules/petshop/lib/appointmentUpdateSemantics.test.js \
+            src/modules/petshop/components/AgendaBillingLabel.test.jsx \
+            src/modules/petshop/lib/serviceWeightBoundaries.test.js
+          node --test test/agendaOperationalInfrastructure.test.mjs
+
+      - name: Workerd and D1 operational invariants
+        run: |
+          npm run test --workspace @yuisync/edge-api -- \
+            test/appointmentCommandIntegration.test.ts \
+            test/operationalIntegrityV25.test.ts \
+            test/packageReconciliationIntegration.test.ts \
+            test/appointmentReopenIntegration.test.ts \
+            test/appointmentFinancialReopenIntegration.test.ts \
+            test/checkoutD1Integration.test.ts \
+            test/health.test.ts \
+            test/d1MigrationUpgradeMatrix.test.ts \
+            test/asyncEventRedelivery.test.ts \
+            test/realtimeDurableObject.test.ts \
+            test/realtimeApi.test.ts
+
+      - name: Find browser
+        shell: bash
+        run: |
+          CHROME="$(command -v google-chrome-stable || command -v google-chrome || command -v chromium || true)"
+          if [ -n "$CHROME" ]; then
+            echo "PLAYWRIGHT_CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
+            echo "Using preinstalled Chrome"
+          else
+            echo "No preinstalled Chrome found; installing Playwright Chromium"
+            npx playwright install chromium
+          fi
+
+      - name: Create disposable staging tenant and users
+        run: node scripts/migration/staging-e2e-fixtures.mjs setup
+
+      - name: Browser regression matrix
+        run: npx playwright test --config=playwright.legacy-regression.config.js
+
+      - name: Cleanup disposable staging tenant and users
+        if: always()
+        run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-regression-browser-evidence
+          path: |
+            playwright-report/legacy-regression
+            test-results
+          if-no-files-found: ignore
+          retention-days: 7
