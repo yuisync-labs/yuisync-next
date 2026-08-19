@@ -63,21 +63,48 @@ async function signIn(page) {
   }, { tenantId: must('E2E_TENANT_ID'), moduleId: MODULE_ID })
 }
 
+async function browserRequest(page, path, { method = 'GET', headers = {}, data } = {}) {
+  const result = await page.evaluate(async ({ path, method, headers, data }) => {
+    const response = await fetch(path, {
+      method,
+      credentials: 'include',
+      headers: {
+        ...headers,
+        ...(data === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      body: data === undefined ? undefined : JSON.stringify(data),
+    })
+    const text = await response.text()
+    let payload = {}
+    if (text) {
+      try { payload = JSON.parse(text) } catch { payload = { raw: text } }
+    }
+    return { status: response.status, payload }
+  }, { path, method, headers, data })
+
+  return {
+    status: () => result.status,
+    json: async () => result.payload,
+  }
+}
+
 async function compat(page, body, tenantId = must('E2E_TENANT_ID')) {
-  const response = await page.request.post('/api/compat/query', {
+  const response = await browserRequest(page, '/api/compat/query', {
+    method: 'POST',
     headers: scopeHeaders(tenantId),
     data: body,
   })
-  const payload = await response.json().catch(() => ({}))
+  const payload = await response.json()
   return { response, payload }
 }
 
 async function rpc(page, name, args, tenantId = must('E2E_TENANT_ID')) {
-  const response = await page.request.post('/api/compat/rpc', {
+  const response = await browserRequest(page, '/api/compat/rpc', {
+    method: 'POST',
     headers: scopeHeaders(tenantId),
     data: { name, args },
   })
-  const payload = await response.json().catch(() => ({}))
+  const payload = await response.json()
   return { response, payload }
 }
 
@@ -191,10 +218,11 @@ test.describe.serial('legacy incident staging browser matrix', () => {
   })
 
   test('03 - isolamento de tenant bloqueia leitura cruzada', async ({ page }) => {
-    const { response } = await compat(page, {
+    const { response, payload } = await compat(page, {
       table: 'clients', action: 'select', columns: '*', filters: [], limit: 10, mode: 'many',
     }, must('E2E_FOREIGN_TENANT_ID'))
-    expect([403, 404]).toContain(response.status())
+    expect([403, 404], JSON.stringify(payload)).toContain(response.status())
+    expect(payload?.data ?? null).toBeNull()
   })
 
   test('04 - agenda cria limite pequeno com pacote, snapshots e MotoDog explicitos', async ({ page }) => {
@@ -348,14 +376,14 @@ test.describe.serial('legacy incident staging browser matrix', () => {
       customerName: 'Tutor Regressao', source: 'pos', fulfillmentType: 'counter', discount: 0,
       idempotencyKey, items: [{ productId: must('E2E_PRODUCT_ID'), quantity: 1 }], paymentMethod: 'pix',
     }
-    const first = await page.request.post('/api/petshop/checkout', { data: body })
+    const first = await browserRequest(page, '/api/petshop/checkout', { method: 'POST', data: body })
     const firstPayload = await first.json()
     expect(first.status(), JSON.stringify(firstPayload)).toBe(201)
     expect(firstPayload.success).toBe(true)
     expect(firstPayload.data.transaction.replayed).toBe(false)
     checkoutSaleId = String(firstPayload.data.sale.id)
 
-    const replay = await page.request.post('/api/petshop/checkout', { data: body })
+    const replay = await browserRequest(page, '/api/petshop/checkout', { method: 'POST', data: body })
     const replayPayload = await replay.json()
     expect(replay.status(), JSON.stringify(replayPayload)).toBe(200)
     expect(replayPayload.data.transaction.replayed).toBe(true)
@@ -377,7 +405,7 @@ test.describe.serial('legacy incident staging browser matrix', () => {
   })
 
   test('11 - readiness e realtime autenticado continuam operacionais', async ({ page }) => {
-    const ready = await page.request.get('/ready')
+    const ready = await browserRequest(page, '/ready')
     expect(ready.status()).toBe(200)
     const body = await ready.json()
     expect(body.status).toBe('ready')
