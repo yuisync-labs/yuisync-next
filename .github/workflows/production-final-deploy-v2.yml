@@ -33,6 +33,7 @@ jobs:
           node --input-type=module <<'NODE'
           import { appendFile, readFile } from 'node:fs/promises'
           import { execFileSync } from 'node:child_process'
+
           const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, 'utf8'))
           const body = String(event?.issue?.body || '')
           const release = /^Release-SHA:\s*([0-9a-f]{40})\s*$/im.exec(body)?.[1]?.toLowerCase()
@@ -41,40 +42,58 @@ jobs:
           if (!release) throw new Error('RELEASE_SHA_REQUIRED')
           if (auth !== 'AUTHORIZE_PRODUCTION_FINAL_V2') throw new Error('AUTHORIZATION_REQUIRED')
           if (domain !== 'yuisync.app') throw new Error('DOMAIN_INVALID')
+
           execFileSync('git', ['fetch', 'origin', 'main'], { stdio: 'inherit' })
           const currentMain = execFileSync('git', ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim().toLowerCase()
           if (release !== currentMain) throw new Error(`RELEASE_NOT_CURRENT_MAIN:${release}:${currentMain}`)
+
           const repo = process.env.GITHUB_REPOSITORY
-          const successfulRuns = (wf, headSha = null) => {
-            const args = ['api', `repos/${repo}/actions/workflows/${wf}/runs`, '-f', 'status=success', '-f', 'per_page=100', '-X', 'GET']
-            if (headSha) args.push('-f', `head_sha=${headSha}`)
-            return JSON.parse(execFileSync('gh', args, { encoding: 'utf8', env: process.env })).workflow_runs || []
+          const listSuccessfulRuns = (workflow) => {
+            const endpoint = `repos/${repo}/actions/workflows/${workflow}/runs?status=success&per_page=30`
+            const output = execFileSync(
+              'gh',
+              ['api', endpoint, '--jq', '.workflow_runs[] | [.head_sha, (.id|tostring), .conclusion] | @tsv'],
+              { encoding: 'utf8', env: process.env, maxBuffer: 1024 * 1024 },
+            ).trim()
+            if (!output) return []
+            return output.split('\n').map((line) => {
+              const [sha, id, conclusion] = line.split('\t')
+              return { sha: String(sha || '').toLowerCase(), id: Number(id), conclusion }
+            })
           }
-          const exactQuality = successfulRuns('quality.yml', release).find((r) => r.head_sha === release && r.conclusion === 'success')
-          let qualityProof = exactQuality ? { mode: 'exact', sha: release } : null
-          if (!qualityProof) {
-            const recentQuality = successfulRuns('quality.yml')
-            for (const run of recentQuality) {
-              const candidate = String(run?.head_sha || '').toLowerCase()
-              if (!/^[0-9a-f]{40}$/.test(candidate) || candidate === release) continue
-              try {
-                execFileSync('git', ['merge-base', '--is-ancestor', candidate, release], { stdio: 'ignore' })
-              } catch {
-                continue
-              }
-              const changed = execFileSync('git', ['diff', '--name-only', `${candidate}..${release}`], { encoding: 'utf8' })
-                .trim().split('\n').map((s) => s.trim()).filter(Boolean)
-              if (changed.length && changed.every((path) => path.startsWith('.github/workflows/'))) {
-                qualityProof = { mode: 'workflow-only-inherited', sha: candidate, changed }
-                break
-              }
+
+          const workflowOnlyDiff = (candidate) => {
+            if (!/^[0-9a-f]{40}$/.test(candidate) || candidate === release) return null
+            try {
+              execFileSync('git', ['merge-base', '--is-ancestor', candidate, release], { stdio: 'ignore' })
+            } catch {
+              return null
             }
+            const changed = execFileSync('git', ['diff', '--name-only', `${candidate}..${release}`], { encoding: 'utf8' })
+              .trim().split('\n').map((value) => value.trim()).filter(Boolean)
+            if (!changed.length || !changed.every((path) => path.startsWith('.github/workflows/'))) return null
+            return changed
           }
-          const staging = successfulRuns('full-staging-certification.yml', release).filter((r) => r.head_sha === release && r.conclusion === 'success')
+
+          const resolveProof = (workflow, kind) => {
+            const runs = listSuccessfulRuns(workflow)
+            const exact = runs.find((run) => run.sha === release && run.conclusion === 'success')
+            if (exact) return { kind, mode: 'exact', sha: release, run_id: exact.id }
+            for (const run of runs) {
+              if (run.conclusion !== 'success') continue
+              const changed = workflowOnlyDiff(run.sha)
+              if (changed) return { kind, mode: 'workflow-only-inherited', sha: run.sha, run_id: run.id, changed }
+            }
+            return null
+          }
+
+          const qualityProof = resolveProof('quality.yml', 'quality')
+          const stagingProof = resolveProof('full-staging-certification.yml', 'staging')
           if (!qualityProof) throw new Error('QUALITY_REQUIRED')
-          if (!staging.length) throw new Error('STAGING_SMOKE_REQUIRED')
+          if (!stagingProof) throw new Error('STAGING_SMOKE_REQUIRED')
+
           await appendFile(process.env.GITHUB_OUTPUT, `release_sha=${release}\n`)
-          console.log(JSON.stringify({ release_sha: release, quality_proof: qualityProof, staging_smokes: staging.length }))
+          console.log(JSON.stringify({ release_sha: release, quality_proof: qualityProof, staging_proof: stagingProof }))
           NODE
 
   deploy:
@@ -214,5 +233,4 @@ jobs:
           echo '- D1 schema: v30' >> "$GITHUB_STEP_SUMMARY"
           echo '- pre-migration D1 + AUTH_DB bookmarks: archived' >> "$GITHUB_STEP_SUMMARY"
           echo '- yuisync.app /health + /ready: passed' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Quality: exact SHA, or inherited only across workflow-only changes' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Better Auth: validated by exact-SHA staging HTTP smoke' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Quality/staging proofs: exact SHA or inherited only across workflow-only commits' >> "$GITHUB_STEP_SUMMARY"
