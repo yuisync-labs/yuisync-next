@@ -1,15 +1,31 @@
 import { createWranglerD1ReadOnlyRunner } from './foundationExtractors.mjs'
-import { OPERATIONAL_PROJECTION, projectOperationalSnapshot } from './phase8OperationalProjection.mjs'
+import { LEGACY_CANONICAL_PROJECTION, projectLegacyCanonicalSnapshot } from './legacyCanonicalProjection.mjs'
+
+const byId = (module = true) => ({ module, order: 'id.asc' })
+const singleton = { module: true, order: 'tenant_id.asc,module_id.asc' }
 
 const SOURCE_TABLES = Object.freeze({
-  products:{ module:true }, petshop_services:{ module:true }, stock_movements:{ module:true }, settings:{ module:true }, appointments:{ module:true },
-  service_delivery_orders:{ module:true }, sales:{ module:true }, sale_items:{ module:false }, sale_payment_splits:{ module:false },
-  chat_sessions:{ module:true }, chat_messages:{ module:false }, fiscal_documents:{ module:true },
+  products:byId(), petshop_services:byId(), stock_movements:byId(), settings:singleton, appointments:byId(),
+  sales:byId(), sale_items:byId(false), sale_payment_splits:byId(false),
+  chat_sessions:byId(), chat_messages:byId(false), fiscal_documents:byId(),
+  subscription_plans:byId(), client_subscriptions:byId(), loyalty_settings:singleton, loyalty_points:byId(),
+  commission_rules:byId(), cash_register:byId(), invoices:byId(), billing_settings:singleton, accounting_services:byId(),
+  petshop_campaign_logs:byId(), petshop_growth_booking_settings:singleton, petshop_growth_booking_requests:byId(),
+  petshop_growth_leads:byId(), petshop_growth_no_show_events:byId(), petshop_growth_no_show_policy:singleton,
+  petshop_growth_report_cards:byId(), support_threads:byId(), support_messages:byId(),
+  tenant_ai_usage_monthly:{ module:true, order:'tenant_id.asc,module_id.asc,period_month.asc' },
 })
+
 const DESTINATION_TABLES = Object.freeze([
-  'catalog_products','services','inventory_balances','inventory_movements','module_operational_settings','booking_hours',
-  'payment_method_settings','appointments','appointment_services','transport_options','appointment_transport',
+  'catalog_products','services','inventory_balances','inventory_movements',
+  'module_operational_settings','module_settings_extensions','booking_hours','payment_method_settings',
+  'appointments','appointment_services','transport_options','appointment_transport',
   'sales','sale_items','payments','payment_splits','chat_threads','chat_messages','fiscal_documents',
+  'subscription_plans','client_subscriptions','subscription_benefit_allocations',
+  'loyalty_settings','loyalty_points','commission_rules','cash_register','invoices','billing_settings','accounting_services',
+  'petshop_campaign_logs','petshop_growth_booking_settings','petshop_growth_booking_requests','petshop_growth_leads',
+  'petshop_growth_no_show_events','petshop_growth_no_show_policy','petshop_growth_report_cards',
+  'support_threads','support_messages','tenant_ai_usage_monthly',
 ])
 const PAGE_SIZE = 500
 const MAX_PAGES = 400
@@ -41,7 +57,7 @@ async function readSupabaseTable({ baseUrl, key, accessToken, table, config, sco
     url.searchParams.set('select','*')
     url.searchParams.set('tenant_id',`eq.${scope.tenant_id}`)
     if (config.module) url.searchParams.set('module_id',`eq.${scope.module_id}`)
-    url.searchParams.set('order','id.asc')
+    url.searchParams.set('order',config.order || 'id.asc')
     const headers = { accept:'application/json', apikey:key, range:`${page*PAGE_SIZE}-${page*PAGE_SIZE+PAGE_SIZE-1}` }
     if (accessToken) headers.authorization = `Bearer ${accessToken}`
     else if (!opaque) headers.authorization = `Bearer ${key}`
@@ -65,8 +81,10 @@ export async function extractSupabaseOperationalSnapshot({ supabaseUrl, apiKey, 
   if (token && (/\s/.test(token) || token.length > 16384)) throw new OperationalExtractorError('INVALID_SUPABASE_ACCESS_TOKEN')
   const baseUrl = supabaseBase(supabaseUrl)
   const tables = {}
-  for (const [table,config] of Object.entries(SOURCE_TABLES)) tables[table] = await readSupabaseTable({ baseUrl,key,accessToken:token,table,config,scope,fetcher })
-  return projectOperationalSnapshot({ tables }, { tenantId:scope.tenant_id, moduleId:scope.module_id })
+  for (const [table,config] of Object.entries(SOURCE_TABLES)) {
+    tables[table] = await readSupabaseTable({ baseUrl,key,accessToken:token,table,config,scope,fetcher })
+  }
+  return projectLegacyCanonicalSnapshot({ tables }, { tenantId:scope.tenant_id, moduleId:scope.module_id })
 }
 
 function sqlLiteral(value) { return `'${String(value).replaceAll("'","''")}'` }
@@ -80,8 +98,11 @@ export function buildD1OperationalQueries(rawScope) {
 export async function extractD1OperationalSnapshot({ scope: rawScope, runner=createWranglerD1ReadOnlyRunner() } = {}) {
   const scope = scopeOf(rawScope); const queries=buildD1OperationalQueries(scope); const collections={}
   for (const table of DESTINATION_TABLES) collections[table] = await runner(queries[table])
-  return Object.freeze({ projection:`${OPERATIONAL_PROJECTION.name}/${OPERATIONAL_PROJECTION.version}`, source:'d1', scope, collections,
-    transient_policy:{ collections:['financial_effects','operation_checkpoints','operation_effects','effect_outbox'], strategy:'start_clean_after_freeze_and_drain' } })
+  return Object.freeze({
+    projection:`${LEGACY_CANONICAL_PROJECTION.name}/${LEGACY_CANONICAL_PROJECTION.version}`,
+    source:'d1',scope,collections,
+    transient_policy:{ collections:['financial_effects','operation_checkpoints','operation_effects','effect_outbox'], strategy:'start_clean_after_freeze_and_drain' },
+  })
 }
 
 export { SOURCE_TABLES, DESTINATION_TABLES }

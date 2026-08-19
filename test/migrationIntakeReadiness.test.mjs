@@ -10,6 +10,7 @@ import { projectSupabaseUsersToBetterAuth } from '../scripts/migration/supabaseB
 
 const vaultKey = Buffer.alloc(32, 7).toString('base64')
 const bcryptHash = '$2a$12$123456789012345678901u1234567890123456789012345678901'
+const intakeTables = ['migration_runs','migration_source_records','migration_source_payload_chunks','migration_secret_vault','migration_table_checkpoints','migration_reconciliation']
 
 describe('migration intake readiness', () => {
   it('registers canonical, secret, relation, auth and view surfaces', () => {
@@ -143,11 +144,39 @@ describe('migration intake readiness', () => {
     })).toThrowError(expect.objectContaining({ code: 'PET_OWNER_MATCH_AMBIGUOUS' }))
   })
 
-  it('marks readiness green only when registry, destination, auth, secrets, storage, payloads and clients/pets are green', () => {
-    const intakeTables = ['migration_runs','migration_source_records','migration_source_payload_chunks','migration_secret_vault','migration_table_checkpoints','migration_reconciliation']
+  it('fails readiness when a non-empty canonical source table has not been projected', () => {
     const report = evaluateMigrationReadiness({
       discoveredSource: [{ table_name: 'clients', table_type: 'BASE TABLE', row_count: 10 }],
       destinationTables: intakeTables,
+    })
+    const check = report.checks.find((item) => item.id === 'canonical_projection_coverage')
+    expect(report.ready).toBe(false)
+    expect(check?.missing_projected).toEqual(['clients'])
+    expect(check?.missing_reconciled).toEqual(['clients'])
+  })
+
+  it('fails readiness when canonical projection exists but reconciliation is missing or mismatched', () => {
+    const missing = evaluateMigrationReadiness({
+      discoveredSource: [{ table_name: 'products', table_type: 'BASE TABLE', row_count: 2 }],
+      destinationTables: intakeTables,
+      canonicalProjectionSummary: { projected_tables: ['products'], reconciled_tables: [] },
+    })
+    expect(missing.ready).toBe(false)
+    expect(missing.checks.find((item) => item.id === 'canonical_projection_coverage')?.missing_reconciled).toEqual(['products'])
+
+    const mismatched = evaluateMigrationReadiness({
+      discoveredSource: [{ table_name: 'products', table_type: 'BASE TABLE', row_count: 2 }],
+      destinationTables: intakeTables,
+      canonicalProjectionSummary: { projected_tables: ['products'], reconciled_tables: ['products'], mismatched_tables: ['products'] },
+    })
+    expect(mismatched.ready).toBe(false)
+  })
+
+  it('marks readiness green only when every canonical table is projected/reconciled and all other gates are green', () => {
+    const report = evaluateMigrationReadiness({
+      discoveredSource: [{ table_name: 'clients', table_type: 'BASE TABLE', row_count: 10 }],
+      destinationTables: intakeTables,
+      canonicalProjectionSummary: { projected_tables: ['clients'], reconciled_tables: ['clients'], mismatched_tables: [] },
       authSummary: { total: 4, bcrypt: 4, explicit_memberships: 4 },
       secretSummary: { secret_values: 3, vault_ready: true },
       storageSummary: { supabase_hosted_assets: 0 },

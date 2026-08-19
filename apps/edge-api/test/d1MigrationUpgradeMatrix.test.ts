@@ -36,12 +36,20 @@ async function dropVersion30() {
     DROP TRIGGER IF EXISTS cash_register_single_open_reopen_guard;
     DROP VIEW IF EXISTS compat_chat_sessions;
     DROP VIEW IF EXISTS compat_chat_messages;
+    DROP VIEW IF EXISTS compat_appointments;
+
     ALTER TABLE chat_threads DROP COLUMN context_json;
     ALTER TABLE chat_threads DROP COLUMN closed_at_ms;
     ALTER TABLE chat_threads DROP COLUMN csat_score;
     ALTER TABLE chat_threads DROP COLUMN assigned_staff_key;
     ALTER TABLE chat_threads DROP COLUMN intent;
     ALTER TABLE chat_threads DROP COLUMN customer_name;
+
+    ALTER TABLE appointments DROP COLUMN grooming_machine_no;
+    ALTER TABLE loyalty_points DROP COLUMN expires_at_ms;
+    ALTER TABLE client_subscriptions DROP COLUMN legacy_metadata_json;
+    ALTER TABLE support_threads DROP COLUMN assigned_to;
+    ALTER TABLE support_threads DROP COLUMN last_message_preview;
   `)
 }
 
@@ -115,6 +123,18 @@ async function assertLatestSchema() {
   const chatNames = new Set(chatColumns.results.map((row) => row.name))
   for (const required of ['customer_name', 'intent', 'assigned_staff_key', 'csat_score', 'closed_at_ms', 'context_json']) {
     expect(chatNames.has(required)).toBe(true)
+  }
+
+  const columnChecks = [
+    ['appointments', 'grooming_machine_no'],
+    ['loyalty_points', 'expires_at_ms'],
+    ['client_subscriptions', 'legacy_metadata_json'],
+    ['support_threads', 'assigned_to'],
+    ['support_threads', 'last_message_preview'],
+  ] as const
+  for (const [table, required] of columnChecks) {
+    const columns = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>()
+    expect(new Set(columns.results.map((row) => row.name)).has(required)).toBe(true)
   }
 
   const triggers = await db.prepare(`
