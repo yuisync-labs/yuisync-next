@@ -1,0 +1,135 @@
+name: Legacy regression staging browser
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'test/e2e/legacy-regression-p0.spec.js'
+      - 'playwright.legacy-regression.config.js'
+      - 'scripts/migration/staging-legacy-regression-fixtures.mjs'
+      - '.github/workflows/legacy-regression-staging.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: legacy-regression-staging-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  legacy-regression:
+    name: Browser + operational incident matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      YUISYNC_STAGING_URL: https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev
+      YUISYNC_E2E_BASE_URL: https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev
+      YUISYNC_E2E_WRANGLER_ENV: staging
+      CI: 'true'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Re-run executable incident invariants in Workerd
+        working-directory: apps/edge-api
+        run: >-
+          npx vitest run --config vitest.config.ts
+          test/appointmentCommandIntegration.test.ts
+          test/operationalIntegrityV25.test.ts
+          test/packageReconciliationIntegration.test.ts
+          test/appointmentReopenIntegration.test.ts
+          test/appointmentFinancialReopenIntegration.test.ts
+          test/checkoutD1Integration.test.ts
+          test/asyncEventRedelivery.test.ts
+          test/realtimeDurableObject.test.ts
+          test/realtimeApi.test.ts
+          test/health.test.ts
+
+      - name: Require staging and preinstalled Chrome
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test "${YUISYNC_E2E_WRANGLER_ENV}" = staging
+          if [ -x /usr/bin/google-chrome ]; then
+            echo 'PLAYWRIGHT_CHROME_PATH=/usr/bin/google-chrome' >> "$GITHUB_ENV"
+          elif [ -x /usr/bin/google-chrome-stable ]; then
+            echo 'PLAYWRIGHT_CHROME_PATH=/usr/bin/google-chrome-stable' >> "$GITHUB_ENV"
+          else
+            echo 'Preinstalled Chrome not found; refusing a long browser download in this QA path.' >&2
+            exit 1
+          fi
+
+      - name: Prove staging is healthy before mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error "$YUISYNC_STAGING_URL/health" > /tmp/legacy-health.json
+          curl --fail --silent --show-error "$YUISYNC_STAGING_URL/ready" > /tmp/legacy-ready.json
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const health = JSON.parse(await readFile('/tmp/legacy-health.json', 'utf8'))
+          const ready = JSON.parse(await readFile('/tmp/legacy-ready.json', 'utf8'))
+          if (health?.status !== 'ok') throw new Error('STAGING_HEALTH_NOT_OK')
+          if (ready?.status !== 'ready') throw new Error('STAGING_NOT_READY')
+          if (String(ready?.checks?.schema_version) !== '30') throw new Error(`STAGING_SCHEMA_INVALID:${ready?.checks?.schema_version}`)
+          NODE
+
+      - name: Create disposable Better Auth tenant/users
+        id: base-fixtures
+        run: node scripts/migration/staging-e2e-fixtures.mjs setup
+
+      - name: Seed disposable petshop regression domain
+        id: domain-fixtures
+        run: node scripts/migration/staging-legacy-regression-fixtures.mjs setup
+
+      - name: Execute browser regression matrix against staging
+        run: npx playwright test --config playwright.legacy-regression.config.js
+
+      - name: Clean foreign-domain fixture
+        if: always() && steps.domain-fixtures.outcome == 'success'
+        run: node scripts/migration/staging-legacy-regression-fixtures.mjs cleanup
+
+      - name: Clean disposable tenant/users and all tenant data
+        if: always() && steps.base-fixtures.outcome == 'success'
+        run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-regression-browser-${{ github.run_id }}
+          path: |
+            playwright-report/legacy-regression/
+            test-results/
+            .artifacts/legacy-regression/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Result summary
+        if: success()
+        run: |
+          echo '## Legacy regression staging browser' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Workerd incident invariants: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Disposable Better Auth tenant/users: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Browser route matrix: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Multi-pet + weight/species boundaries: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Package completion/replay/reopen: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- MotoDog edit semantics: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- PDV checkout/idempotency: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Tenant isolation + realtime + readiness: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Mobile P0 overflow: passed' >> "$GITHUB_STEP_SUMMARY"
