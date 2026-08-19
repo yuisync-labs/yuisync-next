@@ -109,17 +109,18 @@ async function rpc(page, name, args, tenantId = must('E2E_TENANT_ID')) {
 }
 
 async function selectTutorPet(page, petName) {
-  const search = page.getByPlaceholder('Buscar cliente, pet ou telefone...')
+  const search = page.getByLabel('Buscar cliente ou pet')
   await expect(search).toBeVisible({ timeout: 8_000 })
   await search.fill('Tutor Regressao')
-  await expect(page.getByText('Tutor Regressao', { exact: true }).first()).toBeVisible({ timeout: 8_000 })
-  await page.getByRole('button', { name: 'Escolher pet' }).click()
+  const tutorOption = page.getByRole('option').filter({ hasText: 'Tutor Regressao' }).first()
+  await expect(tutorOption).toBeVisible({ timeout: 8_000 })
+  await tutorOption.click()
   await expect(page.getByText('Escolha o pet para este agendamento')).toBeVisible()
   await page.getByRole('button', { name: new RegExp(petName, 'i') }).click()
 }
 
 async function selectService(page, serviceName) {
-  const input = page.locator('input[placeholder="Buscar e adicionar servico..."]')
+  const input = page.getByLabel('Buscar servico para adicionar')
   await input.fill(serviceName)
   const option = page.getByRole('option').filter({ hasText: serviceName }).first()
   await expect(option).toBeVisible({ timeout: 8_000 })
