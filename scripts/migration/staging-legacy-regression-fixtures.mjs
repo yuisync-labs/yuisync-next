@@ -61,6 +61,7 @@ async function setup() {
   if (!runId.startsWith('e2e-')) throw new Error(`INVALID_E2E_RUN_ID:${runId}`)
 
   const now = Date.now()
+  const scheduledAt = now + 24 * 60 * 60 * 1000
   const ids = {
     clientId: `${runId}-client`,
     petSmallId: `${runId}-pet-small`,
@@ -73,6 +74,8 @@ async function setup() {
     productId: `${runId}-product`,
     planId: `${runId}-plan`,
     subscriptionId: `${runId}-subscription`,
+    packageAppointmentId: `${runId}-package-appointment`,
+    packageAllocationId: `${runId}-package-allocation`,
     foreignTenantId: `${runId}-foreign-tenant`,
     foreignClientId: `${runId}-foreign-client`,
   }
@@ -82,6 +85,10 @@ async function setup() {
     large: `banho-grande-${runId}`,
     cat: `banho-gato-${runId}`,
   }
+
+  const packageBenefits = JSON.stringify([
+    { kind: 'service', service_code: codes.small, status: 'reserved', catalog_price: 55 },
+  ])
 
   const statements = [
     `INSERT INTO clients(tenant_id,module_id,id,name,document,phone,email,birth_date,address,address_number,address_complement,address_reference,neighborhood,city,postal_code,notes,status,created_at_ms,updated_at_ms)
@@ -108,6 +115,33 @@ async function setup() {
       VALUES(${sql(tenantId)},'petshop',${sql(ids.planId)},'Plano Banho QA',10000,'monthly',${sql(JSON.stringify([{ service_type: codes.small, qty_per_cycle: 4 }, { service_type: 'motodog', qty_per_cycle: 1 }]))},'active',${now},${now});`,
     `INSERT INTO client_subscriptions(tenant_id,module_id,id,plan_id,client_id,status,started_at_ms,next_billing_date,services_used_json,cancelled_at_ms,created_at_ms,updated_at_ms)
       VALUES(${sql(tenantId)},'petshop',${sql(ids.subscriptionId)},${sql(ids.planId)},${sql(ids.clientId)},'active',${now},'2026-09-30','{}',NULL,${now},${now});`,
+    `INSERT INTO transport_options(tenant_id,module_id,id,label,fee_cents,max_weight_grams,pickup_required,dropoff_required,outside_city,status,sort_order)
+      VALUES(${sql(tenantId)},'petshop','buscar_e_levar','Buscar e levar',2000,NULL,1,1,0,'active',1);`,
+    `INSERT INTO transport_options(tenant_id,module_id,id,label,fee_cents,max_weight_grams,pickup_required,dropoff_required,outside_city,status,sort_order)
+      VALUES(${sql(tenantId)},'petshop','somente_levar','Somente levar',1000,NULL,0,1,0,'active',2);`,
+    `INSERT INTO appointments(
+      tenant_id,module_id,id,client_id,pet_id,scheduled_at_ms,duration_min,service_group,status,source,
+      subtotal_cents,transport_fee_cents,notes,version,created_at_ms,updated_at_ms,
+      subscription_id,subscription_benefit_used,subscription_benefit_status,subscription_benefits_json,
+      subscription_label,subscription_discount_cents,billing_intent_type,billing_intent_subscription_id
+    ) VALUES(${sql(tenantId)},'petshop',${sql(ids.packageAppointmentId)},${sql(ids.clientId)},${sql(ids.petSmallId)},${scheduledAt},60,'banho_tosa','scheduled','manual',5500,2000,'Seed P0 pacote + MotoDog',1,${now},${now},
+      ${sql(ids.subscriptionId)},1,'reserved',${sql(packageBenefits)},'Plano Banho QA',5500,'subscription',${sql(ids.subscriptionId)});`,
+    `INSERT INTO appointment_services(
+      tenant_id,module_id,appointment_id,position,service_id,service_code,service_name,service_group,
+      unit_price_cents,duration_min,benefit_used,catalog_price_cents,commission_basis_points,
+      min_weight_kg,max_weight_kg,species_target,min_weight_grams,max_weight_grams
+    ) VALUES(${sql(tenantId)},'petshop',${sql(ids.packageAppointmentId)},0,${sql(ids.serviceSmallId)},${sql(codes.small)},'Banho Pequeno QA','banho_tosa',5500,60,1,5500,500,0,10.099,'dog',0,10099);`,
+    `INSERT INTO subscription_benefit_allocations(
+      tenant_id,module_id,id,subscription_id,appointment_id,appointment_service_position,
+      benefit_kind,benefit_key,service_code,state,operation_key,catalog_price_cents,
+      version,reserved_at_ms,consumed_at_ms,released_at_ms,created_at_ms,updated_at_ms
+    ) VALUES(${sql(tenantId)},'petshop',${sql(ids.packageAllocationId)},${sql(ids.subscriptionId)},${sql(ids.packageAppointmentId)},0,
+      'service',${sql(codes.small)},${sql(codes.small)},'reserved',${sql(`${runId}:reserved-package-seed`)},5500,1,${now},NULL,NULL,${now},${now});`,
+    `INSERT INTO appointment_transport(
+      tenant_id,module_id,appointment_id,option_id,fee_cents,pickup_address,dropoff_address,
+      pickup_reference,dropoff_reference,contact_phone,status,notes,updated_at_ms
+    ) VALUES(${sql(tenantId)},'petshop',${sql(ids.packageAppointmentId)},'buscar_e_levar',2000,'Rua QA, 123','Rua QA, 123',
+      'Portao azul','Portao azul','(32) 99999-1111','pending','Seed P0 MotoDog',${now});`,
     `INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms)
       VALUES(${sql(ids.foreignTenantId)},${sql(ids.foreignTenantId)},'Foreign E2E Tenant','active',${now},${now});`,
     `INSERT INTO clients(tenant_id,module_id,id,name,status,created_at_ms,updated_at_ms)
@@ -135,10 +169,11 @@ async function setup() {
     E2E_PRODUCT_ID: ids.productId,
     E2E_PLAN_ID: ids.planId,
     E2E_SUBSCRIPTION_ID: ids.subscriptionId,
+    E2E_PACKAGE_APPOINTMENT_ID: ids.packageAppointmentId,
     E2E_FOREIGN_TENANT_ID: ids.foreignTenantId,
     E2E_FOREIGN_CLIENT_ID: ids.foreignClientId,
   })
-  console.log(JSON.stringify({ status: 'legacy-regression-domain-ready', tenant_id: tenantId, run_id: runId }))
+  console.log(JSON.stringify({ status: 'legacy-regression-domain-ready', tenant_id: tenantId, run_id: runId, package_appointment_id: ids.packageAppointmentId }))
 }
 
 async function cleanup() {
