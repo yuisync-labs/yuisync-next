@@ -74,7 +74,15 @@ async function signIn(page, email, password) {
   await page.goto('/entrar')
   await page.getByLabel('E-mail', { exact: true }).fill(email)
   await page.getByLabel('Senha', { exact: true }).fill(password)
-  await page.getByRole('button', { name: 'Entrar na Plataforma', exact: true }).click()
+
+  // The submit action is a stable functional contract. Brand copy changed from
+  // "Entrar na Plataforma" to "Entrar no YuiSync" in the visual refresh and
+  // should not make release authentication probes wait for the whole test timeout.
+  const submit = page.locator('form button[type="submit"]')
+  await expect(submit).toBeVisible({ timeout: 15_000 })
+  await expect(submit).toBeEnabled({ timeout: 15_000 })
+  await submit.click({ timeout: 15_000 })
+
   await expect(page).not.toHaveURL(/\/entrar/, { timeout: 15_000 })
   await settlePage(page)
 }
