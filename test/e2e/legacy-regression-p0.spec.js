@@ -38,18 +38,21 @@ async function signIn(page) {
     const url = new URL(response.url())
     return url.pathname.endsWith('/api/auth/sign-in/email') && response.request().method() === 'POST'
   }, { timeout: 15_000 })
-  const sessionResponsePromise = page.waitForResponse((response) => {
-    const url = new URL(response.url())
-    return url.pathname.endsWith('/api/auth/get-session') && response.request().method() === 'GET' && response.status() === 200
-  }, { timeout: 15_000 })
 
   await page.locator('form button[type="submit"]').click({ timeout: 15_000 })
   const signInResponse = await signInResponsePromise
   expect(signInResponse.ok(), 'Better Auth sign-in request must succeed').toBeTruthy()
-  const sessionResponse = await sessionResponsePromise
-  const sessionPayload = await sessionResponse.json()
-  expect(sessionPayload?.user?.id, 'Better Auth session must contain an authenticated user').toBeTruthy()
   await expect(page).not.toHaveURL(/\/entrar(?:\?|$)/, { timeout: 15_000 })
+
+  await expect.poll(async () => page.evaluate(async () => {
+    const response = await fetch('/api/auth/get-session', { credentials: 'include' })
+    if (!response.ok) return false
+    const payload = await response.json()
+    return Boolean(payload?.user?.id)
+  }), {
+    message: 'Better Auth session must contain an authenticated user after navigation',
+    timeout: 15_000,
+  }).toBe(true)
 }
 
 async function openRoute(page, route) {
