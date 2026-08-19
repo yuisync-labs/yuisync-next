@@ -109,12 +109,11 @@ async function rpc(page, name, args, tenantId = must('E2E_TENANT_ID')) {
 }
 
 async function selectTutorPet(page, petName) {
-  await page.getByRole('button', { name: 'Buscar cliente ou pet' }).click()
-  const search = page.getByLabel('Buscar cliente ou pet')
+  const search = page.getByPlaceholder('Buscar cliente, pet ou telefone...')
+  await expect(search).toBeVisible({ timeout: 8_000 })
   await search.fill('Tutor Regressao')
-  const tutorOption = page.getByRole('option').filter({ hasText: 'Tutor Regressao' }).first()
-  await expect(tutorOption).toBeVisible({ timeout: 8_000 })
-  await tutorOption.click()
+  await expect(page.getByText('Tutor Regressao', { exact: true }).first()).toBeVisible({ timeout: 8_000 })
+  await page.getByRole('button', { name: 'Escolher pet' }).click()
   await expect(page.getByText('Escolha o pet para este agendamento')).toBeVisible()
   await page.getByRole('button', { name: new RegExp(petName, 'i') }).click()
 }
@@ -172,8 +171,6 @@ test.describe.serial('legacy incident staging browser matrix', () => {
 
     page.on('console', (message) => {
       if (message.type() !== 'error') return
-      // A navegacao entre rotas cancela fetches ainda em voo. O requestfailed abaixo
-      // classifica o transporte com precisao; mantemos qualquer outro console.error.
       if (/Failed to fetch/i.test(message.text())) return
       consoleErrors.push(message.text())
     })
