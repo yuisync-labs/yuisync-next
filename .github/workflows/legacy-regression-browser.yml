@@ -6,6 +6,7 @@ on:
       - 'test/e2e/legacy-regression-p0.spec.js'
       - 'playwright.legacy-regression.config.js'
       - '.github/workflows/legacy-regression-browser.yml'
+      - 'scripts/migration/staging-legacy-regression-fixtures.mjs'
       - 'vite.config.js'
       - 'src/modules/petshop/**'
       - 'src/shared/hooks/useClients.js'
@@ -25,23 +26,25 @@ concurrency:
 jobs:
   regression:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 20
     environment: cloudflare-staging
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       YUISYNC_STAGING_URL: https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev
-      YUISYNC_WRANGLER_ENV: staging
+      YUISYNC_E2E_WRANGLER_ENV: staging
+      CI: 'true'
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
           cache: npm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: npm ci
@@ -71,29 +74,49 @@ jobs:
             test/realtimeDurableObject.test.ts \
             test/realtimeApi.test.ts
 
-      - name: Find browser
+      - name: Require preinstalled Chrome
         shell: bash
         run: |
+          set -euo pipefail
           CHROME="$(command -v google-chrome-stable || command -v google-chrome || command -v chromium || true)"
-          if [ -n "$CHROME" ]; then
-            echo "PLAYWRIGHT_CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
-            echo "Using preinstalled Chrome"
-          else
-            echo "No preinstalled Chrome found; installing Playwright Chromium"
-            npx playwright install chromium
+          if [ -z "$CHROME" ]; then
+            echo 'Preinstalled Chrome not found; failing fast instead of downloading a browser during QA.' >&2
+            exit 1
           fi
+          echo "PLAYWRIGHT_CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
+          echo 'Using preinstalled Chrome'
+
+      - name: Prove staging healthy before fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error "$YUISYNC_STAGING_URL/health" >/tmp/legacy-health.json
+          curl --fail --silent --show-error "$YUISYNC_STAGING_URL/ready" >/tmp/legacy-ready.json
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const health = JSON.parse(await readFile('/tmp/legacy-health.json', 'utf8'))
+          const ready = JSON.parse(await readFile('/tmp/legacy-ready.json', 'utf8'))
+          if (health?.status !== 'ok') throw new Error('STAGING_HEALTH_NOT_OK')
+          if (ready?.status !== 'ready') throw new Error('STAGING_NOT_READY')
+          if (String(ready?.checks?.schema_version) !== '30') throw new Error(`STAGING_SCHEMA_INVALID:${ready?.checks?.schema_version}`)
+          NODE
 
       - name: Create disposable staging tenant and users
+        id: base-fixtures
         run: node scripts/migration/staging-e2e-fixtures.mjs setup
+
+      - name: Seed disposable petshop regression domain
+        id: domain-fixtures
+        run: node scripts/migration/staging-legacy-regression-fixtures.mjs setup
 
       - name: Start PR frontend with staging API proxy
         shell: bash
         run: |
           VITE_DEV_API_PROXY_TARGET="$YUISYNC_STAGING_URL" nohup npx vite --host 127.0.0.1 --port 3080 >/tmp/yuisync-legacy-vite.log 2>&1 &
           echo "VITE_PID=$!" >> "$GITHUB_ENV"
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 20); do
             if curl --fail --silent --show-error http://127.0.0.1:3080/entrar >/dev/null; then
-              echo "PR frontend ready on localhost:3080"
+              echo 'PR frontend ready on localhost:3080'
               exit 0
             fi
             sleep 1
@@ -112,17 +135,32 @@ jobs:
         run: |
           if [ -n "${VITE_PID:-}" ]; then kill "$VITE_PID" 2>/dev/null || true; fi
 
+      - name: Cleanup foreign isolation fixture
+        if: always() && steps.domain-fixtures.outcome == 'success'
+        run: node scripts/migration/staging-legacy-regression-fixtures.mjs cleanup
+
       - name: Cleanup disposable staging tenant and users
-        if: always()
+        if: always() && steps.base-fixtures.outcome == 'success'
         run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
 
       - name: Upload browser evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: legacy-regression-browser-evidence
+          name: legacy-regression-browser-evidence-${{ github.run_id }}
           path: |
             playwright-report/legacy-regression
             test-results
+            .artifacts/legacy-regression
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 14
+
+      - name: Result summary
+        if: success()
+        run: |
+          echo '## Legacy P0 regression matrix' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Frontend semantic invariants: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Workerd/D1 historical invariants: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Local PR frontend -> staging backend: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Disposable fixtures + cleanup: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- 12 browser scenarios: passed' >> "$GITHUB_STEP_SUMMARY"
