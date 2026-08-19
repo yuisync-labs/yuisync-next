@@ -136,7 +136,7 @@ jobs:
         run: node scripts/migration/staging-e2e-fixtures.mjs setup
 
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Certify authenticated realtime WebSocket
         run: node scripts/migration/staging-realtime-websocket.mjs
