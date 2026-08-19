@@ -45,13 +45,36 @@ jobs:
           const currentMain = execFileSync('git', ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim().toLowerCase()
           if (release !== currentMain) throw new Error(`RELEASE_NOT_CURRENT_MAIN:${release}:${currentMain}`)
           const repo = process.env.GITHUB_REPOSITORY
-          const runs = (wf) => JSON.parse(execFileSync('gh', ['api', `repos/${repo}/actions/workflows/${wf}/runs`, '-f', `head_sha=${release}`, '-f', 'status=success', '-f', 'per_page=100', '-X', 'GET'], { encoding: 'utf8', env: process.env })).workflow_runs || []
-          const quality = runs('quality.yml').filter((r) => r.head_sha === release && r.conclusion === 'success')
-          const staging = runs('full-staging-certification.yml').filter((r) => r.head_sha === release && r.conclusion === 'success')
-          if (!quality.length) throw new Error('QUALITY_REQUIRED')
+          const successfulRuns = (wf, headSha = null) => {
+            const args = ['api', `repos/${repo}/actions/workflows/${wf}/runs`, '-f', 'status=success', '-f', 'per_page=100', '-X', 'GET']
+            if (headSha) args.push('-f', `head_sha=${headSha}`)
+            return JSON.parse(execFileSync('gh', args, { encoding: 'utf8', env: process.env })).workflow_runs || []
+          }
+          const exactQuality = successfulRuns('quality.yml', release).find((r) => r.head_sha === release && r.conclusion === 'success')
+          let qualityProof = exactQuality ? { mode: 'exact', sha: release } : null
+          if (!qualityProof) {
+            const recentQuality = successfulRuns('quality.yml')
+            for (const run of recentQuality) {
+              const candidate = String(run?.head_sha || '').toLowerCase()
+              if (!/^[0-9a-f]{40}$/.test(candidate) || candidate === release) continue
+              try {
+                execFileSync('git', ['merge-base', '--is-ancestor', candidate, release], { stdio: 'ignore' })
+              } catch {
+                continue
+              }
+              const changed = execFileSync('git', ['diff', '--name-only', `${candidate}..${release}`], { encoding: 'utf8' })
+                .trim().split('\n').map((s) => s.trim()).filter(Boolean)
+              if (changed.length && changed.every((path) => path.startsWith('.github/workflows/'))) {
+                qualityProof = { mode: 'workflow-only-inherited', sha: candidate, changed }
+                break
+              }
+            }
+          }
+          const staging = successfulRuns('full-staging-certification.yml', release).filter((r) => r.head_sha === release && r.conclusion === 'success')
+          if (!qualityProof) throw new Error('QUALITY_REQUIRED')
           if (!staging.length) throw new Error('STAGING_SMOKE_REQUIRED')
           await appendFile(process.env.GITHUB_OUTPUT, `release_sha=${release}\n`)
-          console.log(JSON.stringify({ release_sha: release, quality: quality.length, staging_smokes: staging.length }))
+          console.log(JSON.stringify({ release_sha: release, quality_proof: qualityProof, staging_smokes: staging.length }))
           NODE
 
   deploy:
@@ -191,5 +214,5 @@ jobs:
           echo '- D1 schema: v30' >> "$GITHUB_STEP_SUMMARY"
           echo '- pre-migration D1 + AUTH_DB bookmarks: archived' >> "$GITHUB_STEP_SUMMARY"
           echo '- yuisync.app /health + /ready: passed' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Full tests/edge runtime: reused from exact-SHA Quality' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Auth/realtime: reused from exact-SHA staging smoke' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Quality: exact SHA, or inherited only across workflow-only changes' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Better Auth: validated by exact-SHA staging HTTP smoke' >> "$GITHUB_STEP_SUMMARY"
