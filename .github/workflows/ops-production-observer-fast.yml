@@ -14,9 +14,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
-      TARGET_SHA: 35b4c9fa532d4732e187ab1b4051a97fc9683390
+      TARGET_SHA: a2a65666c5e2727ef0be8c62129def7c665eef46
     steps:
-      - name: Find exact production run
+      - name: Find completed exact production run
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -31,7 +31,7 @@ jobs:
           if (!matches.length) throw new Error(`PRODUCTION_RUN_NOT_FOUND:${target}`)
           const latest = matches[0]
           console.log(JSON.stringify({ id: latest.id, status: latest.status, conclusion: latest.conclusion, attempt: latest.run_attempt, url: latest.html_url }, null, 2))
-          if (latest.status === 'completed' && latest.conclusion !== 'success') process.exit(2)
+          if (latest.status !== 'completed' || latest.conclusion !== 'success') process.exit(2)
           NODE
 
       - name: Probe public production
