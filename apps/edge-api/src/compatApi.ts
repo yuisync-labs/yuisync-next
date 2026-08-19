@@ -28,6 +28,8 @@ type CompatQueryBody = Record<string, unknown> & {
   filters?: unknown
   orders?: unknown
   conflict?: unknown
+  onConflict?: unknown
+  payload?: unknown
   mode?: unknown
 }
 
@@ -41,34 +43,21 @@ const LEGACY_TIMESTAMP_COLUMNS: Readonly<Record<string, Readonly<Record<string, 
   fiscal_audit_logs: Object.freeze({ created_at: 'created_at_ms' }),
   petshop_growth_booking_settings: Object.freeze({ updated_at: 'updated_at_ms' }),
   petshop_growth_leads: Object.freeze({
-    created_at: 'created_at_ms',
-    updated_at: 'updated_at_ms',
-    next_followup_at: 'next_followup_at_ms',
-    last_contact_at: 'last_contact_at_ms',
+    created_at: 'created_at_ms', updated_at: 'updated_at_ms', next_followup_at: 'next_followup_at_ms', last_contact_at: 'last_contact_at_ms',
   }),
   petshop_growth_booking_requests: Object.freeze({ created_at: 'created_at_ms', updated_at: 'updated_at_ms' }),
   petshop_growth_no_show_policy: Object.freeze({ updated_at: 'updated_at_ms' }),
   petshop_growth_no_show_events: Object.freeze({ created_at: 'created_at_ms' }),
   petshop_campaign_logs: Object.freeze({ created_at: 'created_at_ms' }),
   petshop_growth_report_cards: Object.freeze({ created_at: 'created_at_ms', updated_at: 'updated_at_ms' }),
-  support_threads: Object.freeze({
-    created_at: 'created_at_ms',
-    updated_at: 'updated_at_ms',
-    last_message_at: 'last_message_at_ms',
-  }),
+  support_threads: Object.freeze({ created_at: 'created_at_ms', updated_at: 'updated_at_ms', last_message_at: 'last_message_at_ms' }),
   support_messages: Object.freeze({ created_at: 'created_at_ms' }),
-  tenant_platform_subscriptions: Object.freeze({
-    started_at: 'started_at_ms',
-    expires_at: 'expires_at_ms',
-    updated_at: 'updated_at_ms',
-  }),
+  tenant_platform_subscriptions: Object.freeze({ started_at: 'started_at_ms', expires_at: 'expires_at_ms', updated_at: 'updated_at_ms' }),
   tenant_ai_usage_monthly: Object.freeze({ updated_at: 'updated_at_ms' }),
 })
 
 function asObject(value: unknown): CompatQueryBody {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? { ...(value as CompatQueryBody) }
-    : {}
+  return value && typeof value === 'object' && !Array.isArray(value) ? { ...(value as CompatQueryBody) } : {}
 }
 
 function mapColumn(table: string, column: unknown): unknown {
@@ -82,17 +71,12 @@ function rewriteFilters(table: string, value: unknown): unknown {
     if (!filter || typeof filter !== 'object' || Array.isArray(filter)) return filter
     const next = { ...(filter as Record<string, unknown>) }
     next.column = mapColumn(table, next.column)
-
     if (next.op === 'or' && typeof next.expression === 'string') {
-      next.expression = next.expression
-        .split(',')
-        .map((part) => {
-          const trimmed = part.trim()
-          const match = /^([A-Za-z_][A-Za-z0-9_]*)(\..*)$/.exec(trimmed)
-          if (!match) return trimmed
-          return `${String(mapColumn(table, match[1]))}${match[2]}`
-        })
-        .join(',')
+      next.expression = next.expression.split(',').map((part) => {
+        const trimmed = part.trim()
+        const match = /^([A-Za-z_][A-Za-z0-9_]*)(\..*)$/.exec(trimmed)
+        return match ? `${String(mapColumn(table, match[1]))}${match[2]}` : trimmed
+      }).join(',')
     }
     return next
   })
@@ -108,20 +92,46 @@ function rewriteOrders(table: string, value: unknown): unknown {
   })
 }
 
+function normalizeLegacyPetRow(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const raw = value as Record<string, unknown>
+  const next: Record<string, unknown> = {
+    id: raw.id,
+    tenant_id: raw.tenant_id,
+    module_id: raw.module_id,
+    client_id: raw.client_id,
+    name: raw.name ?? raw.pet_name,
+    species: raw.species ?? raw.pet_species,
+    breed: raw.breed ?? raw.pet_breed,
+    birth_date: raw.birth_date ?? raw.pet_birth_date,
+    weight_kg: raw.weight_kg ?? raw.pet_weight,
+    color: raw.color,
+    notes: raw.notes ?? raw.pet_notes,
+    status: raw.status,
+    created_at: raw.created_at,
+    updated_at: raw.updated_at,
+  }
+  return Object.fromEntries(Object.entries(next).filter(([, entry]) => entry !== undefined))
+}
+
+function normalizeLegacyPetWrite(table: string, action: string, payload: unknown): unknown {
+  if (table !== 'pets' || !['insert', 'upsert'].includes(action)) return payload
+  return Array.isArray(payload) ? payload.map(normalizeLegacyPetRow) : normalizeLegacyPetRow(payload)
+}
+
 export function normalizeBaseCompatQueryBody(value: unknown): CompatQueryBody {
   const body = asObject(value)
   const table = typeof body.table === 'string' ? body.table : ''
+  const action = typeof body.action === 'string' ? body.action : ''
   body.filters = rewriteFilters(table, body.filters)
   body.orders = rewriteOrders(table, body.orders)
+  body.payload = normalizeLegacyPetWrite(table, action, body.payload)
 
+  if (typeof body.conflict !== 'string' && typeof body.onConflict === 'string') body.conflict = body.onConflict
   if (typeof body.conflict === 'string') {
-    body.conflict = body.conflict
-      .split(',')
-      .map((column) => column.trim())
-      .filter((column, index, all) =>
-        column && column !== 'tenant_id' && column !== 'module_id' && all.indexOf(column) === index,
-      )
-      .join(',')
+    body.conflict = body.conflict.split(',').map((column) => column.trim()).filter((column, index, all) =>
+      column && column !== 'tenant_id' && column !== 'module_id' && all.indexOf(column) === index,
+    ).join(',')
   }
 
   return body
@@ -129,56 +139,28 @@ export function normalizeBaseCompatQueryBody(value: unknown): CompatQueryBody {
 
 async function prepareBaseCompatRequest(request: Request): Promise<{ request: Request; body: CompatQueryBody | null }> {
   const path = new URL(request.url).pathname
-  if (path !== '/api/compat/query' || request.method !== 'POST') {
-    return { request, body: null }
-  }
+  if (path !== '/api/compat/query' || request.method !== 'POST') return { request, body: null }
 
   let parsed: unknown
-  try {
-    parsed = await request.clone().json()
-  } catch {
-    return { request, body: null }
-  }
+  try { parsed = await request.clone().json() } catch { return { request, body: null } }
 
   const body = normalizeBaseCompatQueryBody(parsed)
   const headers = new Headers(request.headers)
   headers.set('content-type', 'application/json')
-  return {
-    request: new Request(request.url, {
-      method: request.method,
-      headers,
-      body: JSON.stringify(body),
-    }),
-    body,
-  }
+  return { request: new Request(request.url, { method: request.method, headers, body: JSON.stringify(body) }), body }
 }
 
-async function normalizeOptionalSingletonResponse(
-  body: CompatQueryBody | null,
-  response: Response | null,
-): Promise<Response | null> {
+async function normalizeOptionalSingletonResponse(body: CompatQueryBody | null, response: Response | null): Promise<Response | null> {
   if (!body || !response || response.status !== 406) return response
   if (body.table !== 'billing_settings' || body.mode !== 'single') return response
-
   let payload: unknown
-  try {
-    payload = await response.clone().json()
-  } catch {
-    return response
-  }
+  try { payload = await response.clone().json() } catch { return response }
   const objectPayload = asObject(payload)
   if (objectPayload.code !== 'ROW_NOT_SINGLE' || Number(objectPayload.count) !== 0) return response
-
-  return Response.json(
-    { data: null, count: 0 },
-    { status: 200, headers: { 'cache-control': 'no-store' } },
-  )
+  return Response.json({ data: null, count: 0 }, { status: 200, headers: { 'cache-control': 'no-store' } })
 }
 
-export async function handleCompatApiRequest(
-  request: Request,
-  env: CompatRuntimeBindings,
-): Promise<Response | null> {
+export async function handleCompatApiRequest(request: Request, env: CompatRuntimeBindings): Promise<Response | null> {
   const directCompletionResponse = await handleCompletedAppointmentCompletionQueryCompat(request, env)
   if (directCompletionResponse) return directCompletionResponse
   const directReopenResponse = await handleCompletedAppointmentReopenQueryCompat(request, env)
@@ -202,13 +184,6 @@ export async function handleCompatApiRequest(
   return normalizeOptionalSingletonResponse(prepared.body, response)
 }
 
-export const COMPAT_TABLE_NAMES = Object.freeze([
-  ...BASE_COMPAT_TABLE_NAMES,
-  ...DEFERRED_COMPAT_TABLE_NAMES,
-])
-export const COMPAT_RPC_NAMES = Object.freeze([
-  ...OPERATIONAL_COMPAT_RPC_NAMES,
-  ...SUBSCRIPTION_COMPAT_RPC_NAMES,
-  ...DEFERRED_COMPAT_RPC_NAMES,
-])
+export const COMPAT_TABLE_NAMES = Object.freeze([...BASE_COMPAT_TABLE_NAMES, ...DEFERRED_COMPAT_TABLE_NAMES])
+export const COMPAT_RPC_NAMES = Object.freeze([...OPERATIONAL_COMPAT_RPC_NAMES, ...SUBSCRIPTION_COMPAT_RPC_NAMES, ...DEFERRED_COMPAT_RPC_NAMES])
 export type { CompatRuntimeBindings } from './compatApiRuntime.js'
