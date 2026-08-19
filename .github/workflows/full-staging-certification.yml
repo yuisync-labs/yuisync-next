@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   issues: write
 
 concurrency:
@@ -17,7 +18,7 @@ jobs:
     name: Resolve exact release SHA
     if: github.event.label.name == 'staging-certification-authorized'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     outputs:
       release_sha: ${{ steps.gates.outputs.release_sha }}
     steps:
@@ -25,6 +26,8 @@ jobs:
         with:
           fetch-depth: 0
       - id: gates
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -40,8 +43,12 @@ jobs:
           execFileSync('git', ['fetch', 'origin', 'main'], { stdio: 'inherit' })
           const currentMain = execFileSync('git', ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim().toLowerCase()
           if (release !== currentMain) throw new Error(`RELEASE_NOT_CURRENT_MAIN:${release}:${currentMain}`)
+          const repo = process.env.GITHUB_REPOSITORY
+          const payload = JSON.parse(execFileSync('gh', ['api', `repos/${repo}/actions/workflows/quality.yml/runs`, '-f', `head_sha=${release}`, '-f', 'status=success', '-f', 'per_page=20', '-X', 'GET'], { encoding: 'utf8', env: process.env }))
+          const quality = (payload.workflow_runs || []).filter((run) => run.head_sha === release && run.conclusion === 'success')
+          if (!quality.length) throw new Error('EXACT_SHA_QUALITY_REQUIRED')
           await appendFile(process.env.GITHUB_OUTPUT, `release_sha=${release}\n`)
-          console.log(JSON.stringify({ status: 'staging-certification-authorized', release_sha: release }))
+          console.log(JSON.stringify({ status: 'staging-certification-authorized', release_sha: release, exact_sha_quality_runs: quality.length }))
           NODE
 
       - name: Publish run start to authorization issue
@@ -52,13 +59,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Staging certification started\n\n- Release-SHA: \`$RELEASE_SHA\`\n- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\n- Attempt: \`$GITHUB_RUN_ATTEMPT\`\n\nThis run is staging-only."
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Fast staging certification started\n\n- Release-SHA: \`$RELEASE_SHA\`\n- Exact-SHA Quality: already passed\n- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\n\nThis run validates only the real Cloudflare staging surface; it does not repeat the full code test suite."
 
   certify:
     name: Certify real Cloudflare staging
     needs: preflight
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 25
     environment: cloudflare-staging
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -85,13 +92,7 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
 
-      - run: npm ci
-
-      - name: Validate compatibility and Edge runtime
-        run: |
-          npm run check:no-runtime-supabase
-          npm run check:edge-compat-surface -- --strict
-          npm run edge:check
+      - run: npm ci --no-audit --fund=false
 
       - name: Capture pre-migration staging D1 bookmarks
         working-directory: apps/edge-api
@@ -124,7 +125,7 @@ jobs:
           console.log(JSON.stringify({ status: 'staging-schema-ready', schema_version: version }))
           NODE
 
-      - name: Build SPA for same commit
+      - name: Build deploy artifact for exact commit
         run: npm run build
 
       - name: Deploy exact release to staging
@@ -177,11 +178,12 @@ jobs:
             throw new Error('CERTIFICATION_NOT_CERTIFIED')
           }
           const release = {
-            schema: 'yuisync-staging-release-evidence/v2',
+            schema: 'yuisync-staging-release-evidence/v3-fast',
             release_sha: process.env.RELEASE_SHA,
             runtime_schema: 30,
             certification_run_id: certification.run_id,
             certification_schema: certification.schema,
+            quality_gate: 'exact-sha-success',
           }
           await writeFile('.artifacts/staging-certification/release.json', `${JSON.stringify(release, null, 2)}\n`)
           NODE
@@ -198,15 +200,12 @@ jobs:
       - name: Certification summary
         if: success()
         run: |
-          echo '## Full Cloudflare staging certification' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Certification schema: v6 / runtime schema v30' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Required checks: 26/26' >> "$GITHUB_STEP_SUMMARY"
-          echo "- Evidence release SHA: $RELEASE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo '## Fast Cloudflare staging certification' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Exact-SHA Quality: trusted, not rerun' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Runtime schema: v30' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Remote checks: 26/26' >> "$GITHUB_STEP_SUMMARY"
           echo '- Browser E2E: real Worker + Better Auth + admin/manager/member' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Realtime WebSocket: authenticated tenant-scoped mutation invalidation passed' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Better Auth sign-in: real remote probe' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Tenant isolation: real authenticated remote probe' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Queue: real canary + idempotent rerun' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Realtime WebSocket: authenticated tenant-scoped invalidation passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- D1 + AUTH_DB pre-migration bookmarks: captured' >> "$GITHUB_STEP_SUMMARY"
           echo '- Production/cutover: untouched' >> "$GITHUB_STEP_SUMMARY"
 
@@ -220,15 +219,14 @@ jobs:
         run: |
           set -euo pipefail
           body=$(cat <<EOF
-          Staging certification result
+          Fast staging certification result
 
           - Release-SHA: \`$RELEASE_SHA\`
           - Runtime schema target: \`30\`
           - Result: **$JOB_STATUS**
           - Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
-          - Attempt: \`$GITHUB_RUN_ATTEMPT\`
 
-          This result is staging-only and does not authorize production.
+          Exact-SHA Quality was required before this run; the full code suite was not duplicated here.
           EOF
           )
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
