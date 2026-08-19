@@ -277,6 +277,7 @@ function ResolvedAgendaOperations({ setPage }) {
     let reloadPending = false
     let lastUnresolvedSignature = ''
     let unresolvedAttempts = 0
+    let dragMoveFrame = 0
 
     const syncDate = () => {
       const parsed = parseAgendaDate(pageRoot.querySelector('.page-sub')?.textContent || '')
@@ -292,16 +293,17 @@ function ResolvedAgendaOperations({ setPage }) {
     const slots = () => pageRoot.querySelectorAll('button[aria-label^="Agendar as "]')
 
     const clearDropHighlight = () => {
-      pageRoot.querySelectorAll('[data-yuisync-drop-active]').forEach((slot) => {
-        slot.removeAttribute('data-yuisync-drop-active')
-      })
+      pageRoot.querySelector('[data-yuisync-drop-active]')?.removeAttribute('data-yuisync-drop-active')
     }
 
     const setActiveSlot = (slot) => {
-      clearDropHighlight()
+      const state = dragRef.current
+      if (state?.slot === slot) return
+      state?.slot?.removeAttribute('data-yuisync-drop-active')
+      if (state) state.slot = null
       if (!slot || !isDailyAgenda()) return
       slot.dataset.yuisyncDropActive = 'true'
-      if (dragRef.current) dragRef.current.slot = slot
+      if (state) state.slot = slot
     }
 
     const stopAutoScroll = () => {
@@ -309,13 +311,69 @@ function ResolvedAgendaOperations({ setPage }) {
       autoScrollFrameRef.current = 0
     }
 
+    const stopDragMove = () => {
+      if (dragMoveFrame) cancelAnimationFrame(dragMoveFrame)
+      dragMoveFrame = 0
+    }
+
     const resetDrag = () => {
       stopAutoScroll()
+      stopDragMove()
+      const state = dragRef.current
+      if (state?.pointerId != null && state.card?.hasPointerCapture?.(state.pointerId)) {
+        state.card.releasePointerCapture(state.pointerId)
+      }
       dragRef.current?.ghost?.remove()
       dragRef.current?.card?.classList.remove('is-yuisync-pointer-dragging')
       dragRef.current = null
       document.body.style.userSelect = ''
+      document.body.classList.remove('yuisync-agenda-is-dragging')
       clearDropHighlight()
+    }
+
+    const updateDragVisuals = () => {
+      dragMoveFrame = 0
+      const state = dragRef.current
+      if (!state?.active || !state.ghost) return
+
+      const left = state.clientX - state.ghostOffsetX
+      const top = state.clientY - state.ghostOffsetY
+      state.ghost.style.transform = `translate3d(${left}px, ${top}px, 0) scale(1.012)`
+      setActiveSlot(chooseAgendaSlot(slots(), state.clientX, state.clientY))
+    }
+
+    const scheduleDragVisuals = () => {
+      if (dragMoveFrame) return
+      dragMoveFrame = requestAnimationFrame(updateDragVisuals)
+    }
+
+    const settleDrop = (state, slot) => {
+      stopAutoScroll()
+      stopDragMove()
+      state.slot?.removeAttribute('data-yuisync-drop-active')
+      if (state.pointerId != null && state.card?.hasPointerCapture?.(state.pointerId)) {
+        state.card.releasePointerCapture(state.pointerId)
+      }
+      dragRef.current = null
+      document.body.style.userSelect = ''
+      document.body.classList.remove('yuisync-agenda-is-dragging')
+
+      if (!state.ghost || !slot) {
+        state.ghost?.remove()
+        state.card?.classList.remove('is-yuisync-pointer-dragging')
+        return
+      }
+
+      const target = slot.getBoundingClientRect()
+      slot.dataset.yuisyncDropCommitting = 'true'
+      state.ghost.classList.add('is-dropping')
+      state.ghost.style.transform = `translate3d(${target.left + 8}px, ${target.top + 2}px, 0) scale(0.94)`
+      state.ghost.style.opacity = '0'
+      window.setTimeout(() => {
+        state.ghost?.remove()
+        state.card?.classList.remove('is-yuisync-pointer-dragging')
+        slot.removeAttribute('data-yuisync-drop-committing')
+      }, 170)
     }
 
     const autoScrollTick = () => {
@@ -325,8 +383,8 @@ function ResolvedAgendaOperations({ setPage }) {
         return
       }
 
-      const margin = 86
-      const maxSpeed = 18
+      const margin = 92
+      const maxSpeed = 15
       const scrollParent = state.scrollParent
       let top = 0
       let bottom = window.innerHeight
@@ -337,8 +395,14 @@ function ResolvedAgendaOperations({ setPage }) {
       }
 
       let delta = 0
-      if (state.clientY < top + margin) delta = -Math.ceil(maxSpeed * (1 - Math.max(0, state.clientY - top) / margin))
-      if (state.clientY > bottom - margin) delta = Math.ceil(maxSpeed * (1 - Math.max(0, bottom - state.clientY) / margin))
+      if (state.clientY < top + margin) {
+        const intensity = 1 - Math.max(0, state.clientY - top) / margin
+        delta = -Math.ceil(maxSpeed * intensity * intensity)
+      }
+      if (state.clientY > bottom - margin) {
+        const intensity = 1 - Math.max(0, bottom - state.clientY) / margin
+        delta = Math.ceil(maxSpeed * intensity * intensity)
+      }
 
       if (delta !== 0) {
         if (scrollParent && scrollParent !== document.scrollingElement && scrollParent !== document.documentElement) {
@@ -346,7 +410,7 @@ function ResolvedAgendaOperations({ setPage }) {
         } else {
           window.scrollBy(0, delta)
         }
-        setActiveSlot(chooseAgendaSlot(slots(), state.clientX, state.clientY))
+        scheduleDragVisuals()
       }
 
       autoScrollFrameRef.current = requestAnimationFrame(autoScrollTick)
@@ -557,9 +621,12 @@ function ResolvedAgendaOperations({ setPage }) {
         startY: event.clientY,
         clientX: event.clientX,
         clientY: event.clientY,
+        pointerId: event.pointerId,
         active: false,
         slot: null,
         ghost: null,
+        ghostOffsetX: 44,
+        ghostOffsetY: 24,
         scrollParent: findScrollableAncestor(card),
       }
     }
@@ -576,6 +643,8 @@ function ResolvedAgendaOperations({ setPage }) {
         state.active = true
         state.card.classList.add('is-yuisync-pointer-dragging')
         const rect = state.card.getBoundingClientRect()
+        state.ghostOffsetX = Math.min(Math.max(event.clientX - rect.left, 28), Math.max(28, Math.min(rect.width - 28, 64)))
+        state.ghostOffsetY = Math.min(Math.max(event.clientY - rect.top, 18), Math.max(18, Math.min(rect.height - 18, 48)))
         const ghost = state.card.cloneNode(true)
         ghost.querySelectorAll('[data-yuisync-resolved-actions]').forEach((node) => node.remove())
         ghost.classList.add('yuisync-resolved-drag-ghost')
@@ -583,14 +652,14 @@ function ResolvedAgendaOperations({ setPage }) {
         ghost.style.height = `${Math.min(rect.height, 180)}px`
         document.body.appendChild(ghost)
         state.ghost = ghost
+        state.card.setPointerCapture?.(state.pointerId)
         document.body.style.userSelect = 'none'
+        document.body.classList.add('yuisync-agenda-is-dragging')
         autoScrollFrameRef.current = requestAnimationFrame(autoScrollTick)
       }
 
       event.preventDefault()
-      state.ghost.style.left = `${event.clientX - Math.min(48, state.ghost.offsetWidth / 3)}px`
-      state.ghost.style.top = `${event.clientY - 25}px`
-      setActiveSlot(chooseAgendaSlot(slots(), event.clientX, event.clientY))
+      scheduleDragVisuals()
     }
 
     const onPointerUp = (event) => {
@@ -606,7 +675,7 @@ function ResolvedAgendaOperations({ setPage }) {
       const time = slotTimeFromAria(slot)
       const id = state.id
       lastDragAtRef.current = Date.now()
-      resetDrag()
+      settleDrop(state, slot)
       if (id && time) void moveAppointment(id, time)
     }
 
@@ -671,6 +740,7 @@ function ResolvedAgendaOperations({ setPage }) {
 
     return () => {
       if (syncFrame) cancelAnimationFrame(syncFrame)
+      stopDragMove()
       if (reloadTimer) window.clearTimeout(reloadTimer)
       observer.disconnect()
       pageRoot.removeEventListener('pointerdown', onPointerDown)

@@ -26,6 +26,7 @@ import {
   PETSHOP_DELIVERY_STAFF_TEMPLATE_KEY,
   resolvePetshopServiceDuration,
 } from '../../../../shared/petshopOperations'
+import './AgendaPage.css'
 import {
   appointmentServiceCodes,
   appointmentServiceGroup,
@@ -1301,12 +1302,12 @@ function AgendaTimelineView({
           </div>
           <div className="flex items-center gap-2 text-xs text-muted">
             <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
-            Largura adaptativa · agendamentos livres
+            Horários disponíveis
           </div>
         </div>
 
         <div className="overflow-x-auto">
-          <div className="min-w-[860px] grid" style={{ gridTemplateColumns: '76px minmax(0, 1fr)' }}>
+          <div className="yuisync-agenda-daily-grid grid" style={{ gridTemplateColumns: '76px minmax(0, 1fr)' }}>
             <div className="relative bg-surface/35" style={{ height: timelineHeight }}>
               {slots.map((minute, index) => (
                 <div
@@ -1406,7 +1407,7 @@ function AgendaTimelineView({
         </div>
         <div className="flex items-center gap-2 text-xs text-muted">
           <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
-          Largura adaptativa · agendamentos livres
+          Horários disponíveis
         </div>
       </div>
 
@@ -1515,7 +1516,7 @@ export default function AgendaPage({ setPage }) {
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [modal, setModal]           = useState(null)   // null | {} | {appt}
   const [receipt, setReceipt]       = useState(null) // appt to print
-  const [view, setView]             = useState('list')  // 'list' | 'kanban' | 'agenda'
+  const view = 'agenda'
   const [agendaPeriod, setAgendaPeriod] = useState('day') // 'day' | 'week'
   const [filterStatus, setFilterStatus] = useState('')
   const [search, setSearch]         = useState('')
@@ -1613,9 +1614,9 @@ export default function AgendaPage({ setPage }) {
   }
 
   return (
-    <div className="page animate-fade-up">
+    <div className="page animate-fade-up yuisync-agenda-page">
       {/* Header */}
-      <div className="page-header">
+      <div className="page-header yuisync-agenda-header">
         <div>
           <h1 className="page-title flex items-center gap-2">
             <Calendar size={22} className="text-amber-400"/> Agenda
@@ -1625,7 +1626,7 @@ export default function AgendaPage({ setPage }) {
             {isToday && <span className="ml-2 badge badge-amber text-[10px]">Hoje</span>}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 yuisync-agenda-header-actions">
           <button type="button" onClick={() => setPage?.('pets')} className="btn btn-secondary"><PawPrint size={15}/> Clientes & Pets</button>
           <button onClick={() => setModal({ serviceGroup: activeAgendaTab })} className="btn btn-primary">
             <Plus size={16}/> Novo Agendamento
@@ -1634,23 +1635,23 @@ export default function AgendaPage({ setPage }) {
       </div>
 
       {/* Stats do dia */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 yuisync-agenda-stats">
         {[
           { label: 'Total',        value: stats.total,        cls: 'text-text'       },
-          { label: 'Agendados',    value: stats.agendado,     cls: 'text-amber-400'  },
-          { label: 'Confirmados',  value: stats.confirmado,   cls: 'text-amber-400'   },
-          { label: 'Em andamento', value: stats.em_andamento, cls: 'text-violet-400' },
-          { label: 'Concluídos',   value: stats.concluido,    cls: 'text-emerald-400'},
-          { label: 'Cancelados',   value: stats.cancelado,    cls: 'text-red-400'    },
+          { label: 'Agendados',    value: stats.agendado,     cls: 'text-[var(--ui-warning-fg)]' },
+          { label: 'Confirmados',  value: stats.confirmado,   cls: 'text-[var(--ui-info-fg)]' },
+          { label: 'Em andamento', value: stats.em_andamento, cls: 'text-[var(--ui-progress-fg)]' },
+          { label: 'Concluídos',   value: stats.concluido,    cls: 'text-[var(--ui-success-fg)]' },
+          { label: 'Cancelados',   value: stats.cancelado,    cls: 'text-[var(--ui-danger-fg)]' },
         ].map(s => (
-          <div key={s.label} className="bg-card border border-[var(--border)] rounded-xl p-3 text-center">
+          <div key={s.label} className="bg-card border border-[var(--border)] rounded-xl p-3 text-center yuisync-agenda-stat">
             <p className={`font-display font-bold text-2xl ${s.cls}`}>{s.value}</p>
             <p className="text-xs text-muted mt-0.5">{s.label}</p>
           </div>
         ))}
       </div>
 
-      <div className="flex flex-wrap gap-2 bg-card border border-[var(--border)] rounded-xl p-1 w-fit max-w-full">
+      <div className="flex flex-wrap gap-2 bg-card border border-[var(--border)] rounded-xl p-1 w-fit max-w-full yuisync-agenda-tabs">
         {AGENDA_TABS.map(tab => {
           const Icon = tab.icon
           const active = activeAgendaTab === tab.id
@@ -1659,7 +1660,7 @@ export default function AgendaPage({ setPage }) {
               key={tab.id}
               onClick={() => setActiveAgendaTab(tab.id)}
               className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-colors ${
-                active ? 'bg-amber-500 text-gray-950' : 'text-muted hover:text-text hover:bg-white/5'
+                active ? 'bg-[var(--primary)] text-[var(--primary-contrast)]' : 'text-muted hover:text-text hover:bg-white/5'
               }`}
             >
               <Icon size={14}/>
@@ -1673,16 +1674,16 @@ export default function AgendaPage({ setPage }) {
       </div>
 
       {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3 yuisync-agenda-controls">
         {/* Date Navigator */}
-        <div className="flex items-center gap-1 bg-card border border-[var(--border)] rounded-xl p-1">
+        <div className="flex items-center gap-1 bg-card border border-[var(--border)] rounded-xl p-1 yuisync-agenda-date-nav">
           <button aria-label="Dia anterior" title="Dia anterior" onClick={() => setSelectedDate(d => addDays(d,-1))}
             className="btn btn-ghost btn-sm btn-icon">
             <ChevronLeft size={15}/>
           </button>
           <button onClick={() => setSelectedDate(new Date())}
             className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
-              isToday ? 'text-amber-400 bg-amber-500/10' : 'text-muted hover:text-text'
+              isToday ? 'text-[var(--primary)] bg-[var(--primary-bg-light)]' : 'text-muted hover:text-text'
             }`}>
             {selectedDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
           </button>
@@ -1693,36 +1694,20 @@ export default function AgendaPage({ setPage }) {
         </div>
 
         {/* Search */}
-        <div className="relative flex-1 min-w-[200px]">
+        <div className="relative flex-1 min-w-[200px] yuisync-agenda-search">
           <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted"/>
           <input aria-label="Buscar pet ou tutor" className="inp pl-9 py-2" placeholder="Buscar pet, tutor..."
             value={search} onChange={e => setSearch(e.target.value)}/>
         </div>
 
         {/* Status filter */}
-        <select aria-label="Filtrar por status" className="inp py-2 w-auto" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+        <select aria-label="Filtrar por status" className="inp py-2 w-auto yuisync-agenda-status-filter" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
           <option value="">Todos os status</option>
           {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
 
-        {/* View toggle */}
-        <div className="flex bg-card border border-[var(--border)] rounded-xl p-1">
-          {[
-            { id:'list',   label:'Lista'  },
-            { id:'agenda', label:'Agenda' },
-            { id:'kanban', label:'Kanban' },
-          ].map(v => (
-            <button key={v.id} onClick={() => setView(v.id)}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                view === v.id ? 'bg-amber-500 text-gray-950' : 'text-muted hover:text-text'
-              }`}>
-              {v.label}
-            </button>
-          ))}
-        </div>
-
         {view === 'agenda' && (
-          <div className="flex bg-card border border-[var(--border)] rounded-xl p-1">
+          <div className="flex bg-card border border-[var(--border)] rounded-xl p-1 yuisync-agenda-period-toggle">
             {[
               { id: 'day', label: 'Diaria' },
               { id: 'week', label: 'Semanal' },
@@ -1732,7 +1717,7 @@ export default function AgendaPage({ setPage }) {
                 type="button"
                 onClick={() => setAgendaPeriod(period.id)}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  agendaPeriod === period.id ? 'bg-amber-500 text-gray-950' : 'text-muted hover:text-text'
+                  agendaPeriod === period.id ? 'bg-[var(--primary)] text-[var(--primary-contrast)]' : 'text-muted hover:text-text'
                 }`}
               >
                 {period.label}
@@ -1742,12 +1727,16 @@ export default function AgendaPage({ setPage }) {
         )}
 
         <button onClick={reloadCurrentView}
-          className="btn btn-ghost btn-sm btn-icon" title="Atualizar">
+          className="btn btn-ghost btn-sm btn-icon yuisync-agenda-refresh" title="Atualizar">
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''}/>
         </button>
       </div>
 
       {/* Content */}
+      <div
+        key={`${view}-${agendaPeriod}-${isoDate(selectedDate)}-${activeAgendaTab}`}
+        className="yuisync-agenda-view-transition"
+      >
       {loading ? (
         <div className="flex items-center justify-center py-16 text-muted text-sm">
           <RefreshCw size={16} className="animate-spin mr-2"/> Carregando...
@@ -1884,6 +1873,7 @@ export default function AgendaPage({ setPage }) {
           })}
         </div>
       )}
+      </div>
 
       {/* Modals */}
       {modal !== null && (

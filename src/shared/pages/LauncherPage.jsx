@@ -5,6 +5,7 @@ import { useModuleCtx } from '../../context/ModuleContext'
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight, LogOut, Shield } from 'lucide-react'
 import StarField from '../components/StarField'
+import YuiSyncMark from '../../public/components/YuiSyncMark'
 
 // Uma página sem Sidebar, que apenas mostra os "Apps" que o usuário tem acesso.
 export default function LauncherPage() {
@@ -42,41 +43,11 @@ export default function LauncherPage() {
       <div className="w-full max-w-5xl relative z-10">
         <div className="text-center mb-10 animate-in fade-in slide-in-from-top-10 duration-1000">
           <div className="relative mb-6 flex justify-center">
-             <div className="absolute -inset-8 bg-blue-500/10 blur-3xl rounded-full" />
-             <svg width="120" height="48" viewBox="0 0 100 40" fill="none" className="text-blue-500 relative overflow-visible">
-               {/* Brilho de fundo (Nebulosa Tech) */}
-               <circle cx="80" cy="20" r="18" fill="currentColor" className="opacity-10 animate-glow-soft" />
-               
-               {/* Linha Principal (Fluxo Pulsante/Respiro) */}
-               <path d="M5 20 H80" stroke="currentColor" strokeWidth="6" strokeLinecap="round" className="opacity-20" />
-               <path d="M5 20 H80" stroke="currentColor" strokeWidth="6" strokeLinecap="round" 
-                 className="animate-neon-breath" 
-               />
-
-               {/* Disparos de Energia ("Tiro" acelerado) */}
-               {[0, 1].map(i => (
-                 <circle key={i} r="1.5" fill="white" className="animate-mote-shot" 
-                   style={{ 
-                     offsetPath: "path('M5 20 H80')",
-                     animationDelay: `${i * 1.2}s` 
-                   }}
-                 />
-               ))}
-
-               {/* Partículas Orbitais (Sistema Ativo) */}
-               {[0, 1, 2].map(i => (
-                 <circle key={i} cx="80" cy="20" r="1.5" fill="currentColor" className="animate-particle" 
-                   style={{ animationDelay: `${i * 2.1}s` }}
-                 />
-               ))}
-
-               {/* Nó Central Vivo */}
-               <circle cx="80" cy="20" r="8" stroke="currentColor" strokeWidth="2" fill="transparent" className="animate-pulse opacity-40 shadow-[0_0_20px_currentColor]" />
-               <circle cx="80" cy="20" r="3" fill="white" className="animate-pulse shadow-[0_0_25px_white]" />
-             </svg>
+             <div className="absolute -inset-8 rounded-full bg-white/[0.04] blur-3xl" />
+             <YuiSyncMark animated inverted orbit decorative className="relative h-24 w-24" />
           </div>
-          <h1 className="text-3xl md:text-4xl font-display font-black text-white tracking-[0.25em] uppercase mb-3">Plataforma YUI</h1>
-          <p className="text-muted text-[10px] font-bold uppercase tracking-[0.5em]">Central de Ecossistemas Conectados</p>
+          <h1 className="mb-3 font-display text-3xl font-black tracking-[-0.045em] text-white md:text-4xl">YuiSync</h1>
+          <p className="text-[10px] font-bold uppercase tracking-[0.26em] text-muted">Central de operações conectadas</p>
         </div>
 
         {/* Business Modules - Layout Flex otimizado para horizontalidade */}

@@ -18,7 +18,7 @@ import {
   UsersRound,
   X,
 } from 'lucide-react'
-import YuiMascot from '../components/YuiMascot'
+import YuiSyncMark from '../components/YuiSyncMark'
 import ConnectionSphere from '../components/ConnectionSphere'
 import MotionReveal from '../components/MotionReveal'
 import { PlatformGrid } from '../components/PlatformMotion'
@@ -156,7 +156,7 @@ function DesktopProductPreview() {
       <div className="overflow-hidden border border-slate-200 bg-[#0F1219] shadow-[0_28px_90px_rgba(24,28,45,0.16)]">
         <div className="flex items-center justify-between border-b border-white/[0.08] bg-[#11151D] px-4 py-3">
           <div className="flex items-center gap-2.5">
-            <YuiMascot inverted monochrome decorative className="h-5 w-5" />
+            <YuiSyncMark inverted decorative className="h-5 w-5" />
             <div>
               <p className="text-[11px] font-bold leading-none text-white">YuiSync</p>
               <p className="mt-1 text-[9px] font-medium text-white/45">Operação para petshops</p>
@@ -282,7 +282,7 @@ function MobileProductPreview() {
   return (
     <div className="overflow-hidden border border-slate-200 bg-[#0F1219] shadow-[0_24px_65px_rgba(24,28,45,0.18)]">
       <div className="flex items-center justify-between border-b border-white/[0.08] bg-[#11151D] px-4 py-3.5">
-        <div className="flex items-center gap-2.5"><YuiMascot inverted monochrome decorative className="h-6 w-6" /><div><p className="text-xs font-bold text-white">YuiSync</p><p className="text-[9px] text-white/45">Visualização adaptada</p></div></div>
+        <div className="flex items-center gap-2.5"><YuiSyncMark inverted decorative className="h-6 w-6" /><div><p className="text-xs font-bold text-white">YuiSync</p><p className="text-[9px] text-white/45">Visualização adaptada</p></div></div>
         <span className="rounded-full border border-white/10 px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-white/45">Demo</span>
       </div>
 
@@ -371,7 +371,7 @@ export default function PublicHomePageV2({ isAuthenticated = false }) {
       <header className="sticky top-0 z-50 border-b border-white/[0.08] bg-[#050505]/95 text-white backdrop-blur-xl">
         <div className="mx-auto flex h-[72px] max-w-7xl items-center justify-between px-5 sm:px-8">
           <Link to="/" className="flex items-center gap-2.5" aria-label="YuiSync">
-            <YuiMascot inverted monochrome className="h-8 w-8" />
+            <YuiSyncMark inverted className="h-8 w-8" />
             <span className="text-[16px] font-extrabold tracking-[-0.025em] text-white">YuiSync</span>
           </Link>
 
@@ -581,7 +581,7 @@ export default function PublicHomePageV2({ isAuthenticated = false }) {
 
         <section className="px-5 pb-8 sm:px-8">
           <MotionReveal className="mx-auto max-w-7xl overflow-hidden bg-[#090909] px-7 py-12 text-white sm:px-12 sm:py-14 lg:flex lg:items-end lg:justify-between lg:gap-12">
-            <div><YuiMascot animated inverted monochrome decorative className="h-11 w-11" /><h2 className="mt-7 max-w-2xl text-4xl font-extrabold leading-[1.05] tracking-[-0.04em] text-white sm:text-5xl">Sua operação pode trabalhar como um só sistema.</h2><p className="mt-5 max-w-xl text-base leading-7 text-white/60">Conheça o YuiSync e veja como conectar processos, pessoas e informação.</p></div>
+            <div><YuiSyncMark animated inverted decorative className="h-11 w-11" /><h2 className="mt-7 max-w-2xl text-4xl font-extrabold leading-[1.05] tracking-[-0.04em] text-white sm:text-5xl">Sua operação pode trabalhar como um só sistema.</h2><p className="mt-5 max-w-xl text-base leading-7 text-white/60">Conheça o YuiSync e veja como conectar processos, pessoas e informação.</p></div>
             <div className="mt-9 flex flex-wrap gap-3 lg:mt-0"><a href={DEMO_HREF} className="inline-flex items-center gap-2 rounded-lg bg-white px-5 py-3 text-sm font-bold text-black">Agendar demonstração <ArrowRight size={15} /></a><Link to="/vendas" className="inline-flex items-center rounded-lg border border-white/20 px-5 py-3 text-sm font-bold text-white">Ver planos</Link></div>
           </MotionReveal>
         </section>
@@ -590,7 +590,7 @@ export default function PublicHomePageV2({ isAuthenticated = false }) {
       <footer className="border-t border-black/[0.07] bg-white">
         <div className="mx-auto grid max-w-7xl gap-8 px-5 py-10 text-sm text-slate-500 sm:px-8 md:grid-cols-[1fr_auto] md:items-start">
           <div>
-            <div className="flex items-center gap-2.5"><YuiMascot monochrome decorative className="h-7 w-7" /><span className="font-bold text-slate-800">YuiSync</span><span className="text-slate-300">•</span><span>yuisync.app</span></div>
+            <div className="flex items-center gap-2.5"><YuiSyncMark decorative className="h-7 w-7" /><span className="font-bold text-slate-800">YuiSync</span><span className="text-slate-300">•</span><span>yuisync.app</span></div>
             <p className="mt-3 max-w-md text-xs leading-5 text-slate-500">Plataforma de operação conectada. Agenda, clientes, vendas, estoque e equipe trabalhando com o mesmo contexto.</p>
           </div>
           <div className="grid grid-cols-2 gap-x-12 gap-y-3 text-xs font-semibold sm:grid-cols-3">
