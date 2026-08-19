@@ -9,6 +9,7 @@ import {
 import { useAppointments } from '../../../shared/hooks/useAppointments'
 import { useClients }         from '../../../shared/hooks/useClients'
 import { useAuthCtx }      from '../../../context/AuthContext'
+import { Card } from '../../../components/ui'
 import { fmtCurrency, fmtTime, todayISO } from '../../../lib/supabase'
 import { printThermalReceipt } from '../../../lib/thermalPrint'
 import { usePetshopAdvanced } from '../hooks/usePetshopAdvanced'
@@ -1644,14 +1645,14 @@ export default function AgendaPage({ setPage }) {
           { label: 'Concluídos',   value: stats.concluido,    cls: 'text-[var(--ui-success-fg)]' },
           { label: 'Cancelados',   value: stats.cancelado,    cls: 'text-[var(--ui-danger-fg)]' },
         ].map(s => (
-          <div key={s.label} className="bg-card border border-[var(--border)] rounded-xl p-3 text-center yuisync-agenda-stat">
+          <Card key={s.label} className="p-3 text-center yuisync-agenda-stat">
             <p className={`font-display font-bold text-2xl ${s.cls}`}>{s.value}</p>
             <p className="text-xs text-muted mt-0.5">{s.label}</p>
-          </div>
+          </Card>
         ))}
       </div>
 
-      <div className="flex flex-wrap gap-2 bg-card border border-[var(--border)] rounded-xl p-1 w-fit max-w-full yuisync-agenda-tabs">
+      <Card className="flex w-fit max-w-full flex-wrap gap-2 p-1 yuisync-agenda-tabs">
         {AGENDA_TABS.map(tab => {
           const Icon = tab.icon
           const active = activeAgendaTab === tab.id
@@ -1671,12 +1672,12 @@ export default function AgendaPage({ setPage }) {
             </button>
           )
         })}
-      </div>
+      </Card>
 
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 yuisync-agenda-controls">
         {/* Date Navigator */}
-        <div className="flex items-center gap-1 bg-card border border-[var(--border)] rounded-xl p-1 yuisync-agenda-date-nav">
+        <Card className="flex items-center gap-1 p-1 yuisync-agenda-date-nav">
           <button aria-label="Dia anterior" title="Dia anterior" onClick={() => setSelectedDate(d => addDays(d,-1))}
             className="btn btn-ghost btn-sm btn-icon">
             <ChevronLeft size={15}/>
@@ -1691,7 +1692,7 @@ export default function AgendaPage({ setPage }) {
             className="btn btn-ghost btn-sm btn-icon">
             <ChevronRight size={15}/>
           </button>
-        </div>
+        </Card>
 
         {/* Search */}
         <div className="relative flex-1 min-w-[200px] yuisync-agenda-search">
@@ -1707,7 +1708,7 @@ export default function AgendaPage({ setPage }) {
         </select>
 
         {view === 'agenda' && (
-          <div className="flex bg-card border border-[var(--border)] rounded-xl p-1 yuisync-agenda-period-toggle">
+          <Card className="flex p-1 yuisync-agenda-period-toggle">
             {[
               { id: 'day', label: 'Diaria' },
               { id: 'week', label: 'Semanal' },
@@ -1723,7 +1724,7 @@ export default function AgendaPage({ setPage }) {
                 {period.label}
               </button>
             ))}
-          </div>
+          </Card>
         )}
 
         <button onClick={reloadCurrentView}
