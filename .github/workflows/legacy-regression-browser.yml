@@ -6,7 +6,9 @@ on:
       - 'test/e2e/legacy-regression-p0.spec.js'
       - 'playwright.legacy-regression.config.js'
       - '.github/workflows/legacy-regression-browser.yml'
+      - 'vite.config.js'
       - 'src/modules/petshop/**'
+      - 'src/shared/hooks/useClients.js'
       - 'apps/edge-api/**'
       - 'scripts/check-appointment-edit-semantics.mjs'
       - 'scripts/check-no-domain-state-from-dom.mjs'
@@ -84,8 +86,31 @@ jobs:
       - name: Create disposable staging tenant and users
         run: node scripts/migration/staging-e2e-fixtures.mjs setup
 
+      - name: Start PR frontend with staging API proxy
+        shell: bash
+        run: |
+          VITE_DEV_API_PROXY_TARGET="$YUISYNC_STAGING_URL" nohup npx vite --host 127.0.0.1 --port 3080 >/tmp/yuisync-legacy-vite.log 2>&1 &
+          echo "VITE_PID=$!" >> "$GITHUB_ENV"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3080/entrar >/dev/null; then
+              echo "PR frontend ready on localhost:3080"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/yuisync-legacy-vite.log
+          exit 1
+
       - name: Browser regression matrix
+        env:
+          E2E_BASE_URL: http://127.0.0.1:3080
         run: npx playwright test --config=playwright.legacy-regression.config.js
+
+      - name: Stop PR frontend
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${VITE_PID:-}" ]; then kill "$VITE_PID" 2>/dev/null || true; fi
 
       - name: Cleanup disposable staging tenant and users
         if: always()
