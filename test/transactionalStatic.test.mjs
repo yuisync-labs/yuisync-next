@@ -277,7 +277,7 @@ test('modo noturno e persistido e tem alternancia no menu', async () => {
   assert.match(router, /@yuisync-color-mode/)
   assert.match(router, /theme-\$\{activeModuleId\} \$\{darkMode \? 'theme-dark' : ''\}/)
   assert.match(sidebar, /aria-label=\{darkMode \? 'Ativar modo claro' : 'Ativar modo noturno'\}/)
-  assert.match(sidebar, /w-10 h-10/)
+  assert.equal((sidebar.match(/onClick=\{onToggleDarkMode\}/g) || []).length, 2)
   assert.match(styles, /\.theme-petshop\.theme-dark/)
   assert.match(styles, /#38BDF8/)
 })

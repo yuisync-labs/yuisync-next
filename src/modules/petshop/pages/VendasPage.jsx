@@ -17,6 +17,7 @@ import { assignSaleDeliveryStaff } from '../lib/deliveryOperations'
 import { printThermalReceipt } from '../../../lib/thermalPrint'
 import { ProductCategorySelect } from '../../../components/ProductCategorySelect'
 import { BASE_PRODUCT_CATEGORIES, resolveCategoryMeta } from '../../../shared/lib/productCategories'
+import './VendasPage.css'
 
 // ── Payment methods ───────────────────────────────────────────────────────────
 const PAYMENT_METHODS = [
@@ -971,16 +972,16 @@ export default function VendasPage() {
   }
 
   return (
-    <div className="animate-fade-up h-full min-h-0 flex flex-col">
+    <div className="animate-fade-up h-full min-h-0 flex flex-col yuisync-pos-shell">
       {tab !== 'caixa' && (
-      <div className="px-6 lg:px-8 pt-6 pb-4 flex-shrink-0">
+      <div className="px-6 lg:px-8 pt-6 pb-4 flex-shrink-0 yuisync-pos-header">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="page-title flex items-center gap-2">
               <ShoppingCart size={22} style={{ color: 'var(--primary)' }}/> Vendas / PDV
             </h1>
           </div>
-          <div className="hidden sm:flex items-center gap-4 text-right">
+          <div className="hidden sm:flex items-center gap-3 text-right yuisync-pos-day-summary">
             <div>
               <p className="text-xs text-muted">Hoje</p>
               <p className="font-display font-bold text-xl text-emerald-400">{fmtCurrency(dailyStats.revenue)}</p>
@@ -992,7 +993,7 @@ export default function VendasPage() {
           </div>
         </div>
 
-        <div className="flex bg-white/5 border border-white/5 rounded-xl p-1 w-fit">
+        <div className="flex bg-white/5 border border-white/5 rounded-xl p-1 w-fit yuisync-pos-tabs">
           <button onClick={() => setTab('pdv')}
             className={`flex items-center gap-2 px-5 py-2 text-xs font-bold rounded-lg transition-all ${
               tab === 'pdv' ? 'bg-primary text-gray-950 shadow-lg' : 'text-muted hover:text-text'
@@ -1123,8 +1124,8 @@ export default function VendasPage() {
           </div>
         </div>
       ) : (
-        <div className="flex-1 flex overflow-hidden min-h-0">
-          <div className="flex-1 flex flex-col overflow-hidden border-r border-[var(--border2)]">
+        <div className="flex-1 flex overflow-hidden min-h-0 yuisync-pos-workspace">
+          <div className="flex-1 flex flex-col overflow-hidden border-r border-[var(--border2)] yuisync-pos-catalog">
             {tab === 'caixa' ? (
               <CashierWorkspace
                 cart={cart}
@@ -1153,7 +1154,7 @@ export default function VendasPage() {
               />
             ) : (
               <>
-            <div className="px-4 py-3 border-b border-[var(--border2)] flex items-center gap-4">
+            <div className="px-4 py-3 border-b border-[var(--border2)] flex items-center gap-4 yuisync-pos-toolbar">
               <div className="relative flex-1">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"/>
                 <input aria-label="Buscar produto" className="inp pl-9" placeholder="Buscar produto..." value={search} onChange={e => setSearch(e.target.value)}/>
@@ -1168,7 +1169,7 @@ export default function VendasPage() {
               />
             </div>
             
-            <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-8">
+            <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-8 yuisync-pos-products">
               {selectedProducts.length > 0 && (
                 <div>
                   <h3 className="text-[10px] font-black uppercase tracking-widest text-[var(--primary)] mb-4 flex items-center gap-2">
@@ -1240,8 +1241,10 @@ export default function VendasPage() {
                   )}
                 </div>
                 {otherProducts.length === 0 ? (
-                  <div className="py-12 text-center">
-                    <p className="text-muted text-sm italic">Nenhum outro produto encontrado.</p>
+                  <div className="yuisync-pos-empty">
+                    <span><Package size={22}/></span>
+                    <p>Nenhum produto encontrado</p>
+                    <small>Use a busca ou altere a categoria para localizar um item.</small>
                   </div>
                 ) : (
                   <>
@@ -1287,10 +1290,20 @@ export default function VendasPage() {
             )}
           </div>
 
-          <div className="w-80 lg:w-96 min-h-0 flex flex-col bg-surface flex-shrink-0 border-l border-[var(--border2)]">
-            <div className="px-4 py-3 border-b border-[var(--border2)] font-display font-bold">{tab === 'caixa' ? 'Fechamento da venda' : 'Carrinho'}</div>
+          <div className="w-80 lg:w-96 min-h-0 flex flex-col bg-surface flex-shrink-0 border-l border-[var(--border2)] yuisync-pos-checkout">
+            <div className="px-4 py-3 border-b border-[var(--border2)] font-display font-bold yuisync-pos-checkout-heading">
+              <span>{tab === 'caixa' ? 'Fechamento da venda' : 'Resumo da venda'}</span>
+              <span>{cart.reduce((count, item) => count + Number(item.quantity || 0), 0)} itens</span>
+            </div>
             {tab !== 'caixa' && (
-              <div className="min-h-0 max-h-[42vh] overflow-y-auto px-4">{cart.map(item => <CartItem key={item.product_id} item={item} onQty={changeQty} onRemove={removeFromCart}/>)}</div>
+              <div className="min-h-0 max-h-[42vh] overflow-y-auto px-4 yuisync-pos-cart-list">
+                {cart.length > 0 ? cart.map(item => <CartItem key={item.product_id} item={item} onQty={changeQty} onRemove={removeFromCart}/>) : (
+                  <div className="yuisync-pos-cart-empty">
+                    <ShoppingCart size={19}/>
+                    <span>O carrinho está vazio</span>
+                  </div>
+                )}
+              </div>
             )}
             <div className="flex-1 min-h-0 overflow-y-auto p-4 border-t border-[var(--border2)] space-y-4">
               <div className="relative" ref={searchRef}>

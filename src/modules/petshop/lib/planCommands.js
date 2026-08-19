@@ -1,9 +1,19 @@
 import { supabase } from '../../../lib/supabase'
 import { applyTenantFilter, runWithTenantFallback } from '../../../lib/tenant'
+import { isVisualPreviewSession } from '../../../lib/visualPreview'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 
 async function nativeRequest(path, { tenantId, moduleId = 'petshop', ...options } = {}) {
+  if (isVisualPreviewSession()) {
+    if ((options.method || 'GET').toUpperCase() === 'GET') {
+      return path.includes('/subscriptions') ? { subscriptions: [] } : { plans: [] }
+    }
+    const previewError = new Error('O modo visual local não salva alterações.')
+    previewError.code = 'VISUAL_PREVIEW_READ_ONLY'
+    throw previewError
+  }
+
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     credentials: 'include',
