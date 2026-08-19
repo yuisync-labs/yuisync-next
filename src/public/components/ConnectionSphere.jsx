@@ -98,10 +98,10 @@ export default function ConnectionSphere() {
               rotationDirection="clockwise"
               dragSpeed={3}
               drag={!prefersReducedMotion && !isMobile}
-              cursorOn={false}
-              cursorRadiusUI={0}
-              cursorStrengthUI={0}
-              clickForce={0}
+              cursorOn={!prefersReducedMotion && !isMobile}
+              cursorRadiusUI={110}
+              cursorStrengthUI={4}
+              clickForce={1.5}
               sphereColor="#FFFFFF"
               style={{ width: '100%', height: '100%' }}
             />
