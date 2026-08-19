@@ -132,38 +132,6 @@ const applyClientSearch = (query, term, includePetFields = true) => {
   }, query)
 }
 
-const normalizeSpecies = (value) => {
-  const species = String(value || '').toLowerCase()
-  return ['dog', 'cat', 'bird', 'rabbit', 'fish', 'other'].includes(species) ? species : 'other'
-}
-
-async function syncPetRecord(client, moduleId) {
-  if (moduleId !== 'petshop' || !client?.id) return
-
-  const payload = {
-    id: client.id,
-    module_id: moduleId,
-    owner_name: client.owner_name || 'Cliente',
-    owner_cpf: client.owner_cpf || null,
-    phone: client.phone || 'sem telefone',
-    email: client.email || null,
-    owner_address: client.owner_address || null,
-    owner_neighborhood: client.owner_neighborhood || null,
-    owner_city: client.owner_city || null,
-    pet_name: client.pet_name || client.owner_name || 'Pet',
-    species: normalizeSpecies(client.species),
-    breed: client.breed || null,
-    birth_date: client.birth_date || null,
-    weight_kg: client.weight_kg || null,
-    color: client.color || null,
-    notes: client.notes || null,
-    updated_at: new Date().toISOString(),
-  }
-
-  const { error } = await supabase.from('pets').upsert(payload, { onConflict: 'id' })
-  if (error) throw error
-}
-
 export function useClients() {
   const [clients, setClients]   = useState([])
   const [loading, setLoading]   = useState(false)
@@ -242,11 +210,11 @@ export function useClients() {
       q = applyTenantFilter(q, activeTenantId, includeTenant)
       return q
     })
-    
-    if (!data) return null;
-    const petData = mapClientToPet(data);
-    petData.appointments = data.appointments;
-    return petData;
+
+    if (!data) return null
+    const petData = mapClientToPet(data)
+    petData.appointments = data.appointments
+    return petData
   }, [activeModuleId, activeTenantId])
 
   const create = useCallback(async (payload) => {
@@ -263,7 +231,6 @@ export function useClients() {
 
     if (error) throw error
     const newPet = mapClientToPet(data)
-    await syncPetRecord(newPet, activeModuleId)
     setClients(prev => [newPet, ...prev])
     return newPet
   }, [activeModuleId, activeTenantId])
@@ -271,8 +238,7 @@ export function useClients() {
   const update = useCallback(async (id, payload) => {
     if (!activeTenantId) throw new Error('Selecione uma empresa ativa antes de salvar o cliente.')
     const clientPayload = mapPetToClient(payload, activeModuleId)
-    // Avoid updating module_id
-    delete clientPayload.module_id; 
+    delete clientPayload.module_id
 
     const { data, error } = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
       let q = supabase
@@ -289,7 +255,6 @@ export function useClients() {
 
     if (error) throw error
     const updatedPet = mapClientToPet(data)
-    await syncPetRecord(updatedPet, activeModuleId)
     setClients(prev => prev.map(p => p.id === id ? updatedPet : p))
     return updatedPet
   }, [activeModuleId, activeTenantId])
