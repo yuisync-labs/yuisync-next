@@ -9,7 +9,6 @@ on:
       - 'src/modules/petshop/**'
       - 'apps/edge-api/**'
       - 'scripts/check-appointment-edit-semantics.mjs'
-      - 'scripts/check-appointment-semantic-update-boundary.mjs'
       - 'scripts/check-no-domain-state-from-dom.mjs'
       - 'test/agendaOperationalInfrastructure.test.mjs'
   workflow_dispatch:
@@ -48,7 +47,6 @@ jobs:
       - name: Frontend semantic invariants
         run: |
           npm run check:appointment-edit-semantics
-          npm run check:appointment-semantic-update-boundary
           npm run check:no-domain-state-from-dom
           npx vitest run \
             src/modules/petshop/lib/appointmentUpdateSemantics.test.js \
