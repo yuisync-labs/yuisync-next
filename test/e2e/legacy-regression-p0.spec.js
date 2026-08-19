@@ -25,6 +25,16 @@ function controlForLabel(scope, text) {
   return label.locator('..').locator('input, select, textarea').first()
 }
 
+async function selectOptionMatchingText(select, pattern) {
+  const options = await select.locator('option').evaluateAll((nodes) => nodes.map((node) => ({
+    value: node.value,
+    label: node.textContent || '',
+  })))
+  const match = options.find((option) => pattern.test(option.label))
+  expect(match, `Expected select option matching ${pattern}`).toBeTruthy()
+  await select.selectOption(match.value)
+}
+
 async function signIn(page) {
   const email = process.env.E2E_EMAIL
   const password = process.env.E2E_PASSWORD
@@ -145,7 +155,7 @@ async function createAndStartPackageSale(page) {
   await expect(modal).toBeVisible()
   await controlForLabel(modal, 'Nome de identificação').fill(packageName)
   await controlForLabel(modal, 'Preço do pacote').fill('149.90')
-  await controlForLabel(modal, 'Serviço real').selectOption({ label: new RegExp(escapeRegExp(serviceName)) })
+  await selectOptionMatchingText(controlForLabel(modal, 'Serviço real'), new RegExp(escapeRegExp(serviceName)))
   await controlForLabel(modal, 'Por ciclo').fill('2')
   await modal.getByRole('button', { name: /Salvar pacote/ }).click()
   await expect(modal).toBeHidden({ timeout: 15_000 })
@@ -154,7 +164,7 @@ async function createAndStartPackageSale(page) {
   await page.getByRole('button', { name: 'Vender pacote' }).click()
   modal = modalByTitle(page, 'Vender pacote ao cliente')
   await expect(modal).toBeVisible()
-  await controlForLabel(modal, 'Pacote').selectOption({ label: new RegExp(escapeRegExp(packageName)) })
+  await selectOptionMatchingText(controlForLabel(modal, 'Pacote'), new RegExp(escapeRegExp(packageName)))
   await modal.getByRole('button', { name: 'Pesquisar tutor ou pet' }).click()
   await modal.getByPlaceholder('Digite tutor, pet ou telefone...').fill(tutorName)
   await modal.getByRole('button', { name: new RegExp(escapeRegExp(tutorName)) }).first().click()
