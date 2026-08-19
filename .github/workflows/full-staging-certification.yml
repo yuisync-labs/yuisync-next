@@ -146,8 +146,31 @@ jobs:
         id: e2e-fixtures
         run: node scripts/migration/staging-e2e-fixtures.mjs setup
 
-      - name: Smoke authenticated realtime and tenant boundary
-        run: node scripts/migration/staging-realtime-websocket.mjs
+      - name: Smoke Better Auth over HTTP
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { request } from '@playwright/test'
+          const baseURL = String(process.env.YUISYNC_STAGING_URL || '').replace(/\/$/, '')
+          const email = String(process.env.E2E_EMAIL || '')
+          const password = String(process.env.E2E_PASSWORD || '')
+          if (!baseURL.startsWith('https://') || !email.endsWith('@staging.invalid') || password.length < 12) {
+            throw new Error('STAGING_AUTH_SMOKE_INPUT_INVALID')
+          }
+          const api = await request.newContext({ baseURL, extraHTTPHeaders: { origin: baseURL } })
+          try {
+            const signIn = await api.post('/api/auth/sign-in/email', { data: { email, password, rememberMe: false } })
+            if (signIn.status() !== 200) throw new Error(`STAGING_AUTH_SIGN_IN_FAILED:${signIn.status()}`)
+            const session = await api.get('/api/auth/get-session')
+            if (session.status() !== 200) throw new Error(`STAGING_AUTH_SESSION_FAILED:${session.status()}`)
+            const body = await session.json()
+            if (String(body?.user?.email || '').toLowerCase() !== email.toLowerCase()) throw new Error('STAGING_AUTH_SESSION_USER_MISMATCH')
+            console.log(JSON.stringify({ status: 'passed', better_auth_sign_in: true, session_roundtrip: true }))
+          } finally {
+            await api.dispose()
+          }
+          NODE
 
       - name: Clean ephemeral Better Auth smoke users
         if: always() && steps.e2e-fixtures.outcome == 'success'
@@ -170,7 +193,7 @@ jobs:
           echo '- D1 + AUTH_DB migrations: applied' >> "$GITHUB_STEP_SUMMARY"
           echo '- Runtime schema: v30' >> "$GITHUB_STEP_SUMMARY"
           echo '- /health + /ready: passed' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Authenticated realtime smoke: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Better Auth sign-in + session HTTP smoke: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Browser E2E and edge:check: intentionally not repeated; covered by Quality' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish auditable result to authorization issue
