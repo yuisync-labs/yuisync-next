@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { validateRegistryCoverage } from './legacyIntakeRegistry.mjs'
+import { registryEntry, validateRegistryCoverage } from './legacyIntakeRegistry.mjs'
 
 export const REQUIRED_INTAKE_TABLES = Object.freeze([
   'migration_runs',
@@ -30,6 +30,42 @@ export function schemaFingerprint(items = []) {
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
 }
 
+function canonicalSourceTables(discoveredSource = []) {
+  return [...new Set(discoveredSource.flatMap((item) => {
+    const name = String(item?.table_name || item?.name || '').trim().toLowerCase()
+    const type = String(item?.table_type || item?.type || 'BASE TABLE').toUpperCase()
+    const rows = Number(item?.row_count ?? item?.rows ?? 0)
+    if (!name || type === 'VIEW' || rows <= 0) return []
+    const entry = registryEntry(name)
+    return entry?.disposition === 'canonical' ? [name] : []
+  }))].sort((left, right) => left.localeCompare(right, 'en'))
+}
+
+function normalizedTableSet(values = []) {
+  return new Set((Array.isArray(values) ? values : []).map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))
+}
+
+function canonicalProjectionCheck(discoveredSource, summary) {
+  const required = canonicalSourceTables(discoveredSource)
+  const projected = normalizedTableSet(summary?.projected_tables)
+  const reconciled = normalizedTableSet(summary?.reconciled_tables)
+  const mismatched = [...normalizedTableSet(summary?.mismatched_tables)].sort((left, right) => left.localeCompare(right, 'en'))
+  const missingProjected = required.filter((name) => !projected.has(name))
+  const missingReconciled = required.filter((name) => !reconciled.has(name))
+  const relevantMismatches = mismatched.filter((name) => required.includes(name))
+
+  return {
+    id: 'canonical_projection_coverage',
+    ok: missingProjected.length === 0 && missingReconciled.length === 0 && relevantMismatches.length === 0,
+    required_tables: required,
+    projected_tables: [...projected].sort((left, right) => left.localeCompare(right, 'en')),
+    reconciled_tables: [...reconciled].sort((left, right) => left.localeCompare(right, 'en')),
+    missing_projected: missingProjected,
+    missing_reconciled: missingReconciled,
+    mismatched_tables: relevantMismatches,
+  }
+}
+
 export function evaluateMigrationReadiness({
   discoveredSource = [],
   destinationTables = [],
@@ -38,6 +74,7 @@ export function evaluateMigrationReadiness({
   storageSummary = null,
   clientsPetsSummary = null,
   payloadSummary = null,
+  canonicalProjectionSummary = null,
 } = {}) {
   const checks = []
   const coverage = validateRegistryCoverage(discoveredSource)
@@ -46,6 +83,11 @@ export function evaluateMigrationReadiness({
   const destinationSet = new Set(destinationTables.map((value) => String(value).toLowerCase()))
   const missingIntakeTables = REQUIRED_INTAKE_TABLES.filter((name) => !destinationSet.has(name))
   checks.push({ id: 'destination_intake_schema', ok: missingIntakeTables.length === 0, missing: missingIntakeTables })
+
+  // A table being safely staged in migration_source_records does not mean it has
+  // reached the canonical D1 domain. Every non-empty source table registered as
+  // canonical must be both projected and reconciled before cutover is allowed.
+  checks.push(canonicalProjectionCheck(discoveredSource, canonicalProjectionSummary))
 
   if (authSummary) {
     const hashesOk = Number(authSummary.total || 0) === Number(authSummary.bcrypt || 0)
@@ -92,3 +134,5 @@ export function assertMigrationReady(input) {
   if (!report.ready) throw new MigrationReadinessError('MIGRATION_NOT_READY', report)
   return report
 }
+
+export { canonicalSourceTables }
