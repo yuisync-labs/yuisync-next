@@ -30,11 +30,26 @@ async function signIn(page) {
   const password = process.env.E2E_PASSWORD
   if (!email || !password) throw new Error('E2E_EMAIL and E2E_PASSWORD are required')
 
-  await page.goto('/login', { waitUntil: 'domcontentloaded' })
+  await page.goto('/entrar', { waitUntil: 'domcontentloaded' })
   await page.locator('input[type="email"]').fill(email)
   await page.locator('input[type="password"]').fill(password)
+
+  const signInResponsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return url.pathname.endsWith('/api/auth/sign-in/email') && response.request().method() === 'POST'
+  }, { timeout: 15_000 })
+  const sessionResponsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return url.pathname.endsWith('/api/auth/get-session') && response.request().method() === 'GET' && response.status() === 200
+  }, { timeout: 15_000 })
+
   await page.locator('form button[type="submit"]').click({ timeout: 15_000 })
-  await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 15_000 })
+  const signInResponse = await signInResponsePromise
+  expect(signInResponse.ok(), 'Better Auth sign-in request must succeed').toBeTruthy()
+  const sessionResponse = await sessionResponsePromise
+  const sessionPayload = await sessionResponse.json()
+  expect(sessionPayload?.user?.id, 'Better Auth session must contain an authenticated user').toBeTruthy()
+  await expect(page).not.toHaveURL(/\/entrar(?:\?|$)/, { timeout: 15_000 })
 }
 
 async function openRoute(page, route) {
@@ -47,7 +62,7 @@ async function openRoute(page, route) {
   page.on('response', onResponse)
 
   await page.goto(route, { waitUntil: 'domcontentloaded' })
-  await expect(page).not.toHaveURL(/\/login(?:\?|$)/)
+  await expect(page).not.toHaveURL(/\/entrar(?:\?|$)/)
   await page.waitForTimeout(500)
 
   page.off('pageerror', onPageError)
