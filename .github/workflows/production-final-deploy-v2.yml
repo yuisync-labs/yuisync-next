@@ -206,7 +206,7 @@ jobs:
           export YUISYNC_E2E_WRANGLER_CONFIG="$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
           node scripts/migration/staging-e2e-fixtures.mjs setup
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
       - name: Authenticated production E2E
         run: |
           export YUISYNC_E2E_BASE_URL=https://yuisync.app
