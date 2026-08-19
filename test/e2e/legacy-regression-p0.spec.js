@@ -29,7 +29,8 @@ const required = [
   'E2E_SERVICE_MEDIUM_ID', 'E2E_SERVICE_MEDIUM_CODE',
   'E2E_SERVICE_LARGE_ID', 'E2E_SERVICE_LARGE_CODE',
   'E2E_SERVICE_CAT_ID', 'E2E_SERVICE_CAT_CODE',
-  'E2E_PRODUCT_ID', 'E2E_SUBSCRIPTION_ID', 'E2E_FOREIGN_TENANT_ID',
+  'E2E_PRODUCT_ID', 'E2E_SUBSCRIPTION_ID', 'E2E_PACKAGE_APPOINTMENT_ID',
+  'E2E_FOREIGN_TENANT_ID',
 ]
 
 function must(name) {
@@ -134,6 +135,21 @@ async function openNewAppointment(page) {
   await expect(page.getByRole('heading', { name: 'Novo Agendamento' })).toBeVisible()
 }
 
+async function appointmentById(page, appointmentId) {
+  const { response, payload } = await compat(page, {
+    table: 'appointments', action: 'select', columns: '*',
+    filters: [
+      { op: 'eq', column: 'id', value: appointmentId },
+      { op: 'eq', column: 'tenant_id', value: must('E2E_TENANT_ID') },
+      { op: 'eq', column: 'module_id', value: MODULE_ID },
+    ],
+    limit: 1, mode: 'maybeSingle',
+  })
+  expect(response.status(), JSON.stringify(payload)).toBe(200)
+  expect(payload.data).toBeTruthy()
+  return payload.data
+}
+
 async function latestAppointmentForPet(page, petId) {
   const { response, payload } = await compat(page, {
     table: 'appointments', action: 'select', columns: '*',
@@ -150,11 +166,7 @@ async function latestAppointmentForPet(page, petId) {
   return payload.data
 }
 
-let packageAppointmentId = ''
-let packageAppointment = null
-let checkoutSaleId = ''
-
-test.describe.serial('legacy incident staging browser matrix', () => {
+test.describe('legacy incident staging browser matrix', () => {
   test.beforeAll(() => {
     const missing = required.filter((name) => !process.env[name])
     if (missing.length) throw new Error(`LEGACY_REGRESSION_ENV_MISSING:${missing.join(',')}`)
@@ -235,16 +247,16 @@ test.describe.serial('legacy incident staging browser matrix', () => {
     await page.getByRole('button', { name: 'Confirmar reserva' }).click()
     await expect(page.getByRole('heading', { name: 'Novo Agendamento' })).toHaveCount(0, { timeout: 10_000 })
 
-    packageAppointment = await latestAppointmentForPet(page, must('E2E_PET_SMALL_ID'))
-    packageAppointmentId = String(packageAppointment.id)
-    expect(packageAppointment.subscription_id).toBe(must('E2E_SUBSCRIPTION_ID'))
-    expect(['reserved', 'consumed']).toContain(String(packageAppointment.subscription_benefit_status))
-    expect(packageAppointment.transport_mode).toBe('buscar_e_levar')
-    expect(String(packageAppointment.transport_address || '')).toContain('Rua QA')
+    const createdAppointment = await latestAppointmentForPet(page, must('E2E_PET_SMALL_ID'))
+    expect(createdAppointment.id).not.toBe(must('E2E_PACKAGE_APPOINTMENT_ID'))
+    expect(createdAppointment.subscription_id).toBe(must('E2E_SUBSCRIPTION_ID'))
+    expect(['reserved', 'consumed']).toContain(String(createdAppointment.subscription_benefit_status))
+    expect(createdAppointment.transport_mode).toBe('buscar_e_levar')
+    expect(String(createdAppointment.transport_address || '')).toContain('Rua QA')
 
-    const items = Array.isArray(packageAppointment.service_items)
-      ? packageAppointment.service_items
-      : JSON.parse(packageAppointment.service_items || '[]')
+    const items = Array.isArray(createdAppointment.service_items)
+      ? createdAppointment.service_items
+      : JSON.parse(createdAppointment.service_items || '[]')
     expect(items).toHaveLength(1)
     expect(items[0]).toMatchObject({ code: must('E2E_SERVICE_SMALL_CODE'), species_target: 'dog' })
     expect(Number(items[0].catalog_price)).toBe(55)
@@ -289,10 +301,11 @@ test.describe.serial('legacy incident staging browser matrix', () => {
   })
 
   test('07 - edicao somente de MotoDog nao altera servico/pacote', async ({ page }) => {
-    expect(packageAppointmentId).toBeTruthy()
+    const appointmentId = must('E2E_PACKAGE_APPOINTMENT_ID')
+    const before = await appointmentById(page, appointmentId)
     await page.goto('/petshop/agenda', { waitUntil: 'domcontentloaded' })
     await page.getByLabel('Próximo dia').click()
-    const card = page.locator(`[data-yuisync-native-appointment-id="${packageAppointmentId}"]`)
+    const card = page.locator(`[data-yuisync-native-appointment-id="${appointmentId}"]`)
     await expect(card).toBeVisible({ timeout: 10_000 })
     await expect(card).toContainText(/MotoDog|buscar/i)
     await card.locator('button.yuisync-card-content').click()
@@ -302,25 +315,26 @@ test.describe.serial('legacy incident staging browser matrix', () => {
     await page.getByRole('button', { name: 'Salvar alteracoes' }).click()
     await expect(page.getByRole('heading', { name: 'Editar Agendamento' })).toHaveCount(0, { timeout: 10_000 })
 
-    const after = await latestAppointmentForPet(page, must('E2E_PET_SMALL_ID'))
+    const after = await appointmentById(page, appointmentId)
     expect(after.transport_mode).toBe('somente_levar')
     expect(String(after.transport_address || '')).toContain('Avenida QA')
-    const beforeItems = Array.isArray(packageAppointment.service_items) ? packageAppointment.service_items : JSON.parse(packageAppointment.service_items || '[]')
+    const beforeItems = Array.isArray(before.service_items) ? before.service_items : JSON.parse(before.service_items || '[]')
     const afterItems = Array.isArray(after.service_items) ? after.service_items : JSON.parse(after.service_items || '[]')
     expect(afterItems.map((item) => item.code)).toEqual(beforeItems.map((item) => item.code))
-    expect(after.subscription_id).toBe(packageAppointment.subscription_id)
+    expect(after.subscription_id).toBe(before.subscription_id)
+    expect(after.subscription_benefit_status).toBe(before.subscription_benefit_status)
   })
 
   test('08 - conclusao e replay consomem beneficio exatamente uma vez', async ({ page }) => {
-    expect(packageAppointmentId).toBeTruthy()
+    const appointmentId = must('E2E_PACKAGE_APPOINTMENT_ID')
     const filters = [
-      { op: 'eq', column: 'id', value: packageAppointmentId },
+      { op: 'eq', column: 'id', value: appointmentId },
       { op: 'eq', column: 'tenant_id', value: must('E2E_TENANT_ID') },
       { op: 'eq', column: 'module_id', value: MODULE_ID },
     ]
     const first = await compat(page, { table: 'appointments', action: 'update', payload: { status: 'concluido' }, filters, mode: 'many' })
     expect(first.response.status(), JSON.stringify(first.payload)).toBe(200)
-    const completed = await latestAppointmentForPet(page, must('E2E_PET_SMALL_ID'))
+    const completed = await appointmentById(page, appointmentId)
     expect(completed.status).toBe('concluido')
     expect(completed.subscription_id).toBe(must('E2E_SUBSCRIPTION_ID'))
     expect(completed.subscription_benefit_status).toBe('consumed')
@@ -344,10 +358,21 @@ test.describe.serial('legacy incident staging browser matrix', () => {
   })
 
   test('09 - reabrir atendimento consumido libera pacote sem consumo fantasma', async ({ page }) => {
-    const current = await latestAppointmentForPet(page, must('E2E_PET_SMALL_ID'))
+    const appointmentId = must('E2E_PACKAGE_APPOINTMENT_ID')
+    const filters = [
+      { op: 'eq', column: 'id', value: appointmentId },
+      { op: 'eq', column: 'tenant_id', value: must('E2E_TENANT_ID') },
+      { op: 'eq', column: 'module_id', value: MODULE_ID },
+    ]
+    const ensureCompleted = await compat(page, { table: 'appointments', action: 'update', payload: { status: 'concluido' }, filters, mode: 'many' })
+    expect(ensureCompleted.response.status(), JSON.stringify(ensureCompleted.payload)).toBe(200)
+
+    const current = await appointmentById(page, appointmentId)
+    expect(current.status).toBe('concluido')
+    expect(current.subscription_benefit_status).toBe('consumed')
     const serviceItems = Array.isArray(current.service_items) ? current.service_items : JSON.parse(current.service_items || '[]')
     const reopened = await rpc(page, 'update_petshop_appointment_transaction', {
-      p_appointment_id: packageAppointmentId,
+      p_appointment_id: appointmentId,
       p_payload: {
         tenant_id: must('E2E_TENANT_ID'), module_id: MODULE_ID,
         client_id: must('E2E_CLIENT_ID'), pet_id: must('E2E_PET_SMALL_ID'),
@@ -361,7 +386,7 @@ test.describe.serial('legacy incident staging browser matrix', () => {
     expect(reopened.payload.data?.reopened).toBe(true)
     expect(reopened.payload.data?.package_released).toBe(true)
 
-    const after = await latestAppointmentForPet(page, must('E2E_PET_SMALL_ID'))
+    const after = await appointmentById(page, appointmentId)
     expect(after.status).toBe('agendado')
     expect(after.subscription_benefit_status).toBe('released')
     expect(Number(after.subscription_benefit_used || 0)).toBe(0)
@@ -379,7 +404,7 @@ test.describe.serial('legacy incident staging browser matrix', () => {
     expect(first.status(), JSON.stringify(firstPayload)).toBe(201)
     expect(firstPayload.success).toBe(true)
     expect(firstPayload.data.transaction.replayed).toBe(false)
-    checkoutSaleId = String(firstPayload.data.sale.id)
+    const checkoutSaleId = String(firstPayload.data.sale.id)
 
     const replay = await browserRequest(page, '/api/petshop/checkout', { method: 'POST', data: body })
     const replayPayload = await replay.json()
