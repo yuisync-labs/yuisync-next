@@ -12,11 +12,16 @@ export default defineConfig({
         target: apiProxyTarget,
         changeOrigin: true,
         secure: true,
+        ws: true,
         configure(proxy) {
           proxy.on('proxyReq', (proxyReq) => {
             if (!process.env.VITE_DEV_API_PROXY_TARGET) return
             proxyReq.setHeader('origin', apiProxyTarget)
             proxyReq.setHeader('referer', `${apiProxyTarget}/`)
+          })
+          proxy.on('proxyReqWs', (proxyReq) => {
+            if (!process.env.VITE_DEV_API_PROXY_TARGET) return
+            proxyReq.setHeader('origin', apiProxyTarget)
           })
         },
       },
