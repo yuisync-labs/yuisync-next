@@ -1,0 +1,53 @@
+name: Ops production observer fast
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ops-production-observer-fast.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      TARGET_SHA: 35b4c9fa532d4732e187ab1b4051a97fc9683390
+    steps:
+      - name: Find exact production run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/production-final-deploy-v2.yml/runs?event=issues&per_page=30" > /tmp/runs.json
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const payload = JSON.parse(await readFile('/tmp/runs.json', 'utf8'))
+          const target = process.env.TARGET_SHA.toLowerCase()
+          const matches = (payload.workflow_runs || []).filter((run) => String(run.head_sha || '').toLowerCase() === target)
+          if (!matches.length) throw new Error(`PRODUCTION_RUN_NOT_FOUND:${target}`)
+          const latest = matches[0]
+          console.log(JSON.stringify({ id: latest.id, status: latest.status, conclusion: latest.conclusion, attempt: latest.run_attempt, url: latest.html_url }, null, 2))
+          if (latest.status === 'completed' && latest.conclusion !== 'success') process.exit(2)
+          NODE
+
+      - name: Probe public production
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 15 https://yuisync.app/health -o /tmp/health.json
+          curl --fail --silent --show-error --max-time 15 https://yuisync.app/ready -o /tmp/ready.json
+          curl --fail --silent --show-error --max-time 15 https://yuisync.app/ -o /tmp/home.html
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const health = JSON.parse(await readFile('/tmp/health.json', 'utf8'))
+          const ready = JSON.parse(await readFile('/tmp/ready.json', 'utf8'))
+          if (health?.status !== 'ok' || health?.environment !== 'production') throw new Error('LIVE_HEALTH_INVALID')
+          if (ready?.status !== 'ready' || ready?.environment !== 'production') throw new Error('LIVE_READY_INVALID')
+          if (String(ready?.checks?.schema_version) !== '30') throw new Error('LIVE_SCHEMA_INVALID')
+          if (ready?.checks?.auth_database !== 'configured' || ready?.checks?.better_auth !== 'enabled') throw new Error('LIVE_AUTH_INVALID')
+          console.log(JSON.stringify({ health: health.status, ready: ready.status, schema_version: ready.checks.schema_version, auth_database: ready.checks.auth_database, better_auth: ready.checks.better_auth }, null, 2))
+          NODE
