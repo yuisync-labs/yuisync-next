@@ -1,17 +1,6 @@
-import React, { useEffect } from 'react'
+import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
-
-function YuiLogo({ size = 40, className = "" }) {
-  return (
-    <svg width={size} height={size*0.4} viewBox="0 0 100 40" fill="none" className={`relative overflow-visible ${className}`}>
-      <circle cx="80" cy="20" r="16" fill="currentColor" className="opacity-10 animate-glow-soft" />
-      <path d="M5 20 H80" stroke="currentColor" strokeWidth="6" strokeLinecap="round" className="opacity-20" />
-      <path d="M5 20 H80" stroke="currentColor" strokeWidth="6" strokeLinecap="round" className="animate-neon-breath" />
-      <circle cx="80" cy="20" r="8" stroke="currentColor" strokeWidth="2" fill="transparent" className="animate-pulse opacity-40 shadow-[0_0_15px_currentColor]" />
-      <circle cx="80" cy="20" r="3" fill="white" className="animate-pulse shadow-[0_0_20px_white]" />
-    </svg>
-  )
-}
+import YuiSyncMark from '../public/components/YuiSyncMark'
 
 export function LoadingScreen() {
   useEffect(() => {
@@ -26,23 +15,19 @@ export function LoadingScreen() {
 
   return createPortal(
     <div
-      className="yui-loading-portal fixed inset-0 z-[9999] flex min-h-screen items-center justify-center overflow-hidden bg-[#1A1A1A]"
+      className="yui-loading-portal fixed inset-0 z-[9999] flex min-h-screen items-center justify-center overflow-hidden bg-[#070707]"
       role="status"
       aria-live="polite"
       aria-label="Carregando aplicacao"
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(74,144,226,0.08),transparent_70%)]" />
-      <div className="flex flex-col items-center gap-6 relative z-10 animate-in fade-in zoom-in-95 duration-700">
-        <div className="relative">
-           <YuiLogo size={120} className="text-[#4A90E2] animate-sync" />
-           <div className="absolute -inset-4 bg-blue-500/10 blur-2xl rounded-full" />
-        </div>
-        <div className="flex flex-col items-center">
-          <h1 className="text-white font-display font-medium text-2xl tracking-[0.25em] uppercase">YUI Sync</h1>
-          <div className="flex items-center gap-2 mt-4">
-             <div className="w-1 h-1 bg-blue-500 rounded-full animate-ping" />
-             <p className="text-[#555555] text-[10px] font-bold uppercase tracking-[0.4em]">Carregando...</p>
-          </div>
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.025)_1px,transparent_1px)] bg-[size:72px_72px]" />
+      <div className="absolute h-[360px] w-[760px] rotate-[-12deg] rounded-[50%] border border-white/[0.06]" />
+      <div className="relative z-10 flex flex-col items-center animate-in fade-in zoom-in-95 duration-700">
+        <YuiSyncMark animated inverted orbit decorative className="h-24 w-24" />
+        <h1 className="mt-7 font-display text-2xl font-extrabold tracking-[-0.04em] text-white">YuiSync</h1>
+        <div className="mt-4 flex items-center gap-2.5">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.7)]" />
+          <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/40">Sincronizando ambiente</p>
         </div>
       </div>
     </div>,

@@ -1,0 +1,193 @@
+.yuisync-agenda-page {
+  --agenda-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.yuisync-agenda-page :is(button, .btn, .inp, select) {
+  transition:
+    transform 180ms var(--agenda-ease),
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.yuisync-agenda-page button:active:not(:disabled) {
+  transform: scale(0.975);
+}
+
+.yuisync-agenda-stat {
+  border: 0 !important;
+  border-right: 1px solid var(--border2) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  transition: background-color 180ms ease;
+}
+
+.yuisync-agenda-stat:hover {
+  transform: none;
+  background: var(--ui-hover) !important;
+  box-shadow: none;
+}
+
+.yuisync-agenda-stat:last-child {
+  border-right: 0 !important;
+}
+
+.yuisync-agenda-stats {
+  gap: 0 !important;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius-card);
+  background: var(--surface);
+}
+
+.yuisync-agenda-view-transition {
+  min-width: 0;
+  animation: yuisync-agenda-view-in 260ms var(--agenda-ease) both;
+}
+
+.yuisync-agenda-daily-grid {
+  min-width: 720px;
+}
+
+@keyframes yuisync-agenda-view-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 639px) {
+  .yuisync-agenda-page {
+    padding-right: 16px !important;
+    padding-left: 16px !important;
+    gap: 24px !important;
+  }
+
+  .yuisync-agenda-header {
+    position: relative;
+    align-items: stretch;
+  }
+
+  .yuisync-agenda-header [data-yuisync-print-day] {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 40px;
+    height: 40px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .yuisync-agenda-header [data-yuisync-print-day] span {
+    display: none;
+  }
+
+  .yuisync-agenda-header-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .yuisync-agenda-header-actions .btn {
+    min-width: 0;
+    justify-content: center;
+    padding-inline: 10px;
+  }
+
+  .yuisync-agenda-stats {
+    display: flex !important;
+    gap: 0 !important;
+    margin-inline: -16px;
+    padding: 2px 16px 8px;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+
+  .yuisync-agenda-stats::-webkit-scrollbar {
+    display: none;
+  }
+
+  .yuisync-agenda-stat {
+    flex: 0 0 112px;
+    min-height: 78px;
+    display: grid;
+    place-content: center;
+    scroll-snap-align: start;
+  }
+
+  .yuisync-agenda-tabs {
+    width: 100%;
+    flex-wrap: nowrap !important;
+  }
+
+  .yuisync-agenda-tabs > button {
+    min-width: 0;
+    flex: 1 1 0;
+    justify-content: center;
+    padding-inline: 8px;
+  }
+
+  .yuisync-agenda-controls {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "date refresh"
+      "search search"
+      "status status"
+      "period period";
+    gap: 10px !important;
+    align-items: center !important;
+  }
+
+  .yuisync-agenda-date-nav {
+    grid-area: date;
+    width: max-content;
+  }
+
+  .yuisync-agenda-search {
+    grid-area: search;
+    width: 100%;
+    min-width: 0 !important;
+  }
+
+  .yuisync-agenda-status-filter {
+    grid-area: status;
+    width: 100% !important;
+    min-width: 0;
+  }
+
+  .yuisync-agenda-daily-grid {
+    min-width: 0;
+    grid-template-columns: 54px minmax(0, 1fr) !important;
+  }
+
+  .yuisync-agenda-period-toggle {
+    grid-area: period;
+    width: max-content;
+  }
+
+  .yuisync-agenda-refresh {
+    grid-area: refresh;
+    width: 38px;
+    height: 38px;
+    justify-self: end;
+    justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yuisync-agenda-page :is(button, .btn, .inp, select),
+  .yuisync-agenda-stat {
+    transition: none !important;
+  }
+
+  .yuisync-agenda-view-transition {
+    animation: none;
+  }
+}

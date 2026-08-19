@@ -1,4 +1,6 @@
 import { getAuthSession, signInWithPassword, signOutSession } from './authApi'
+import { isVisualPreviewSession } from './visualPreview'
+import { runVisualPreviewQuery, runVisualPreviewRpc } from './visualPreviewData'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const ACTIVE_TENANT_KEY = '@yui_active_tenant'
@@ -83,6 +85,20 @@ async function request(path, options = {}) {
   if (typeof options.body === 'string') {
     try { parsedBody = JSON.parse(options.body) } catch { parsedBody = null }
   }
+
+  if (isVisualPreviewSession()) {
+    if (path === '/compat/query') return runVisualPreviewQuery(parsedBody)
+    if (path === '/compat/rpc') return runVisualPreviewRpc(parsedBody)
+    return {
+      data: null,
+      error: asError({
+        code: 'VISUAL_PREVIEW_READ_ONLY',
+        message: 'O modo visual local não salva alterações.',
+      }, 409),
+      count: null,
+    }
+  }
+
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     credentials: 'include',
@@ -221,6 +237,10 @@ class EdgeRealtimeChannel {
 
   connect() {
     if (this.closed || this.socket) return
+    if (isVisualPreviewSession()) {
+      this.notify('SUBSCRIBED')
+      return
+    }
     const url = realtimeUrl()
     if (!url || typeof globalThis?.WebSocket !== 'function') {
       this.notify('CHANNEL_ERROR')

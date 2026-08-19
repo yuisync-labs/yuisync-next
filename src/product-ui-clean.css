@@ -5,6 +5,7 @@
  */
 
 :root {
+  --ui-font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --ui-radius-control: 9px;
   --ui-radius-card: 14px;
   --ui-radius-modal: 16px;
@@ -30,19 +31,28 @@
   --ui-info-fg: var(--primary);
   --ui-info-bg: var(--primary-bg-light);
   --ui-info-border: var(--primary-border);
+  --ui-progress-fg: #c4b5fd;
 }
 
 /* Product color-mode contrast is controlled by the YuiSync toggle (.theme-dark),
  * never by Tailwind's OS-level dark media variant. These overrides intentionally
  * affect authenticated PetShop surfaces only.
  */
-body.product-ui-active .theme-petshop {
+body.product-ui-active .theme-petshop,
+body.product-ui-active .theme-petshop-modal {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --card: #ffffff;
+  --text: #0f172a;
+  --muted: #475569;
   --muted2: #64748b;
-  --border: #cbd5e1;
-  --border2: #e2e8f0;
-  --primary-hover: #10b981;
-  --primary-bg-light: rgba(5, 150, 105, 0.12);
-  --primary-border: rgba(5, 150, 105, 0.32);
+  --border: #d8dee7;
+  --border2: #e8ecf2;
+  --primary: #047857;
+  --primary-hover: #065f46;
+  --primary-contrast: #ffffff;
+  --primary-bg-light: rgba(4, 120, 87, 0.1);
+  --primary-border: rgba(4, 120, 87, 0.3);
 
   --ui-border-hover: #94a3b8;
   --ui-hover: #f1f5f9;
@@ -62,15 +72,24 @@ body.product-ui-active .theme-petshop {
   --ui-info-fg: #047857;
   --ui-info-bg: rgba(5, 150, 105, 0.1);
   --ui-info-border: rgba(4, 120, 87, 0.3);
+  --ui-progress-fg: #6d28d9;
 }
 
-body.product-ui-active .theme-petshop.theme-dark {
+body.product-ui-active .theme-petshop.theme-dark,
+body.product-ui-active.yuisync-dark .theme-petshop-modal {
+  --bg: #0b1220;
+  --surface: #101a2b;
+  --card: #142033;
+  --text: #f8fafc;
   --muted: #b6c3d4;
   --muted2: #8a9bb2;
   --border: #3a4a63;
   --border2: #26354d;
-  --primary-bg-light: rgba(56, 189, 248, 0.16);
-  --primary-border: rgba(56, 189, 248, 0.42);
+  --primary: #34d399;
+  --primary-hover: #6ee7b7;
+  --primary-contrast: #052e16;
+  --primary-bg-light: rgba(52, 211, 153, 0.14);
+  --primary-border: rgba(52, 211, 153, 0.38);
 
   --ui-border-hover: #52627a;
   --ui-hover: #17243a;
@@ -90,6 +109,7 @@ body.product-ui-active .theme-petshop.theme-dark {
   --ui-info-fg: #7dd3fc;
   --ui-info-bg: rgba(56, 189, 248, 0.16);
   --ui-info-border: rgba(125, 211, 252, 0.34);
+  --ui-progress-fg: #c4b5fd;
 }
 
 .theme-petshop,
@@ -107,6 +127,14 @@ body.product-ui-active .theme-petshop.theme-dark {
 .product-ui-scope {
   min-height: 100%;
   isolation: isolate;
+}
+
+:is(.product-ui-scope, body.product-ui-active) {
+  font-family: var(--ui-font-sans);
+}
+
+:is(.product-ui-scope, body.product-ui-active) :is(h1, h2, h3, h4, .font-display) {
+  font-family: var(--ui-font-sans) !important;
 }
 
 /* Authenticated legacy surface bridge. ProductPageSurface scopes normal route
@@ -167,10 +195,30 @@ body.product-ui-active .theme-petshop.theme-dark {
 
 :is(.product-ui-scope, body.product-ui-active) .page-title {
   letter-spacing: -0.02em;
+  font-weight: 700;
 }
 
 :is(.product-ui-scope, body.product-ui-active) .section-title {
   letter-spacing: -0.01em;
+  font-weight: 700;
+}
+
+:is(.product-ui-scope, body.product-ui-active) :is(.font-black, .font-extrabold) {
+  font-weight: 700 !important;
+}
+
+:is(.product-ui-scope, body.product-ui-active) .inp-label {
+  color: var(--muted) !important;
+  font-size: 12px;
+  font-weight: 600 !important;
+  letter-spacing: 0.01em !important;
+  text-transform: none;
+}
+
+:is(.product-ui-scope, body.product-ui-active) .tbl th {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.04em !important;
 }
 
 :is(.product-ui-scope, body.product-ui-active) .badge,
@@ -219,6 +267,26 @@ body.product-ui-active .theme-petshop .badge-gray {
   color: var(--muted) !important;
 }
 
+body.product-ui-active:not(.yuisync-dark) :is(.theme-petshop, .theme-petshop-modal) :is(.text-emerald-300, .text-emerald-400) {
+  color: var(--ui-success-fg) !important;
+}
+
+body.product-ui-active:not(.yuisync-dark) :is(.theme-petshop, .theme-petshop-modal) :is(.text-amber-300, .text-amber-400) {
+  color: var(--ui-warning-fg) !important;
+}
+
+body.product-ui-active:not(.yuisync-dark) :is(.theme-petshop, .theme-petshop-modal) :is(.text-red-300, .text-red-400) {
+  color: var(--ui-danger-fg) !important;
+}
+
+body.product-ui-active:not(.yuisync-dark) :is(.theme-petshop, .theme-petshop-modal) :is(.text-blue-300, .text-blue-400, .text-sky-300, .text-sky-400) {
+  color: #075985 !important;
+}
+
+body.product-ui-active:not(.yuisync-dark) :is(.theme-petshop, .theme-petshop-modal) :is(.text-violet-300, .text-violet-400) {
+  color: #6d28d9 !important;
+}
+
 :is(.product-ui-scope, body.product-ui-active) :is(.tbl-wrapper, table) {
   box-shadow: none !important;
 }
@@ -258,9 +326,25 @@ body.product-ui-active .theme-petshop select.inp option {
   color: var(--text);
 }
 
-body.product-ui-active .theme-petshop :is(button, a, input, select, textarea):focus-visible {
+body.product-ui-active :is(.theme-petshop, .theme-petshop-modal) :is(button, a, input, select, textarea):focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+body.product-ui-active :is(.theme-petshop, .theme-petshop-modal) .btn-primary {
+  border-color: var(--primary) !important;
+  background: var(--primary) !important;
+  color: var(--primary-contrast) !important;
+}
+
+body.product-ui-active :is(.theme-petshop, .theme-petshop-modal) .btn-primary:hover:not(:disabled) {
+  border-color: var(--primary-hover) !important;
+  background: var(--primary-hover) !important;
+}
+
+body.product-ui-active :is(.theme-petshop, .theme-petshop-modal) :is(button, input, select, textarea):disabled {
+  cursor: not-allowed !important;
+  opacity: 0.58;
 }
 
 /* Agenda used to encode service types with full-card gradients and glow. Keep
