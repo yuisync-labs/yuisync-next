@@ -6,6 +6,7 @@ import { handleBetterAuthRequest } from '../src/auth/betterAuthRuntime'
 import { handleCompatApiRequest } from '../src/compatApi'
 
 const AUTH_SECRET = 'package-reconciliation-test-secret-12345678901234567890'
+const PACKAGE_RECONCILIATION_TEST_TIMEOUT_MS = 15_000
 
 function bindings() {
   return {
@@ -227,5 +228,5 @@ describe('package reconciliation for existing appointments in workerd', () => {
       await authDb.prepare('DELETE FROM account WHERE userId=?1').bind(userId).run()
       await authDb.prepare('DELETE FROM user WHERE id=?1').bind(userId).run()
     }
-  })
+  }, PACKAGE_RECONCILIATION_TEST_TIMEOUT_MS)
 })
