@@ -1,0 +1,51 @@
+name: Ops Cloudflare Workers Builds audit
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ops-cloudflare-workers-builds-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    environment: cloudflare-staging
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER_NAME: yuisync-edge-api-staging
+    steps:
+      - name: Inspect staging Worker Builds trigger
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo 'CLOUDFLARE_API_TOKEN_MISSING'; exit 2; }
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo 'CLOUDFLARE_ACCOUNT_ID_MISSING'; exit 2; }
+
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "${api}/workers/scripts" > /tmp/workers.json
+
+          tag="$(jq -r --arg name "$WORKER_NAME" '.result[] | select(.id==$name) | .tag // empty' /tmp/workers.json | head -n1)"
+          if [ -z "$tag" ]; then
+            echo "WORKER_TAG_NOT_FOUND:${WORKER_NAME}"
+            jq -r '.result[] | .id' /tmp/workers.json | sed 's/^/worker=/'
+            exit 3
+          fi
+          echo "worker=${WORKER_NAME}"
+          echo "external_script_id=${tag}"
+
+          http="$(curl --silent --show-error -o /tmp/triggers.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "${api}/builds/workers/${tag}/triggers")"
+          echo "workers_builds_http=${http}"
+          if [ "$http" != "200" ]; then
+            jq '{success, errors: [.errors[]? | {code,message}]}' /tmp/triggers.json
+            exit 4
+          fi
+
+          jq '{success, triggers: [.result[] | {trigger_uuid, trigger_name, build_command, deploy_command, branch_includes, branch_excludes, root_directory: .repo_connection.root_directory, repo_name: .repo_connection.repo_name, provider_type: .repo_connection.provider_type}]}' /tmp/triggers.json
