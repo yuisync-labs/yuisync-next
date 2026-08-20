@@ -5,7 +5,7 @@ const executablePath = process.env.PLAYWRIGHT_CHROME_PATH || undefined
 
 export default defineConfig({
   testDir: './test/e2e',
-  testMatch: /legacy-regression-(?:p0|full)\.spec\.js/,
+  testMatch: /legacy-regression-(?:p0|agenda(?:-extended)?)\.spec\.js/,
   timeout: 90_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
