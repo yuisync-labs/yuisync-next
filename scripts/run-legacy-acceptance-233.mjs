@@ -31,6 +31,7 @@ const files = [
   'test/packageBundleCommission.test.mjs',
   'test/teamCommissionHistory.test.mjs',
   'test/commissionThermalPrintSafety.test.mjs',
+  'test/commissionPolicyAcceptance.test.mjs',
   'test/teamPendingResponsibleAssignment.test.mjs',
   'test/multiPetPackages.test.mjs',
   'test/clientsPetsExtractors.test.mjs',
