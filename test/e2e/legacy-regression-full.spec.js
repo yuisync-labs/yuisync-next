@@ -223,8 +223,9 @@ test.describe.serial('full legacy acceptance - Agenda through Chromium UI', () =
     const second = await latestAppointmentForPet(page, must('E2E_PET_MEDIUM_ID'))
     await page.getByLabel('Próximo dia').click()
     const firstComplete = await actionButton(page, first.id, 'complete')
+    page.once('dialog', (dialog) => dialog.accept())
     await firstComplete.click()
-    await expect.poll(async () => (await appointmentById(page, first.id)).status, { timeout: 10_000 }).toBe('concluido')
+    await expect(page).toHaveURL(/\/petshop\/ordens/, { timeout: 10_000 })
     await gotoTomorrowAgenda(page)
     const completed = cardFor(page, first.id)
     const active = cardFor(page, second.id)
@@ -284,6 +285,7 @@ test.describe.serial('full legacy acceptance - Agenda through Chromium UI', () =
 
     const complete = await actionButton(page, packageAppointment.id, 'complete')
     const popupPromise = page.waitForEvent('popup', { timeout: 2_000 }).catch(() => null)
+    page.once('dialog', (dialog) => dialog.accept())
     await complete.click()
     const popup = await popupPromise
     if (popup) await popup.close().catch(() => {})
@@ -360,8 +362,9 @@ test.describe.serial('full legacy acceptance - Agenda through Chromium UI', () =
     expect(overlapIds.length).toBeGreaterThanOrEqual(2)
     const id = overlapIds[1]
     await gotoTomorrowAgenda(page)
+    page.once('dialog', (dialog) => dialog.accept())
     await (await actionButton(page, id, 'complete')).click()
-    await expect.poll(async () => (await appointmentById(page, id)).status, { timeout: 10_000 }).toBe('concluido')
+    await expect(page).toHaveURL(/\/petshop\/ordens/, { timeout: 10_000 })
     await gotoTomorrowAgenda(page)
     const card = cardFor(page, id)
     await expect(card).toBeVisible({ timeout: 10_000 })
