@@ -61,4 +61,35 @@ describe('legacy compat query adapter', () => {
       weight_kg: 10.099, notes: 'Pet limite pequeno\nPet color: Branca', updated_at: '2026-08-19T20:37:42.547Z',
     }])
   })
+
+  it('keeps legacy list queries from collapsing null limit into LIMIT 1', () => {
+    const body = normalizeBaseCompatQueryBody({
+      table: 'appointments',
+      action: 'select',
+      limit: null,
+      filters: [{ op: 'eq', column: 'module_id', value: 'petshop' }],
+    })
+    expect(body.limit).toBe(200)
+  })
+
+  it('marks partial appointment updates so projected service snapshots are not rewritten', () => {
+    const partial = normalizeBaseCompatQueryBody({
+      table: 'appointments',
+      action: 'update',
+      payload: { delivery_staff_key: null, delivery_staff_name: null, notes: 'somente transporte' },
+    })
+    expect(partial.payload).toEqual({
+      delivery_staff_key: null,
+      delivery_staff_name: null,
+      notes: 'somente transporte',
+      service_items: null,
+    })
+
+    const explicit = normalizeBaseCompatQueryBody({
+      table: 'appointments',
+      action: 'update',
+      payload: { service_items: [{ code: 'banho' }] },
+    })
+    expect(explicit.payload).toEqual({ service_items: [{ code: 'banho' }] })
+  })
 })
