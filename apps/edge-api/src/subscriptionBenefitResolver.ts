@@ -34,15 +34,31 @@ function quantity(item: ObjectRow) {
   return Number.isFinite(raw) ? Math.max(0, Math.trunc(raw)) : 0
 }
 
+async function packagePetBinding(db:D1Database,input:{tenantId:string;moduleId:string;subscriptionId:string}) {
+  return db.prepare(`SELECT COALESCE(
+      json_extract(cycle.facts_json,'$.pet_id'),
+      (SELECT appointment.pet_id FROM appointments appointment
+       WHERE appointment.tenant_id=?1 AND appointment.module_id=?2 AND appointment.subscription_id=?3
+       ORDER BY appointment.scheduled_at_ms,appointment.id LIMIT 1)
+    ) AS pet_id
+    FROM client_subscriptions subscription
+    LEFT JOIN operation_checkpoints cycle
+      ON cycle.tenant_id=subscription.tenant_id AND cycle.module_id=subscription.module_id
+     AND cycle.id=('package_cycle:'||subscription.id) AND cycle.operation_type='package_cycle'
+    WHERE subscription.tenant_id=?1 AND subscription.module_id=?2 AND subscription.id=?3
+    LIMIT 1`).bind(input.tenantId,input.moduleId,input.subscriptionId).first<{pet_id:string|null}>()
+}
+
 export async function resolveBenefitAllocations(input: {
   db: D1Database
   tenantId: string
   moduleId: string
   clientId: string
+  petId: string
   serviceItems: ObjectRow[]
   intent: BillingIntent
 }): Promise<{ allocations?: BenefitAllocation[]; code?: string }> {
-  const { db, tenantId, moduleId, clientId, serviceItems, intent } = input
+  const { db, tenantId, moduleId, clientId, petId, serviceItems, intent } = input
   if (intent.type === 'standalone') return intent.allocations.length ? { code: 'STANDALONE_BILLING_HAS_ALLOCATIONS' } : { allocations: [] }
   if (intent.type !== 'subscription') return { allocations: [] }
   if (!intent.allocations.length) return { code: 'PACKAGE_ALLOCATION_REQUIRED' }
@@ -54,6 +70,7 @@ export async function resolveBenefitAllocations(input: {
   })
   const usedPositions = new Set<number>()
   const subscriptions = new Map<string, SubscriptionRow | null>()
+  const bindings = new Map<string, string | null>()
   const allocations: BenefitAllocation[] = []
 
   for (const requested of intent.allocations) {
@@ -72,6 +89,14 @@ export async function resolveBenefitAllocations(input: {
     }
     if (!subscription || subscription.status !== 'active' || subscription.plan_status !== 'active') return { code: 'PACKAGE_NOT_ACTIVE' }
     if (subscription.client_id !== clientId) return { code: 'PACKAGE_CLIENT_MISMATCH' }
+    let boundPetId = bindings.get(requested.subscriptionId)
+    if (boundPetId === undefined) {
+      const binding = await packagePetBinding(db,{tenantId,moduleId,subscriptionId:requested.subscriptionId})
+      boundPetId = text(binding?.pet_id) || null
+      bindings.set(requested.subscriptionId,boundPetId)
+    }
+    if (!boundPetId) return { code: 'PACKAGE_PET_BINDING_REQUIRED' }
+    if (boundPetId !== petId) return { code: 'PACKAGE_PET_MISMATCH' }
     const planService = array(subscription.services_json).find((item) => matchesPlanService(item, requested.serviceCode))
     if (!planService || quantity(planService) <= 0) return { code: 'PACKAGE_SERVICE_NOT_INCLUDED' }
     const snapshot = serviceItems[position]
