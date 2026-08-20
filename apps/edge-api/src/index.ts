@@ -2,7 +2,7 @@ import app from './app'
 import { handleAdminMaintenanceRequest } from './adminMaintenance'
 import { handleAiLabApiRequest } from './aiLabApi'
 import { handleAppApiRequest } from './appApi'
-import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
+import { getBetterAuthSession } from './auth/betterAuthRuntime'
 import { handleAppointmentBillingIntentCompat } from './appointmentBillingIntentCompat'
 import { handleAppointmentFinancialReopenApi } from './appointmentFinancialReopenApi'
 import { handleCheckoutApiRequest } from './checkoutApi'
@@ -15,6 +15,7 @@ import { handleAiLabMigrationRequest } from './migration/aiLabMigrationHttp'
 import { handleAuthMigrationRequest } from './migration/authMigrationHttp'
 import { handleClientsPetsMigrationRequest } from './migration/clientsPetsMigrationHttp'
 import { handleOperationalMigrationRequest } from './migration/operationalMigrationHttp'
+import { handlePackageCycleApiRequest } from './packageCycleApi'
 import { handlePetshopPlansApiRequest } from './petshopPlansApi'
 import { handlePetshopServicesApiRequest } from './petshopServicesApi'
 import { handleAsyncQueue } from './queueHandler'
@@ -72,8 +73,8 @@ export default {
     const whatsappTemplateResponse = await handleWhatsappTemplateApiRequest(request, bindings)
     if (whatsappTemplateResponse) return respond(whatsappTemplateResponse)
 
-    const authResponse = await handleBetterAuthRequest(request, bindings)
-    if (authResponse) return respond(authResponse)
+    const authResponse = await getBetterAuthSession(request, bindings)
+    if (authResponse instanceof Response) return respond(authResponse)
 
     const aiLabResponse = await handleAiLabApiRequest(request, bindings)
     if (aiLabResponse) return respond(aiLabResponse)
@@ -92,6 +93,9 @@ export default {
 
     const inventoryAdjustmentResponse = await handleInventoryAdjustmentRequest(request, bindings)
     if (inventoryAdjustmentResponse) return respond(inventoryAdjustmentResponse)
+
+    const packageCycleResponse = await handlePackageCycleApiRequest(request, bindings)
+    if (packageCycleResponse) return respond(packageCycleResponse)
 
     const petshopPlansResponse = await handlePetshopPlansApiRequest(request, bindings)
     if (petshopPlansResponse) return respond(petshopPlansResponse)
