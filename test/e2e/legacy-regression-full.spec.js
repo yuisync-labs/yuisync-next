@@ -224,7 +224,7 @@ test.describe.serial('full legacy acceptance - Agenda through Chromium UI', () =
     await page.getByLabel('Próximo dia').click()
     const firstComplete = await actionButton(page, first.id, 'complete')
     await firstComplete.click()
-    await expect(page).toHaveURL(/\/petshop\/ordens/, { timeout: 10_000 })
+    await expect.poll(async () => (await appointmentById(page, first.id)).status, { timeout: 10_000 }).toBe('concluido')
     await gotoTomorrowAgenda(page)
     const completed = cardFor(page, first.id)
     const active = cardFor(page, second.id)
@@ -361,7 +361,7 @@ test.describe.serial('full legacy acceptance - Agenda through Chromium UI', () =
     const id = overlapIds[1]
     await gotoTomorrowAgenda(page)
     await (await actionButton(page, id, 'complete')).click()
-    await expect(page).toHaveURL(/\/petshop\/ordens/, { timeout: 10_000 })
+    await expect.poll(async () => (await appointmentById(page, id)).status, { timeout: 10_000 }).toBe('concluido')
     await gotoTomorrowAgenda(page)
     const card = cardFor(page, id)
     await expect(card).toBeVisible({ timeout: 10_000 })
