@@ -3,9 +3,10 @@ name: Legacy regression browser matrix
 on:
   pull_request:
     paths:
-      - 'test/e2e/legacy-regression-p0.spec.js'
+      - 'test/**'
       - 'playwright.legacy-regression.config.js'
       - '.github/workflows/legacy-regression-browser.yml'
+      - 'scripts/run-legacy-acceptance-233.mjs'
       - 'scripts/migration/staging-e2e-fixtures.mjs'
       - 'scripts/migration/staging-legacy-regression-fixtures.mjs'
       - 'vite.config.js'
@@ -14,7 +15,6 @@ on:
       - 'apps/edge-api/**'
       - 'scripts/check-appointment-edit-semantics.mjs'
       - 'scripts/check-no-domain-state-from-dom.mjs'
-      - 'test/agendaOperationalInfrastructure.test.mjs'
   workflow_dispatch:
 
 permissions:
@@ -27,7 +27,7 @@ concurrency:
 jobs:
   regression:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     environment: cloudflare-staging
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -52,6 +52,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Full 233-scenario acceptance evidence
+        run: node scripts/run-legacy-acceptance-233.mjs
+
       - name: Frontend semantic invariants
         run: |
           npm run check:appointment-edit-semantics
@@ -68,7 +71,9 @@ jobs:
             test/compatApiLegacyQueryAdapter.test.ts \
             test/appointmentCommandIntegration.test.ts \
             test/operationalIntegrityV25.test.ts \
+            test/packageCycleIntegration.test.ts \
             test/packageReconciliationIntegration.test.ts \
+            test/packageUsageLedgerV29.test.ts \
             test/appointmentReopenIntegration.test.ts \
             test/appointmentFinancialReopenIntegration.test.ts \
             test/checkoutD1Integration.test.ts \
@@ -203,10 +208,13 @@ jobs:
       - name: Result summary
         if: success()
         run: |
-          echo '## Legacy P0 regression matrix' >> "$GITHUB_STEP_SUMMARY"
+          echo '## Legacy acceptance regression matrix' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Document inventory: 233/233 IDs' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Required gates: 232 (META-07 remains explicit future/non-gate)' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Node acceptance evidence: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Frontend semantic invariants: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Workerd/D1 historical invariants: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- PR frontend + PR backend on staging: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Disposable fixtures + cleanup: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Main restored to staging: passed' >> "$GITHUB_STEP_SUMMARY"
-          echo '- 12 browser scenarios: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- 12 deep browser scenarios: passed' >> "$GITHUB_STEP_SUMMARY"
