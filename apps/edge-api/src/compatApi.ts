@@ -119,6 +119,21 @@ function normalizeLegacyPetWrite(table: string, action: string, payload: unknown
   return Array.isArray(payload) ? payload.map(normalizeLegacyPetRow) : normalizeLegacyPetRow(payload)
 }
 
+function preserveAppointmentServicesOnPartialUpdate(table: string, action: string, payload: unknown): unknown {
+  if (table !== 'appointments' || action !== 'update') return payload
+  const preserve = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+    const row = value as Record<string, unknown>
+    if (Object.prototype.hasOwnProperty.call(row, 'service_items')) return value
+    // compatApiRuntime merges the current projection into partial writes. Without
+    // this explicit marker it sees projected service_items as if the caller had
+    // sent them and deletes/reinserts appointment_services, losing immutable
+    // price/commission/weight/species snapshots. null means "do not replace".
+    return { ...row, service_items: null }
+  }
+  return Array.isArray(payload) ? payload.map(preserve) : preserve(payload)
+}
+
 export function normalizeBaseCompatQueryBody(value: unknown): CompatQueryBody {
   const body = asObject(value)
   const table = typeof body.table === 'string' ? body.table : ''
@@ -126,6 +141,12 @@ export function normalizeBaseCompatQueryBody(value: unknown): CompatQueryBody {
   body.filters = rewriteFilters(table, body.filters)
   body.orders = rewriteOrders(table, body.orders)
   body.payload = normalizeLegacyPetWrite(table, action, body.payload)
+  body.payload = preserveAppointmentServicesOnPartialUpdate(table, action, body.payload)
+
+  // The legacy client serializes an unset Supabase limit as null. Number(null)
+  // becomes zero inside the base runtime, which previously collapsed list
+  // queries to LIMIT 1. Keep the intended default page size explicitly.
+  if (action === 'select' && body.limit == null) body.limit = 200
 
   if (typeof body.conflict !== 'string' && typeof body.onConflict === 'string') body.conflict = body.onConflict
   if (typeof body.conflict === 'string') {
