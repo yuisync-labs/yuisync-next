@@ -2,7 +2,7 @@ import app from './app'
 import { handleAdminMaintenanceRequest } from './adminMaintenance'
 import { handleAiLabApiRequest } from './aiLabApi'
 import { handleAppApiRequest } from './appApi'
-import { getBetterAuthSession } from './auth/betterAuthRuntime'
+import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
 import { handleAppointmentBillingIntentCompat } from './appointmentBillingIntentCompat'
 import { handleAppointmentFinancialReopenApi } from './appointmentFinancialReopenApi'
 import { handleCheckoutApiRequest } from './checkoutApi'
@@ -73,8 +73,8 @@ export default {
     const whatsappTemplateResponse = await handleWhatsappTemplateApiRequest(request, bindings)
     if (whatsappTemplateResponse) return respond(whatsappTemplateResponse)
 
-    const authResponse = await getBetterAuthSession(request, bindings)
-    if (authResponse instanceof Response) return respond(authResponse)
+    const authResponse = await handleBetterAuthRequest(request, bindings)
+    if (authResponse) return respond(authResponse)
 
     const aiLabResponse = await handleAiLabApiRequest(request, bindings)
     if (aiLabResponse) return respond(aiLabResponse)
