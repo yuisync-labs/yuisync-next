@@ -5,13 +5,18 @@ const executablePath = process.env.PLAYWRIGHT_CHROME_PATH || undefined
 
 export default defineConfig({
   testDir: './test/e2e',
-  testMatch: /legacy-regression-(?:p0|agenda(?:-extended)?)\.spec\.js/,
+  testMatch: /legacy-regression-(?!full(?:\.|$)).*\.spec\.js/,
   timeout: 90_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  reporter: [['line'], ['html', { outputFolder: 'playwright-report/legacy-regression', open: 'never' }]],
+  maxFailures: 0,
+  reporter: [
+    ['line'],
+    ['html', { outputFolder: 'playwright-report/legacy-regression', open: 'never' }],
+    ['json', { outputFile: 'legacy-regression-results.json' }],
+  ],
   use: {
     baseURL,
     headless: true,
