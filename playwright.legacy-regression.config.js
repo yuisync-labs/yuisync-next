@@ -5,9 +5,9 @@ const executablePath = process.env.PLAYWRIGHT_CHROME_PATH || undefined
 
 export default defineConfig({
   testDir: './test/e2e',
-  testMatch: /legacy-regression-p0\.spec\.js/,
-  timeout: 75_000,
-  expect: { timeout: 8_000 },
+  testMatch: /legacy-regression-(?:p0|full)\.spec\.js/,
+  timeout: 90_000,
+  expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1,
   retries: 0,
@@ -17,7 +17,7 @@ export default defineConfig({
     headless: true,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'off',
+    video: 'retain-on-failure',
     launchOptions: executablePath ? { executablePath } : {},
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
