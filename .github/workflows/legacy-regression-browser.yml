@@ -146,7 +146,7 @@ jobs:
           exit 1
 
       - name: Browser regression matrix - collect all failures
-        id: browser-matrix
+        id: browser_matrix
         continue-on-error: true
         env:
           E2E_BASE_URL: http://127.0.0.1:3080
@@ -221,14 +221,14 @@ jobs:
           echo '- PR frontend + PR backend on staging: executed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Disposable fixtures + cleanup: executed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Main restore to staging: executed' >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ steps.browser-matrix.outcome }}" = 'success' ]; then
+          if [ "${{ steps.browser_matrix.outcome }}" = 'success' ]; then
             echo '- Browser acceptance: all discovered scenarios passed' >> "$GITHUB_STEP_SUMMARY"
           else
             echo '- Browser acceptance: failures collected; inspect HTML/JSON/traces artifact' >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Fail only after complete evidence collection
-        if: always() && steps.browser-matrix.outcome == 'failure'
+        if: always() && steps.browser_matrix.outcome == 'failure'
         run: |
           echo 'Browser regression failures were collected. Failing only after cleanup, staging restore, summary and evidence upload.' >&2
           exit 1
