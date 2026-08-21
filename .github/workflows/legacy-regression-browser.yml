@@ -43,6 +43,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Capture exact main SHA for staging restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          MAIN_SHA="$(git rev-parse origin/main)"
+          test -n "$MAIN_SHA"
+          echo "MAIN_SHA=$MAIN_SHA" >> "$GITHUB_ENV"
+          echo "Staging restore pinned to main SHA: $MAIN_SHA"
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
@@ -153,11 +163,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # During certification, legacy browser groups are deliberately made non-serial
-          # so one failure cannot suppress evidence from later acceptance IDs.
-          find test/e2e -maxdepth 1 -name 'legacy-regression-*.spec.js' ! -name 'legacy-regression-full.spec.js' -print0 \
-            | xargs -0 -r sed -i 's/test\.describe\.serial/test.describe/g'
+          # Preserve the serial semantics declared by each regression suite.
+          # workers=1 and fullyParallel=false keep execution deterministic while
+          # --max-failures=0 still collects every failure that can validly run.
           npx playwright test --config=playwright.legacy-regression.config.js --max-failures=0
+          test -z "$(git status --porcelain -- test/e2e)" || {
+            echo 'Browser regression mutated tracked e2e specs; refusing contaminated evidence.' >&2
+            git status --short -- test/e2e >&2
+            exit 1
+          }
 
       - name: Stop PR frontend
         if: always()
@@ -173,23 +187,33 @@ jobs:
         if: always() && steps.base-fixtures.outcome == 'success'
         run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
 
-      - name: Restore current main to staging
+      - name: Restore captured main SHA to staging from clean worktree
         if: always() && steps.pr-deploy.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin main
-          git checkout --detach origin/main
+          test -n "${MAIN_SHA:-}"
+          RESTORE_DIR="$RUNNER_TEMP/yuisync-main-restore"
+          rm -rf "$RESTORE_DIR"
+          git worktree prune
+          git worktree add --detach "$RESTORE_DIR" "$MAIN_SHA"
+          test "$(git -C "$RESTORE_DIR" rev-parse HEAD)" = "$MAIN_SHA"
+          test -z "$(git -C "$RESTORE_DIR" status --porcelain)"
+          cd "$RESTORE_DIR"
           npm ci
           npm run build
           cd apps/edge-api
-          npx wrangler deploy --env staging
+          echo "Restoring staging from exact main SHA: $MAIN_SHA"
+          npx wrangler deploy --env staging | tee /tmp/legacy-main-restore-deploy.log
+          test -s /tmp/legacy-main-restore-deploy.log
 
       - name: Verify restored staging
         if: always() && steps.pr-deploy.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
+          echo "Verified restore source SHA: $MAIN_SHA"
+          cat /tmp/legacy-main-restore-deploy.log
           curl --fail --silent --show-error "$YUISYNC_STAGING_URL/health" >/dev/null
           curl --fail --silent --show-error "$YUISYNC_STAGING_URL/ready" >/tmp/legacy-restored-ready.json
           node --input-type=module <<'NODE'
@@ -220,7 +244,7 @@ jobs:
           echo '- Workerd/D1 historical invariants: executed' >> "$GITHUB_STEP_SUMMARY"
           echo '- PR frontend + PR backend on staging: executed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Disposable fixtures + cleanup: executed' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Main restore to staging: executed' >> "$GITHUB_STEP_SUMMARY"
+          echo "- Main restore pinned to SHA: ${MAIN_SHA:-unknown}" >> "$GITHUB_STEP_SUMMARY"
           if [ "${{ steps.browser_matrix.outcome }}" = 'success' ]; then
             echo '- Browser acceptance: all discovered scenarios passed' >> "$GITHUB_STEP_SUMMARY"
           else
