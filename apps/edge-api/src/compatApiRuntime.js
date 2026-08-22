@@ -4,6 +4,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
 const MODULE = /^[a-z0-9][a-z0-9_-]{0,63}$/
 const COLUMN = /^[A-Za-z_][A-Za-z0-9_]*$/
 const MAX_ROWS = 1000
+const TEMPORAL_FILTER_COLUMNS = new Set(['scheduled_at', 'scheduled_for'])
 
 const TABLES = Object.freeze({
   clients: { read: 'compat_clients', write: 'clients-pets' },
@@ -151,6 +152,13 @@ function simpleClause(column, op, value, values) {
   const sql = ({ eq:'=', neq:'<>', gt:'>', gte:'>=', lt:'<', lte:'<=', ilike:'LIKE' })[op]
   if (!sql) throw new Error('INVALID_FILTER')
   if (op === 'ilike') { values.push(String(value ?? '').toLowerCase()); return `LOWER(CAST(${column} AS TEXT)) LIKE ?` }
+  if (TEMPORAL_FILTER_COLUMNS.has(column)) {
+    const parsed = Date.parse(String(value ?? ''))
+    if (Number.isFinite(parsed)) {
+      values.push(Math.floor(parsed / 1000))
+      return `unixepoch(${column}) ${sql} ?`
+    }
+  }
   values.push(scalar(value)); return `${column} ${sql} ?`
 }
 function whereClause(list, scope, global = false) {
@@ -242,8 +250,9 @@ async function selectRows(db, table, config, body, scope) {
 async function enrich(db,table,columns,rows,scope) {
   if(!rows.length)return
   if(/(?:^|,)\s*clients\s*\(/.test(columns)) {
-    const ids=[...new Set(rows.map((r)=>str(r.client_id)).filter(Boolean))]
-    if(ids.length){const q=ids.map(()=>'?').join(',');const res=await db.prepare(`SELECT * FROM compat_clients WHERE tenant_id=? AND module_id=? AND id IN (${q})`).bind(scope.tenantId,scope.moduleId,...ids).all();const map=new Map(res.results.map((r)=>[String(r.id),normalize('clients',r)]));for(const r of rows)r.clients=map.get(String(r.client_id||''))||null}
+    const relationId=(row)=>str(row.pet_id)||str(row.client_id)
+    const ids=[...new Set(rows.map(relationId).filter(Boolean))]
+    if(ids.length){const q=ids.map(()=>'?').join(',');const res=await db.prepare(`SELECT * FROM compat_clients WHERE tenant_id=? AND module_id=? AND id IN (${q})`).bind(scope.tenantId,scope.moduleId,...ids).all();const map=new Map(res.results.map((r)=>[String(r.id),normalize('clients',r)]));for(const r of rows)r.clients=map.get(String(relationId(r)||''))||null}
   }
   if(table==='client_subscriptions'&&/subscription_plans\s*\(/.test(columns)) {
     const ids=[...new Set(rows.map((r)=>str(r.plan_id)).filter(Boolean))]

@@ -407,7 +407,7 @@ function ApptModal({ appt, onClose, onCreate, onUpdate, onReceipt, onRefreshSubs
   const deliveryStaffOptions = normalizeDeliveryStaff(deliveryStaff).filter((person) => person.active)
 
   const [form, setForm] = useState({
-    pet_id: isEdit ? appt.pets?.id || appt.client_id || '' : '',
+    pet_id: isEdit ? appt.pets?.id || appt.pet_id || '' : '',
     pet_search: '',
     service_codes: initialServiceCodes,
     date: isEdit ? appt.scheduled_at?.slice(0, 10) || defaultDate : defaultDate,
@@ -442,9 +442,19 @@ function ApptModal({ appt, onClose, onCreate, onUpdate, onReceipt, onRefreshSubs
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const petSearch = form.pet_search || ''
   const deferredPetSearch = useDeferredValue(petSearch)
+  const selectedSubscriptionClientId = useMemo(() => {
+    if (!form.pet_id) return ''
+    const selected = (
+      (selectedClient?.id === form.pet_id ? selectedClient : null)
+      || (pets || []).find((pet) => pet.id === form.pet_id)
+      || (remotePets || []).find((pet) => pet.id === form.pet_id)
+      || (appt?.pets?.id === form.pet_id ? appt.pets : null)
+    )
+    return selected?.tutor_group_id || selected?.details?.tutor_group_id || appt?.client_id || form.pet_id
+  }, [form.pet_id, selectedClient, pets, remotePets, appt?.pets, appt?.client_id])
   const activeSubscriptions = useMemo(
-    () => activeSubscriptionsForClient(subscriptions, form.pet_id),
-    [subscriptions, form.pet_id],
+    () => activeSubscriptionsForClient(subscriptions, selectedSubscriptionClientId),
+    [subscriptions, selectedSubscriptionClientId],
   )
   const packageUsage = useMemo(
     () => buildCombinedCatalogUsageSummary(activeSubscriptions, services),
@@ -665,6 +675,7 @@ function ApptModal({ appt, onClose, onCreate, onUpdate, onReceipt, onRefreshSubs
       const scheduled_at = candidateStart.toISOString()
       const payload = {
         pet_id: form.pet_id,
+        client_id: selectedSubscriptionClientId || undefined,
         service_type: form.service_codes[0],
         services: form.service_codes.map((code) => ({ code })),
         service_group: serviceGroup,
@@ -1160,7 +1171,6 @@ function KanbanCard({ appt, serviceLabel, statusBadge, onEdit, onStatus, onRecei
         <span className={`badge ${sb.cls} text-[10px]`}>{sb.label}</span>
         <span className="text-xs font-semibold text-emerald-400">{fmtCurrency(appt.price)}</span>
       </div>
-      {/* Quick status actions */}
       <div className="flex gap-1.5 pt-1">
         {appt.status === 'agendado' && (
           <button onClick={() => onStatus(appt.id, 'confirmado')}
@@ -1515,10 +1525,10 @@ export default function AgendaPage({ setPage }) {
   const { storeSettings } = useAuthCtx()
 
   const [selectedDate, setSelectedDate] = useState(new Date())
-  const [modal, setModal]           = useState(null)   // null | {} | {appt}
-  const [receipt, setReceipt]       = useState(null) // appt to print
+  const [modal, setModal]           = useState(null)
+  const [receipt, setReceipt]       = useState(null)
   const view = 'agenda'
-  const [agendaPeriod, setAgendaPeriod] = useState('day') // 'day' | 'week'
+  const [agendaPeriod, setAgendaPeriod] = useState('day')
   const [filterStatus, setFilterStatus] = useState('')
   const [search, setSearch]         = useState('')
   const [activeAgendaTab, setActiveAgendaTab] = useState('banho_tosa')
@@ -1616,7 +1626,6 @@ export default function AgendaPage({ setPage }) {
 
   return (
     <div className="page animate-fade-up yuisync-agenda-page">
-      {/* Header */}
       <div className="page-header yuisync-agenda-header">
         <div>
           <h1 className="page-title flex items-center gap-2">
@@ -1635,7 +1644,6 @@ export default function AgendaPage({ setPage }) {
         </div>
       </div>
 
-      {/* Stats do dia */}
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 yuisync-agenda-stats">
         {[
           { label: 'Total',        value: stats.total,        cls: 'text-text'       },
@@ -1674,9 +1682,7 @@ export default function AgendaPage({ setPage }) {
         })}
       </Card>
 
-      {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 yuisync-agenda-controls">
-        {/* Date Navigator */}
         <Card className="flex items-center gap-1 p-1 yuisync-agenda-date-nav">
           <button aria-label="Dia anterior" title="Dia anterior" onClick={() => setSelectedDate(d => addDays(d,-1))}
             className="btn btn-ghost btn-sm btn-icon">
@@ -1694,14 +1700,12 @@ export default function AgendaPage({ setPage }) {
           </button>
         </Card>
 
-        {/* Search */}
         <div className="relative flex-1 min-w-[200px] yuisync-agenda-search">
           <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted"/>
           <input aria-label="Buscar pet ou tutor" className="inp pl-9 py-2" placeholder="Buscar pet, tutor..."
             value={search} onChange={e => setSearch(e.target.value)}/>
         </div>
 
-        {/* Status filter */}
         <select aria-label="Filtrar por status" className="inp py-2 w-auto yuisync-agenda-status-filter" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
           <option value="">Todos os status</option>
           {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
@@ -1733,7 +1737,6 @@ export default function AgendaPage({ setPage }) {
         </button>
       </div>
 
-      {/* Content */}
       <div
         key={`${view}-${agendaPeriod}-${isoDate(selectedDate)}-${activeAgendaTab}`}
         className="yuisync-agenda-view-transition"
@@ -1772,7 +1775,6 @@ export default function AgendaPage({ setPage }) {
           onSelectDate={setSelectedDate}
         />
       ) : view === 'list' ? (
-        /* ── LIST VIEW ── */
         <div className="bg-card border border-[var(--border)] rounded-xl2 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="tbl">
@@ -1838,7 +1840,6 @@ export default function AgendaPage({ setPage }) {
           </div>
         </div>
       ) : (
-        /* ── KANBAN VIEW ── */
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {[
             { status:'agendado',     label:'Agendado',       cls:'text-amber-400',   icon: ClipboardList },
@@ -1876,7 +1877,6 @@ export default function AgendaPage({ setPage }) {
       )}
       </div>
 
-      {/* Modals */}
       {modal !== null && (
         <ApptModal
           appt={modal?.id ? modal : modal}

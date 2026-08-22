@@ -2,6 +2,7 @@ import type { CompatRuntimeBindings } from './compatApiRuntime.js'
 import { billingAppointmentStatement } from './appointmentBillingCoreStatement'
 import { billingServiceStatement } from './appointmentBillingServiceStatement'
 import { billingAllocationStatements } from './appointmentBillingAllocationStatements'
+import { billingTransportStatements } from './appointmentBillingTransportStatements'
 import type { resolveBillingBookingContext } from './appointmentBillingBookingContext'
 
 type Context=Exclude<Awaited<ReturnType<typeof resolveBillingBookingContext>>,{error:Response}>
@@ -14,6 +15,7 @@ export async function executeBillingBooking(env:CompatRuntimeBindings,payload:Re
   env.DB.prepare(`INSERT INTO appointment_command_registry(tenant_id,module_id,operation_key,appointment_id,operation_fingerprint,status,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,'completed',?6,?6)`).bind(party.tenantId,party.moduleId,identity.operationKey,identity.appointmentId,identity.fingerprint,now),
   billingAppointmentStatement(env.DB,{tenantId:party.tenantId!,moduleId:party.moduleId!,clientId:party.clientId!,petId:party.petId!,appointmentId:identity.appointmentId,operationKey:identity.operationKey,fingerprint:identity.fingerprint,payload,items,allocations,billingType,now}),
   ...items.map((item,position)=>billingServiceStatement(env.DB!,{tenantId:party.tenantId!,moduleId:party.moduleId!,appointmentId:identity.appointmentId},item,position,covered.has(position))),
+  ...billingTransportStatements(env.DB,{tenantId:party.tenantId!,moduleId:party.moduleId!,appointmentId:identity.appointmentId,payload,now}),
   ...billingAllocationStatements(env.DB,{tenantId:party.tenantId!,moduleId:party.moduleId!,appointmentId:identity.appointmentId,allocations,now}),
  ]
  try{await env.DB.batch(statements)}catch(error){

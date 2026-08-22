@@ -222,8 +222,6 @@ function sweepStaleFixtures() {
 }
 
 async function setup() {
-  sweepStaleFixtures()
-
   const current = fixture()
   const now = Date.now()
   await mkdir(ARTIFACT_DIR, { recursive: true })

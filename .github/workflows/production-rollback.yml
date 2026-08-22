@@ -11,6 +11,14 @@ on:
         description: D1 production AUTH_DB bookmark
         required: true
         type: string
+      agenda_state_sha256:
+        description: Agenda state SHA-256 captured with the target bookmarks
+        required: true
+        type: string
+      financial_state_sha256:
+        description: Financial state SHA-256 captured with the target bookmarks
+        required: true
+        type: string
       worker_version_id:
         description: Optional Worker version ID to activate before D1 restore
         required: false
@@ -39,6 +47,8 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       PRODUCTION_MAIN_BOOKMARK: ${{ inputs.main_bookmark }}
       PRODUCTION_AUTH_BOOKMARK: ${{ inputs.auth_bookmark }}
+      PRODUCTION_EXPECTED_AGENDA_STATE_SHA256: ${{ inputs.agenda_state_sha256 }}
+      PRODUCTION_EXPECTED_FINANCIAL_STATE_SHA256: ${{ inputs.financial_state_sha256 }}
       TARGET_WORKER_VERSION: ${{ inputs.worker_version_id }}
     steps:
       - uses: actions/checkout@v6
@@ -62,9 +72,12 @@ jobs:
           node --input-type=module <<'NODE'
           import { validateRollbackInput } from './scripts/migration/production-rollback.mjs'
           const uuid = /^[0-9a-f-]{36}$/i
+          const sha = /^[0-9a-f]{64}$/i
           if (process.env.TARGET_WORKER_VERSION && !uuid.test(process.env.TARGET_WORKER_VERSION)) throw new Error('WORKER_VERSION_ID_INVALID')
           if (!/^[0-9a-f-]{24,}$/i.test(process.env.PRODUCTION_MAIN_BOOKMARK || '')) throw new Error('MAIN_BOOKMARK_INVALID')
           if (!/^[0-9a-f-]{24,}$/i.test(process.env.PRODUCTION_AUTH_BOOKMARK || '')) throw new Error('AUTH_BOOKMARK_INVALID')
+          if (!sha.test(process.env.PRODUCTION_EXPECTED_AGENDA_STATE_SHA256 || '')) throw new Error('AGENDA_STATE_SHA256_INVALID')
+          if (!sha.test(process.env.PRODUCTION_EXPECTED_FINANCIAL_STATE_SHA256 || '')) throw new Error('FINANCIAL_STATE_SHA256_INVALID')
           void validateRollbackInput
           NODE
 
@@ -90,6 +103,9 @@ jobs:
 
       - name: Restore production D1 and AUTH_DB with compensation
         run: node scripts/migration/production-rollback.mjs restore-d1
+
+      - name: Verify Agenda and financial state restored
+        run: node scripts/migration/production-state-proof.mjs verify
 
       - name: Verify live production after rollback
         shell: bash
@@ -123,5 +139,7 @@ jobs:
           echo '## YuiSync production rollback complete' >> "$GITHUB_STEP_SUMMARY"
           echo '- D1 main bookmark restored with compensation guard' >> "$GITHUB_STEP_SUMMARY"
           echo '- AUTH_DB bookmark restored with compensation guard' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Agenda state fingerprint: matched target snapshot' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Financial state fingerprint: matched target snapshot' >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$TARGET_WORKER_VERSION" ]; then echo "- Worker version: $TARGET_WORKER_VERSION" >> "$GITHUB_STEP_SUMMARY"; fi
           echo '- https://yuisync.app readiness: passed' >> "$GITHUB_STEP_SUMMARY"

@@ -3,7 +3,7 @@
   "policy": "frontend-supabase-compat-ratchet",
   "generated_from": "src/**/*.{js,jsx,ts,tsx}",
   "totals": {
-    "from": 213,
+    "from": 212,
     "rpc": 16
   },
   "files": {
@@ -30,7 +30,7 @@
     "src/shared/hooks/useAnalytics.js": { "from": 6, "rpc": 0 },
     "src/shared/hooks/useAppointments.js": { "from": 13, "rpc": 2 },
     "src/shared/hooks/useChat.js": { "from": 7, "rpc": 0 },
-    "src/shared/hooks/useClients.js": { "from": 7, "rpc": 0 },
+    "src/shared/hooks/useClients.js": { "from": 6, "rpc": 0 },
     "src/shared/hooks/useFinance.js": { "from": 13, "rpc": 1 },
     "src/shared/hooks/useProducts.js": { "from": 8, "rpc": 0 },
     "src/shared/hooks/useSales.js": { "from": 13, "rpc": 1 },

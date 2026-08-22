@@ -15,6 +15,7 @@ import { handleAiLabMigrationRequest } from './migration/aiLabMigrationHttp'
 import { handleAuthMigrationRequest } from './migration/authMigrationHttp'
 import { handleClientsPetsMigrationRequest } from './migration/clientsPetsMigrationHttp'
 import { handleOperationalMigrationRequest } from './migration/operationalMigrationHttp'
+import { handlePackageCycleApiRequest } from './packageCycleApi'
 import { handlePetshopPlansApiRequest } from './petshopPlansApi'
 import { handlePetshopServicesApiRequest } from './petshopServicesApi'
 import { handleAsyncQueue } from './queueHandler'
@@ -92,6 +93,9 @@ export default {
 
     const inventoryAdjustmentResponse = await handleInventoryAdjustmentRequest(request, bindings)
     if (inventoryAdjustmentResponse) return respond(inventoryAdjustmentResponse)
+
+    const packageCycleResponse = await handlePackageCycleApiRequest(request, bindings)
+    if (packageCycleResponse) return respond(packageCycleResponse)
 
     const petshopPlansResponse = await handlePetshopPlansApiRequest(request, bindings)
     if (petshopPlansResponse) return respond(petshopPlansResponse)

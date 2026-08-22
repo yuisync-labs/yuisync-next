@@ -1,0 +1,258 @@
+name: Legacy regression browser matrix
+
+on:
+  pull_request:
+    paths:
+      - 'test/e2e/legacy-regression-*.spec.js'
+      - 'test/e2e/legacy-regression-browser-helpers.js'
+      - 'playwright.legacy-regression.config.js'
+      - '.github/workflows/legacy-regression-browser.yml'
+      - 'scripts/migration/staging-e2e-fixtures.mjs'
+      - 'scripts/migration/staging-legacy-regression-fixtures.mjs'
+      - 'vite.config.js'
+      - 'src/modules/petshop/**'
+      - 'src/shared/hooks/useClients.js'
+      - 'apps/edge-api/**'
+      - 'scripts/check-appointment-edit-semantics.mjs'
+      - 'scripts/check-no-domain-state-from-dom.mjs'
+      - 'test/agendaOperationalInfrastructure.test.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edge-staging-deployment
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      YUISYNC_STAGING_URL: https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev
+      YUISYNC_E2E_WRANGLER_ENV: staging
+      CI: 'true'
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Capture exact main SHA for staging restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          MAIN_SHA="$(git rev-parse origin/main)"
+          test -n "$MAIN_SHA"
+          echo "MAIN_SHA=$MAIN_SHA" >> "$GITHUB_ENV"
+          echo "Staging restore pinned to main SHA: $MAIN_SHA"
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Frontend semantic invariants
+        run: |
+          npm run check:appointment-edit-semantics
+          npm run check:no-domain-state-from-dom
+          npx vitest run \
+            src/modules/petshop/lib/appointmentUpdateSemantics.test.js \
+            src/modules/petshop/components/AgendaBillingLabel.test.jsx \
+            src/modules/petshop/lib/serviceWeightBoundaries.test.js
+          node --test test/agendaOperationalInfrastructure.test.mjs
+
+      - name: Workerd and D1 operational invariants
+        run: |
+          npm run test --workspace @yuisync/edge-api -- \
+            test/compatApiLegacyQueryAdapter.test.ts \
+            test/appointmentCommandIntegration.test.ts \
+            test/operationalIntegrityV25.test.ts \
+            test/packageReconciliationIntegration.test.ts \
+            test/appointmentReopenIntegration.test.ts \
+            test/appointmentFinancialReopenIntegration.test.ts \
+            test/checkoutD1Integration.test.ts \
+            test/health.test.ts \
+            test/d1MigrationUpgradeMatrix.test.ts \
+            test/asyncEventRedelivery.test.ts \
+            test/realtimeDurableObject.test.ts \
+            test/realtimeApi.test.ts
+
+      - name: Require preinstalled Chrome and Cloudflare credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          CHROME="$(command -v google-chrome-stable || command -v google-chrome || command -v chromium || true)"
+          test -n "$CHROME" || { echo 'Preinstalled Chrome not found; refusing browser download.' >&2; exit 1; }
+          echo "PLAYWRIGHT_CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
+
+      - name: Prove staging healthy before temporary PR deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error "$YUISYNC_STAGING_URL/health" >/tmp/legacy-health.json
+          curl --fail --silent --show-error "$YUISYNC_STAGING_URL/ready" >/tmp/legacy-ready.json
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const health = JSON.parse(await readFile('/tmp/legacy-health.json', 'utf8'))
+          const ready = JSON.parse(await readFile('/tmp/legacy-ready.json', 'utf8'))
+          if (health?.status !== 'ok' || ready?.status !== 'ready' || String(ready?.checks?.schema_version) !== '30') throw new Error('STAGING_PRECHECK_FAILED')
+          NODE
+
+      - name: Build PR SPA for Worker assets
+        run: npm run build
+
+      - name: Temporarily deploy PR backend to staging
+        id: pr-deploy
+        working-directory: apps/edge-api
+        run: npx wrangler deploy --env staging
+
+      - name: Wait for PR backend ready
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error "$YUISYNC_STAGING_URL/ready" >/tmp/legacy-pr-ready.json && node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const ready = JSON.parse(await readFile('/tmp/legacy-pr-ready.json', 'utf8'))
+          if (ready?.status !== 'ready' || String(ready?.checks?.schema_version) !== '30') process.exit(1)
+          NODE
+            then exit 0; fi
+            sleep 2
+          done
+          exit 1
+
+      - name: Create disposable staging tenant and users
+        id: base-fixtures
+        run: node scripts/migration/staging-e2e-fixtures.mjs setup
+
+      - name: Seed disposable petshop regression domain
+        id: domain-fixtures
+        run: node scripts/migration/staging-legacy-regression-fixtures.mjs setup
+
+      - name: Start PR frontend with staging API proxy
+        shell: bash
+        run: |
+          VITE_DEV_API_PROXY_TARGET="$YUISYNC_STAGING_URL" nohup npx vite --host 127.0.0.1 --port 3080 >/tmp/yuisync-legacy-vite.log 2>&1 &
+          echo "VITE_PID=$!" >> "$GITHUB_ENV"
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error http://127.0.0.1:3080/entrar >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/yuisync-legacy-vite.log
+          exit 1
+
+      - name: Browser regression matrix - collect all failures
+        id: browser_matrix
+        continue-on-error: true
+        env:
+          E2E_BASE_URL: http://127.0.0.1:3080
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Preserve the serial semantics declared by each regression suite.
+          # workers=1 and fullyParallel=false keep execution deterministic while
+          # --max-failures=0 still collects every failure that can validly run.
+          npx playwright test --config=playwright.legacy-regression.config.js --max-failures=0
+          test -z "$(git status --porcelain -- test/e2e)" || {
+            echo 'Browser regression mutated tracked e2e specs; refusing contaminated evidence.' >&2
+            git status --short -- test/e2e >&2
+            exit 1
+          }
+
+      - name: Stop PR frontend
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${VITE_PID:-}" ]; then kill "$VITE_PID" 2>/dev/null || true; fi
+
+      - name: Cleanup foreign isolation fixture
+        if: always() && steps.domain-fixtures.outcome == 'success'
+        run: node scripts/migration/staging-legacy-regression-fixtures.mjs cleanup
+
+      - name: Cleanup disposable staging tenant and users
+        if: always() && steps.base-fixtures.outcome == 'success'
+        run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
+
+      - name: Restore captured main SHA to staging from clean worktree
+        if: always() && steps.pr-deploy.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${MAIN_SHA:-}"
+          RESTORE_DIR="$RUNNER_TEMP/yuisync-main-restore"
+          rm -rf "$RESTORE_DIR"
+          git worktree prune
+          git worktree add --detach "$RESTORE_DIR" "$MAIN_SHA"
+          test "$(git -C "$RESTORE_DIR" rev-parse HEAD)" = "$MAIN_SHA"
+          test -z "$(git -C "$RESTORE_DIR" status --porcelain)"
+          cd "$RESTORE_DIR"
+          npm ci
+          npm run build
+          cd apps/edge-api
+          echo "Restoring staging from exact main SHA: $MAIN_SHA"
+          npx wrangler deploy --env staging | tee /tmp/legacy-main-restore-deploy.log
+          test -s /tmp/legacy-main-restore-deploy.log
+
+      - name: Verify restored staging
+        if: always() && steps.pr-deploy.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Verified restore source SHA: $MAIN_SHA"
+          cat /tmp/legacy-main-restore-deploy.log
+          curl --fail --silent --show-error "$YUISYNC_STAGING_URL/health" >/dev/null
+          curl --fail --silent --show-error "$YUISYNC_STAGING_URL/ready" >/tmp/legacy-restored-ready.json
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const ready = JSON.parse(await readFile('/tmp/legacy-restored-ready.json', 'utf8'))
+          if (ready?.status !== 'ready' || String(ready?.checks?.schema_version) !== '30') throw new Error('STAGING_RESTORE_FAILED')
+          NODE
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-regression-browser-evidence-${{ github.run_id }}
+          path: |
+            playwright-report/legacy-regression
+            legacy-regression-results.json
+            test-results
+            .artifacts/legacy-regression
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Result summary
+        if: always()
+        shell: bash
+        run: |
+          echo '## Legacy browser regression matrix' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Frontend semantic invariants: executed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Workerd/D1 historical invariants: executed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- PR frontend + PR backend on staging: executed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Disposable fixtures + cleanup: executed' >> "$GITHUB_STEP_SUMMARY"
+          echo "- Main restore pinned to SHA: ${MAIN_SHA:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.browser_matrix.outcome }}" = 'success' ]; then
+            echo '- Browser acceptance: all discovered scenarios passed' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '- Browser acceptance: failures collected; inspect HTML/JSON/traces artifact' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Fail only after complete evidence collection
+        if: always() && steps.browser_matrix.outcome == 'failure'
+        run: |
+          echo 'Browser regression failures were collected. Failing only after cleanup, staging restore, summary and evidence upload.' >&2
+          exit 1

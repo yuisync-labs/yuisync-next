@@ -181,11 +181,8 @@ function normalizeAppointmentPayload(payload = {}, moduleId) {
   const apiPayload = { ...payload }
   if (moduleId) apiPayload.module_id = moduleId
 
-  const clientId = apiPayload.client_id || apiPayload.pet_id
-  if (clientId) {
-    apiPayload.client_id = clientId
-    apiPayload.pet_id = apiPayload.pet_id || clientId
-  }
+  const petId = apiPayload.pet_id || apiPayload.client_id
+  if (petId) apiPayload.pet_id = petId
 
   return apiPayload
 }
@@ -204,15 +201,16 @@ async function persistAppointmentDeliveryStaff(activeModuleId, activeTenantId, a
   }
 }
 
-async function ensurePetRecordForClient(activeModuleId, activeTenantId, clientId) {
-  if (activeModuleId !== 'petshop' || !clientId) return clientId
+async function resolveAppointmentParty(activeModuleId, activeTenantId, petId) {
+  if (!petId) return { petId: null, clientId: null }
+  if (activeModuleId !== 'petshop') return { petId, clientId: petId }
 
   const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
     let query = supabase
       .from('clients')
       .select('id, name, phone, email, document, address, neighborhood, city, notes, details')
       .eq('module_id', activeModuleId)
-      .eq('id', clientId)
+      .eq('id', petId)
       .eq('active', true)
       .single()
 
@@ -224,8 +222,12 @@ async function ensurePetRecordForClient(activeModuleId, activeTenantId, clientId
   const client = response.data
   if (!client?.id) throw new Error('Cliente selecionado nao encontrado.')
 
+  const tutorClientId = client.details?.tutor_group_id || client.client_id
+  if (!tutorClientId) throw new Error('O pet selecionado nao possui tutor canonico vinculado.')
+
   const petPayload = {
     id: client.id,
+    client_id: tutorClientId,
     tenant_id: activeTenantId,
     module_id: activeModuleId,
     owner_name: client.name || 'Cliente',
@@ -239,7 +241,7 @@ async function ensurePetRecordForClient(activeModuleId, activeTenantId, clientId
     species: normalizeSpecies(client.details?.species),
     breed: client.details?.breed || null,
     birth_date: client.details?.birth_date || null,
-    weight_kg: client.details?.weight_kg || null,
+    weight_kg: client.details?.weight_kg ?? null,
     color: client.details?.color || null,
     notes: client.details?.pet_notes || client.notes || null,
     updated_at: new Date().toISOString(),
@@ -248,11 +250,14 @@ async function ensurePetRecordForClient(activeModuleId, activeTenantId, clientId
   const petResponse = await supabase
     .from('pets')
     .upsert(petPayload, { onConflict: 'id' })
-    .select('id')
+    .select('id, client_id')
     .single()
 
   if (petResponse.error) throw petResponse.error
-  return petResponse.data?.id || client.id
+  return {
+    petId: petResponse.data?.id || client.id,
+    clientId: petResponse.data?.client_id || tutorClientId,
+  }
 }
 
 async function findAvailableSubscriptionBenefit(moduleId, tenantId, clientId, serviceType) {
@@ -373,10 +378,10 @@ export function useAppointments() {
 
       if (response.error) throw response.error
 
-      const clientMap = await loadClientsMap(activeModuleId, activeTenantId, [response.data?.client_id])
+      const clientMap = await loadClientsMap(activeModuleId, activeTenantId, [response.data?.pet_id || response.data?.client_id])
       const mapped = mapAppointmentRow({
         ...response.data,
-        clients: clientMap.get(response.data?.client_id) || null,
+        clients: clientMap.get(response.data?.pet_id || response.data?.client_id) || null,
       })
       return (await enrichAppointmentsWithTransport(activeModuleId, activeTenantId, [mapped]))[0] || mapped
     }
@@ -450,10 +455,10 @@ export function useAppointments() {
 
         if (fallbackResponse.error) throw fallbackResponse.error
 
-        const clientMap = await loadClientsMap(activeModuleId, activeTenantId, (fallbackResponse.data || []).map((item) => item.client_id))
+        const clientMap = await loadClientsMap(activeModuleId, activeTenantId, (fallbackResponse.data || []).map((item) => item.pet_id || item.client_id))
         const rows = (fallbackResponse.data || []).map((item) => mapAppointmentRow({
           ...item,
-          clients: clientMap.get(item.client_id) || null,
+          clients: clientMap.get(item.pet_id || item.client_id) || null,
         }))
         setAppointments(await enrichAppointmentsWithTransport(activeModuleId, activeTenantId, rows))
         return
@@ -487,8 +492,10 @@ export function useAppointments() {
   const create = useCallback(async (payload) => {
     if (!activeTenantId) throw new Error('Selecione uma empresa ativa antes de salvar o agendamento.')
     const apiPayload = normalizeAppointmentPayload(payload, activeModuleId)
-    if (apiPayload.client_id) {
-      apiPayload.pet_id = await ensurePetRecordForClient(activeModuleId, activeTenantId, apiPayload.client_id)
+    if (apiPayload.pet_id || apiPayload.client_id) {
+      const party = await resolveAppointmentParty(activeModuleId, activeTenantId, apiPayload.pet_id || apiPayload.client_id)
+      apiPayload.pet_id = party.petId
+      apiPayload.client_id = party.clientId
     }
 
     const response = await supabase.rpc('book_petshop_appointment_transaction', {
@@ -513,8 +520,10 @@ export function useAppointments() {
   const update = useCallback(async (id, payload) => {
     if (!activeTenantId) throw new Error('Selecione uma empresa ativa antes de salvar o agendamento.')
     const apiPayload = normalizeAppointmentPayload(payload)
-    if (apiPayload.client_id) {
-      apiPayload.pet_id = await ensurePetRecordForClient(activeModuleId, activeTenantId, apiPayload.client_id)
+    if (apiPayload.pet_id || apiPayload.client_id) {
+      const party = await resolveAppointmentParty(activeModuleId, activeTenantId, apiPayload.pet_id || apiPayload.client_id)
+      apiPayload.pet_id = party.petId
+      apiPayload.client_id = party.clientId
     }
 
     const requiresTransaction = Boolean(

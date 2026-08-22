@@ -160,6 +160,9 @@ jobs:
           npx wrangler d1 time-travel info DB --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json > ../../.artifacts/production-release/db-before-migration.json
           npx wrangler d1 time-travel info AUTH_DB --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json > ../../.artifacts/production-release/auth-db-before-migration.json
 
+      - name: Capture Agenda and financial state with rollback bookmarks
+        run: node scripts/migration/production-state-proof.mjs capture
+
       - name: Apply production D1 migrations
         id: migrate
         working-directory: apps/edge-api
@@ -227,10 +230,17 @@ jobs:
 
       - name: Release summary
         if: success()
+        shell: bash
         run: |
           echo '### YuiSync Next fast production promotion' >> "$GITHUB_STEP_SUMMARY"
           echo "- Runtime: \`$RELEASE_SHA\`" >> "$GITHUB_STEP_SUMMARY"
           echo '- D1 schema: v30' >> "$GITHUB_STEP_SUMMARY"
           echo '- pre-migration D1 + AUTH_DB bookmarks: archived' >> "$GITHUB_STEP_SUMMARY"
+          node --input-type=module <<'NODE'
+          import { readFile, appendFile } from 'node:fs/promises'
+          const proof = JSON.parse(await readFile('.artifacts/production-release/state-before-migration.json', 'utf8'))
+          await appendFile(process.env.GITHUB_STEP_SUMMARY, `- Agenda rollback state SHA-256: \`${proof.agenda.sha256}\`\n`)
+          await appendFile(process.env.GITHUB_STEP_SUMMARY, `- Financial rollback state SHA-256: \`${proof.financial.sha256}\`\n`)
+          NODE
           echo '- yuisync.app /health + /ready: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Quality/staging proofs: exact SHA or inherited only across workflow-only commits' >> "$GITHUB_STEP_SUMMARY"

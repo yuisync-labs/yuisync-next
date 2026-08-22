@@ -65,8 +65,10 @@ export function normalizeCode(value) {
 }
 
 export function normalizeService(row = {}) {
-  const code = normalizeCode(row.code || row.service_type || row.name)
-  const fallback = DEFAULT_PETSHOP_SERVICES.find((item) => item.code === code)
+  const explicitCode = String(row.code || '').trim()
+  const code = explicitCode || normalizeCode(row.service_type || row.name)
+  const normalizedCode = normalizeCode(code)
+  const fallback = DEFAULT_PETSHOP_SERVICES.find((item) => normalizeCode(item.code) === normalizedCode)
   return {
     ...row,
     id: row.id || code,
@@ -108,8 +110,13 @@ export function serviceOptionsForGroup(services = [], group = 'banho_tosa') {
 }
 
 export function findService(services = [], code = '') {
-  const normalized = normalizeCode(code)
-  return normalizeServices(services).find((service) => service.code === normalized) || normalizeService({ code: normalized || 'outro' })
+  const requested = String(code || '').trim()
+  const normalized = normalizeCode(requested)
+  return normalizeServices(services).find((service) => (
+    service.code === requested
+    || normalizeCode(service.code) === normalized
+    || normalizeCode(service.name) === normalized
+  )) || normalizeService({ code: requested || normalized || 'outro' })
 }
 
 export function serviceLabel(services = [], code = '') {

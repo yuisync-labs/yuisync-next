@@ -113,6 +113,17 @@ async function request(path, options = {}) {
   return { data: payload?.data ?? null, error: null, count: payload?.count ?? null }
 }
 
+export function compatMutationReturningFilters(action, payload, filters = [], returning = false) {
+  const next = Array.isArray(filters) ? [...filters] : []
+  if (!returning || action === 'select' || next.some((filter) => filter?.column === 'id')) return next
+
+  const rows = (Array.isArray(payload) ? payload : [payload]).filter((row) => row && typeof row === 'object')
+  const ids = [...new Set(rows.map((row) => String(row.id || '').trim()).filter(Boolean))]
+  if (ids.length === 1) next.push({ op: 'eq', column: 'id', value: ids[0] })
+  else if (ids.length > 1) next.push({ op: 'in', column: 'id', value: ids })
+  return next
+}
+
 class EdgeQueryBuilder {
   constructor(table) {
     this.table = table
@@ -157,6 +168,7 @@ class EdgeQueryBuilder {
   maybeSingle() { this.mode = 'maybeSingle'; return this }
 
   async execute() {
+    const scopedFilters = compatMutationReturningFilters(this.action, this.payload, this.filters, this.returning)
     return request('/compat/query', {
       method: 'POST',
       body: JSON.stringify({
@@ -164,7 +176,7 @@ class EdgeQueryBuilder {
         action: this.action,
         columns: this.columns,
         payload: this.payload,
-        filters: this.filters,
+        filters: scopedFilters,
         orders: this.orders,
         limit: this.limitValue,
         range: this.rangeValue,

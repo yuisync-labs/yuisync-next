@@ -86,6 +86,8 @@ jobs:
       - name: Luna deterministic evals
         run: npm run test:luna:eval -- --groups "${{ steps.luna-eval-impact.outputs.groups }}"
       - run: npm run test:transactions
+      - name: Legacy acceptance 233/233
+        run: node scripts/run-legacy-acceptance-233.mjs
       - id: tenant-readiness
         name: Check tenant isolation credentials
         run: >-
