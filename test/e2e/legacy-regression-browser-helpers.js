@@ -161,10 +161,61 @@ export async function moveCardTo(page, appointmentId, time) {
   const to = await slot.boundingBox()
   expect(from).toBeTruthy()
   expect(to).toBeTruthy()
-  await page.mouse.move(from.x + from.width / 2, from.y + Math.min(24, from.height / 2))
-  await page.mouse.down()
-  await page.mouse.move(to.x + to.width / 2, to.y + Math.min(12, to.height / 2), { steps: 12 })
-  await page.mouse.up()
+
+  const sourcePoint = {
+    x: from.x + from.width / 2,
+    y: from.y + Math.min(24, from.height / 2),
+  }
+  const targetPoint = {
+    x: to.x + to.width / 2,
+    y: to.y + Math.min(12, to.height / 2),
+  }
+  const pointerId = 1
+
+  await card.evaluate((node, { point, pointerId }) => {
+    node.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true,
+      cancelable: true,
+      pointerId,
+      pointerType: 'mouse',
+      isPrimary: true,
+      button: 0,
+      buttons: 1,
+      clientX: point.x,
+      clientY: point.y,
+    }))
+  }, { point: sourcePoint, pointerId })
+
+  await page.evaluate(({ fromPoint, toPoint, pointerId }) => {
+    const emitMove = (x, y) => {
+      document.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true,
+        cancelable: true,
+        pointerId,
+        pointerType: 'mouse',
+        isPrimary: true,
+        button: -1,
+        buttons: 1,
+        clientX: x,
+        clientY: y,
+      }))
+    }
+
+    emitMove(fromPoint.x + 8, fromPoint.y + 8)
+    emitMove(toPoint.x, toPoint.y)
+    document.dispatchEvent(new PointerEvent('pointerup', {
+      bubbles: true,
+      cancelable: true,
+      pointerId,
+      pointerType: 'mouse',
+      isPrimary: true,
+      button: 0,
+      buttons: 0,
+      clientX: toPoint.x,
+      clientY: toPoint.y,
+    }))
+  }, { fromPoint: sourcePoint, toPoint: targetPoint, pointerId })
+
   await expect(page.getByText(new RegExp(`movido para ${time.replace(':', '\\:')}`, 'i'))).toBeVisible({ timeout: 10_000 })
   await expect(card).toContainText(time, { timeout: 10_000 })
 }
