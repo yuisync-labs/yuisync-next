@@ -57,7 +57,7 @@ const files = [
   'test/rollbackStatePreservationAcceptance.test.mjs',
 ]
 
-const result = spawnSync(process.execPath, ['--test', ...files], {
+const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...files], {
   stdio: 'inherit',
   env: process.env,
 })
