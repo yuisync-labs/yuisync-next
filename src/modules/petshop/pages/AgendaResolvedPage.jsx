@@ -140,7 +140,7 @@ function findScrollableAncestor(element) {
   return document.scrollingElement || document.documentElement
 }
 
-function ResolvedAgendaOperations({ setPage }) {
+function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
   const { storeSettings } = useAuthCtx()
   const {
     appointments,
@@ -284,11 +284,7 @@ function ResolvedAgendaOperations({ setPage }) {
       if (parsed) setSelectedDate((current) => current === isoDate(parsed) ? current : isoDate(parsed))
     }
 
-    const isDailyAgenda = () => {
-      const button = [...pageRoot.querySelectorAll('button')]
-        .find((item) => normalizeText(item.textContent) === 'diaria')
-      return Boolean(button?.className?.includes('bg-amber'))
-    }
+    const isDailyAgenda = () => agendaPeriod === 'day'
 
     const slots = () => pageRoot.querySelectorAll('button[aria-label^="Agendar as "]')
 
@@ -753,7 +749,7 @@ function ResolvedAgendaOperations({ setPage }) {
       resetDrag()
       pageRoot.querySelectorAll('[data-yuisync-resolved-actions], [data-yuisync-print-day]').forEach((node) => node.remove())
     }
-  }, [cancelAppointment, completeAppointment, load, moveAppointment, operationalAppointments, printAppointment, printDay, selectedDate, statusBadge, storeSettings?.petshop_service_durations, transportOptions])
+  }, [agendaPeriod, cancelAppointment, completeAppointment, load, moveAppointment, operationalAppointments, printAppointment, printDay, selectedDate, statusBadge, storeSettings?.petshop_service_durations, transportOptions])
 
   return notice ? (
     <button
@@ -768,10 +764,16 @@ function ResolvedAgendaOperations({ setPage }) {
 }
 
 export default function AgendaResolvedPage({ setPage }) {
+  const [agendaPeriod, setAgendaPeriod] = useState('day')
+
   return (
     <>
-      <AgendaPage setPage={setPage} />
-      <ResolvedAgendaOperations setPage={setPage} />
+      <AgendaPage
+        setPage={setPage}
+        agendaPeriod={agendaPeriod}
+        onAgendaPeriodChange={setAgendaPeriod}
+      />
+      <ResolvedAgendaOperations setPage={setPage} agendaPeriod={agendaPeriod} />
     </>
   )
 }

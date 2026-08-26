@@ -1506,7 +1506,7 @@ function AgendaTimelineView({
   )
 }
 
-export default function AgendaPage({ setPage }) {
+export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeriod, onAgendaPeriodChange }) {
   const { appointments, loading, load, create, update, updateStatus, remove, serviceLabel: legacyServiceLabel, statusBadge } =
     useAppointments()
   const { clients: pets, load: loadPets, search: searchPets } = useClients()
@@ -1518,7 +1518,12 @@ export default function AgendaPage({ setPage }) {
   const [modal, setModal]           = useState(null)   // null | {} | {appt}
   const [receipt, setReceipt]       = useState(null) // appt to print
   const view = 'agenda'
-  const [agendaPeriod, setAgendaPeriod] = useState('day') // 'day' | 'week'
+  const [localAgendaPeriod, setLocalAgendaPeriod] = useState('day') // 'day' | 'week'
+  const agendaPeriod = controlledAgendaPeriod ?? localAgendaPeriod
+  const setAgendaPeriod = (period) => {
+    setLocalAgendaPeriod(period)
+    onAgendaPeriodChange?.(period)
+  }
   const [filterStatus, setFilterStatus] = useState('')
   const [search, setSearch]         = useState('')
   const [activeAgendaTab, setActiveAgendaTab] = useState('banho_tosa')
