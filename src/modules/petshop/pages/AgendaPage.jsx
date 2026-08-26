@@ -49,6 +49,7 @@ import { normalizeTransportOptions } from './agendaOperationalCore'
 import { appointmentCheckoutTotals, appointmentNeedsPayment, queueAppointmentCheckout } from './appointmentCheckoutFlow'
 import { AgendaBillingLabel } from '../components/AgendaBillingLabel'
 import { appointmentPackagePresentation } from '../lib/appointmentBillingPresentation'
+import { appointmentRequiresGroomingMachineNumber } from '../lib/groomingMachinePolicy'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const asAgendaServices = (services = []) =>
@@ -1241,6 +1242,7 @@ function AgendaTimelineView({
         data-yuisync-native-appointment-id={String(appt.id)}
         data-yuisync-card-kind={billingPresentation.cardKind}
         data-yuisync-benefit-state={billingPresentation.benefitState || ''}
+        data-yuisync-requires-machine-number={String(appointmentRequiresGroomingMachineNumber(appt))}
         className={`yuisync-agenda-card-surface relative w-full rounded-lg border p-2 text-left shadow-sm ${agendaCardTone(appt.status)}`}
       >
         <button type="button" onClick={() => onEdit(appt)} className="yuisync-card-content w-full text-left">

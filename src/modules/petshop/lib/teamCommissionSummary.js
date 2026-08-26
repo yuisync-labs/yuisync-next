@@ -17,13 +17,25 @@ const itemText = (item = {}) => normalizeText([
   item.group_type,
 ].filter(Boolean).join(' '))
 
+const itemDescriptionText = (item = {}) => normalizeText([
+  item.code,
+  item.value,
+  item.name,
+  item.label,
+  item.service_name,
+  item.service_type,
+].filter(Boolean).join(' ')).replace(/[_-]+/g, ' ')
+
 const itemCategory = (item = {}, appointment = {}) => {
   const text = itemText(item)
+  const description = itemDescriptionText(item)
   const rawType = normalizeText(item.service_type || item.code || item.value || appointment.service_type || '')
   const genericBathTosa = genericBathTosaPattern.test(rawType)
 
   if (/tesoura/.test(text)) return 'scissor_grooming'
   if (/tosa\s*(?:na\s*)?maquina|maquina|tosa\s*total|tosa\s*completa|groom|trim/.test(text)) return 'machine_grooming'
+  if (/\b(?:corte|apar(?:ar|o)?)\s+(?:de\s+)?unhas?\b/.test(description)
+    && !/\b(?:banho|tosa)\b/.test(description)) return 'other'
   if (/\bbanho\b/.test(text)) return 'bath'
   if (/\btosa\b/.test(text) && !/higien/.test(text)) return 'machine_grooming'
   if (/higien/.test(text)) return 'other'
