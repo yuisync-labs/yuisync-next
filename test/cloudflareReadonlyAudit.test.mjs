@@ -17,7 +17,7 @@ function passingInput() {
     mainTables: [...REQUIRED_MAIN_TABLES],
     authTables: [...REQUIRED_AUTH_TABLES],
     schemaVersion: '30',
-    integrityRows: [{ integrity_check: 'ok' }],
+    quickCheckRows: [{ quick_check: 'ok' }],
     mainInvariantRows: Object.fromEntries(Object.keys(MAIN_INVARIANT_QUERIES).map((name) => [name, name === 'foreign_keys' ? [] : [{ count: 0 }]])),
     authInvariantRows: Object.fromEntries(Object.keys(AUTH_INVARIANT_QUERIES).map((name) => [name, [{ count: 0 }]])),
   }
