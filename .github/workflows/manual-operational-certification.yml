@@ -1,0 +1,192 @@
+name: Manual operational certification
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: manual-operational-certification
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Resolve exact main SHA
+    if: github.event.label.name == 'manual-regression-authorized'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      release_sha: ${{ steps.gates.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFile, readFile } from 'node:fs/promises'
+          import { execFileSync } from 'node:child_process'
+          const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, 'utf8'))
+          const body = String(event?.issue?.body || '')
+          const release = /^Release-SHA:\s*([0-9a-f]{40})\s*$/im.exec(body)?.[1]?.toLowerCase()
+          const auth = /^Authorization:\s*(\S+)\s*$/im.exec(body)?.[1]
+          if (!release) throw new Error('RELEASE_SHA_REQUIRED')
+          if (auth !== 'AUTHORIZE_MANUAL_REGRESSION') throw new Error('MANUAL_REGRESSION_AUTHORIZATION_REQUIRED')
+          execFileSync('git', ['fetch', 'origin', 'main'], { stdio: 'inherit' })
+          const currentMain = execFileSync('git', ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim().toLowerCase()
+          if (release !== currentMain) throw new Error(`RELEASE_NOT_CURRENT_MAIN:${release}:${currentMain}`)
+          await appendFile(process.env.GITHUB_OUTPUT, `release_sha=${release}\n`)
+          NODE
+
+  staging:
+    name: Browser and operational flows on isolated staging data
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      RELEASE_SHA: ${{ needs.preflight.outputs.release_sha }}
+      YUISYNC_STAGING_URL: https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - run: npm ci
+      - name: Prove exact checkout and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          npm run test:cloudflare-audit
+          npx vitest run src/modules/petshop/pages/agendaOperationalCore.test.js src/modules/petshop/lib/groomingMachinePolicy.test.js src/modules/petshop/lib/teamCommissionSummary.test.js
+          npm run build
+      - name: Deploy exact runtime to staging only
+        working-directory: apps/edge-api
+        run: npx wrangler deploy --env staging
+      - name: Sweep stale disposable staging fixtures
+        env:
+          YUISYNC_E2E_BASE_URL: ${{ env.YUISYNC_STAGING_URL }}
+        run: node scripts/migration/staging-e2e-fixtures.mjs sweep
+      - name: Require healthy staging schema before fixtures
+        run: npm run audit:cloudflare:readonly -- --env staging --base-url "$YUISYNC_STAGING_URL"
+      - name: Prepare disposable staging tenant and users
+        id: fixtures
+        env:
+          YUISYNC_E2E_BASE_URL: ${{ env.YUISYNC_STAGING_URL }}
+        run: node scripts/migration/staging-e2e-fixtures.mjs setup
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Exercise public pages, roles and every authenticated tab
+        env:
+          E2E_BASE_URL: ${{ env.YUISYNC_STAGING_URL }}
+        run: >-
+          npx playwright test
+          test/e2e/public-smoke.spec.js
+          test/e2e/authenticated-tabs.spec.js
+          --project=desktop
+      - name: Certify transactional PDV and persisted D1 side effects
+        env:
+          YUISYNC_E2E_BASE_URL: ${{ env.YUISYNC_STAGING_URL }}
+        run: node scripts/migration/staging-pdv-checkout.mjs
+      - name: Certify managed users and audit events
+        env:
+          YUISYNC_E2E_BASE_URL: ${{ env.YUISYNC_STAGING_URL }}
+        run: node scripts/migration/staging-managed-users.mjs
+      - name: Certify authenticated realtime invalidation
+        env:
+          YUISYNC_E2E_BASE_URL: ${{ env.YUISYNC_STAGING_URL }}
+        run: node scripts/migration/staging-realtime-websocket.mjs
+      - name: Clean disposable staging data
+        if: always() && steps.fixtures.outcome == 'success'
+        env:
+          YUISYNC_E2E_BASE_URL: ${{ env.YUISYNC_STAGING_URL }}
+        run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
+      - name: Prove cleanup and D1 invariants
+        if: always() && steps.fixtures.outcome == 'success'
+        run: npm run audit:cloudflare:readonly -- --env staging --base-url "$YUISYNC_STAGING_URL"
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-certification-browser-${{ env.RELEASE_SHA }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  production:
+    name: Read-only production D1 and runtime audit
+    needs: [preflight, staging]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: cloudflare-production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      RELEASE_SHA: ${{ needs.preflight.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - run: npm ci
+      - name: Resolve existing production resources without provisioning
+        run: node scripts/migration/production-cloudflare.mjs resolve
+      - name: Audit production runtime and both D1 databases read-only
+        run: >-
+          npm run audit:cloudflare:readonly --
+          --env production
+          --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+          --base-url https://yuisync.app
+      - name: Confirm public application response
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(curl --silent --show-error --location --output /dev/null --write-out '%{http_code}' https://yuisync.app/)" = 200
+
+  result:
+    name: Publish certification result
+    if: always() && needs.preflight.result != 'skipped'
+    needs: [preflight, staging, production]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Comment auditable result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RELEASE_SHA: ${{ needs.preflight.outputs.release_sha }}
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          STAGING_RESULT: ${{ needs.staging.result }}
+          PRODUCTION_RESULT: ${{ needs.production.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Manual operational certification result
+
+          - Release-SHA: \`$RELEASE_SHA\`
+          - Preflight: **$PREFLIGHT_RESULT**
+          - Isolated staging browser/operations: **$STAGING_RESULT**
+          - Production D1/runtime read-only audit: **$PRODUCTION_RESULT**
+          - Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          Production business data was not modified by this certification."
+          test "$PREFLIGHT_RESULT" = success
+          test "$STAGING_RESULT" = success
+          test "$PRODUCTION_RESULT" = success

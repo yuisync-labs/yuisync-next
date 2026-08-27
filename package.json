@@ -59,7 +59,9 @@
     "edge:dry-run": "npm run build && npm run deploy:dry-run --workspace @yuisync/edge-api",
     "edge:check": "npm run edge:types:check && npm run edge:typecheck && npm run edge:test && npm run edge:dry-run",
     "edge:dev": "npm run dev --workspace @yuisync/edge-api",
-    "edge:smoke": "node scripts/smoke-edge-staging.mjs"
+    "edge:smoke": "node scripts/smoke-edge-staging.mjs",
+    "test:cloudflare-audit": "node --test test/cloudflareReadonlyAudit.test.mjs",
+    "audit:cloudflare:readonly": "node scripts/migration/cloudflare-readonly-audit.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",

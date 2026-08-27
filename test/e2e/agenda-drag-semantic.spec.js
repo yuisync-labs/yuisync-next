@@ -24,6 +24,7 @@ test('arrasta um agendamento no modo diario sem depender da cor do tema', async 
   const target = page.getByRole('button', { name: 'Agendar as 08:50' })
   await expect(card).toBeVisible()
   await expect(target).toBeVisible()
+  await target.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }))
 
   const from = await card.boundingBox()
   const to = await target.boundingBox()

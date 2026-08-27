@@ -68,6 +68,22 @@ describe('agenda operational core', () => {
     expect(slotTimeFromAria(selected)).toBe('09:10')
   })
 
+  it('seleciona o centro mais proximo quando faixas visuais se sobrepoem', () => {
+    globalThis.window = { innerHeight: 800 }
+    const slot0830 = {
+      getBoundingClientRect: () => ({ left: 100, right: 700, top: 100, bottom: 180 }),
+      getAttribute: () => 'Agendar as 08:30',
+    }
+    const slot0850 = {
+      getBoundingClientRect: () => ({ left: 100, right: 700, top: 140, bottom: 220 }),
+      getAttribute: () => 'Agendar as 08:50',
+    }
+
+    const selected = chooseAgendaSlot([slot0830, slot0850], 350, 188)
+    expect(selected).toBe(slot0850)
+    expect(slotTimeFromAria(selected)).toBe('08:50')
+  })
+
   it('distingue agendamento ativo e concluido com mesmo pet e horario', () => {
     const active = { textContent: '09:00 - 10:00 Agendado TOBY' }
     const finished = { textContent: '09:00 - 10:00 Concluido TOBY' }

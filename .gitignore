@@ -16,3 +16,5 @@ backups/
 .artifacts/
 __pycache__/
 .originkit/
+test-results/
+playwright-report/
