@@ -65,7 +65,7 @@ export function rowsFromWrangler(raw) {
     .flatMap((entry) => Array.isArray(entry?.results) ? entry.results : [])
 }
 
-export function evaluateAudit({ ready, mainTables, authTables, schemaVersion, integrityRows, mainInvariantRows, authInvariantRows }) {
+export function evaluateAudit({ ready, mainTables, authTables, schemaVersion, quickCheckRows, mainInvariantRows, authInvariantRows }) {
   const missingMainTables = REQUIRED_MAIN_TABLES.filter((name) => !mainTables.includes(name))
   const missingAuthTables = REQUIRED_AUTH_TABLES.filter((name) => !authTables.includes(name))
   const failures = []
@@ -74,8 +74,8 @@ export function evaluateAudit({ ready, mainTables, authTables, schemaVersion, in
   if (String(schemaVersion || '') !== '30') failures.push(`schema_version:${schemaVersion || 'missing'}`)
   if (missingMainTables.length) failures.push(`missing_main_tables:${missingMainTables.join(',')}`)
   if (missingAuthTables.length) failures.push(`missing_auth_tables:${missingAuthTables.join(',')}`)
-  if (integrityRows.length !== 1 || String(integrityRows[0]?.integrity_check || '').toLowerCase() !== 'ok') {
-    failures.push('integrity_check')
+  if (quickCheckRows.length !== 1 || String(quickCheckRows[0]?.quick_check || '').toLowerCase() !== 'ok') {
+    failures.push('quick_check')
   }
 
   for (const [name, rows] of Object.entries(mainInvariantRows)) {
@@ -153,14 +153,14 @@ async function main() {
   const mainTables = d1Rows('DB', "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;", options).map((row) => String(row.name))
   const authTables = d1Rows('AUTH_DB', "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;", options).map((row) => String(row.name))
   const schemaVersion = d1Rows('DB', "SELECT value FROM _yuisync_system_metadata WHERE key='schema_version' LIMIT 1;", options)[0]?.value
-  const integrityRows = d1Rows('DB', 'PRAGMA integrity_check;', options)
+  const quickCheckRows = d1Rows('DB', 'PRAGMA quick_check;', options)
   const mainInvariantRows = Object.fromEntries(
     Object.entries(MAIN_INVARIANT_QUERIES).map(([name, sql]) => [name, d1Rows('DB', sql, options)]),
   )
   const authInvariantRows = Object.fromEntries(
     Object.entries(AUTH_INVARIANT_QUERIES).map(([name, sql]) => [name, d1Rows('AUTH_DB', sql, options)]),
   )
-  const result = evaluateAudit({ ready, mainTables, authTables, schemaVersion, integrityRows, mainInvariantRows, authInvariantRows })
+  const result = evaluateAudit({ ready, mainTables, authTables, schemaVersion, quickCheckRows, mainInvariantRows, authInvariantRows })
   console.log(JSON.stringify({
     schema: 'yuisync-cloudflare-readonly-audit/v1',
     environment: options.env,

@@ -86,7 +86,7 @@ Registre para cada item: `PASS`, `FAIL` ou `BLOCKED`, navegador, viewport, horá
 ### M09 — D1 e readiness
 
 - `/health` responde `ok` e `/ready` responde `ready` com schema v30.
-- `PRAGMA integrity_check` responde `ok`.
+- `PRAGMA quick_check` (suportado pelo D1 remoto) responde `ok`.
 - `PRAGMA foreign_key_check` não retorna linhas.
 - Tabelas críticas de operação e Better Auth existem.
 - Não existem pets, agendamentos, itens, pagamentos ou memberships órfãos.
