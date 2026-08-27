@@ -399,8 +399,7 @@ export function ClientHistoryGroomingEnhancer() {
         return
       }
       const card = action.closest('[data-yuisync-appointment-id]')
-      const text = normalize(card?.textContent)
-      if (!card || (!text.includes('tosa') && card.dataset.yuisyncCardKind !== 'grooming')) return
+      if (!card || card.dataset.yuisyncRequiresMachineNumber !== 'true') return
       event.preventDefault()
       event.stopPropagation()
       event.stopImmediatePropagation()
