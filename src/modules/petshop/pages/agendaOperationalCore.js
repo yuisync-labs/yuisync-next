@@ -146,10 +146,21 @@ export function chooseAgendaSlot(slots, clientX, clientY) {
     .map((slot) => ({ slot, rect: slot.getBoundingClientRect() }))
     .filter(({ rect }) => rect.bottom >= 0 && rect.top <= window.innerHeight)
 
-  const exact = candidates.find(({ rect }) => (
+  const exact = candidates
+    .filter(({ rect }) => (
     clientX >= rect.left && clientX <= rect.right
     && clientY >= rect.top && clientY <= rect.bottom
-  ))
+    ))
+    .sort((left, right) => (
+      Math.hypot(
+        (left.rect.left + left.rect.right) / 2 - clientX,
+        (left.rect.top + left.rect.bottom) / 2 - clientY,
+      )
+      - Math.hypot(
+        (right.rect.left + right.rect.right) / 2 - clientX,
+        (right.rect.top + right.rect.bottom) / 2 - clientY,
+      )
+    ))[0]
   if (exact) return exact.slot
 
   const horizontallyAligned = candidates.filter(({ rect }) => (

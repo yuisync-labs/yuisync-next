@@ -667,7 +667,9 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
       }
 
       event.preventDefault()
-      const slot = state.slot || chooseAgendaSlot(slots(), event.clientX, event.clientY)
+      // O requestAnimationFrame da pre-visualizacao pode estar um quadro atrasado.
+      // A soltura sempre deve usar a posicao final do ponteiro como fonte de verdade.
+      const slot = chooseAgendaSlot(slots(), event.clientX, event.clientY) || state.slot
       const time = slotTimeFromAria(slot)
       const id = state.id
       lastDragAtRef.current = Date.now()
