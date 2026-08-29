@@ -20,8 +20,8 @@ test('authenticated route smoke', async ({ page }) => {
   test.skip(!process.env.E2E_EMAIL || !process.env.E2E_PASSWORD, 'Credenciais do tenant de testes nao configuradas')
 
   await page.goto('/entrar')
-  await page.getByLabel(/email/i).fill(process.env.E2E_EMAIL)
-  await page.getByLabel(/senha/i).fill(process.env.E2E_PASSWORD)
-  await page.getByRole('button', { name: /entrar/i }).click()
+  await page.getByLabel('E-mail', { exact: true }).fill(process.env.E2E_EMAIL)
+  await page.getByLabel('Senha', { exact: true }).fill(process.env.E2E_PASSWORD)
+  await page.locator('form button[type="submit"]').click()
   await expect(page).not.toHaveURL(/\/entrar/)
 })
