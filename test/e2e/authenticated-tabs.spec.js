@@ -44,7 +44,8 @@ test.beforeAll(() => {
 })
 
 async function settlePage(page) {
-  await page.waitForLoadState('networkidle', { timeout: 15_000 })
+  await page.waitForLoadState('domcontentloaded')
+  await expect(page.getByText(/Sincronizando ambiente/i)).toHaveCount(0, { timeout: 30_000 })
 }
 
 function watchApiProblems(page) {
@@ -87,37 +88,37 @@ async function signIn(page, email, password) {
   await settlePage(page)
 }
 
-test('admin percorre todas as abas sem console, quebra ou overflow', async ({ page }) => {
-  test.skip(!process.env.E2E_EMAIL || !process.env.E2E_PASSWORD, 'Credenciais E2E nao configuradas')
-  test.slow()
+for (const viewport of viewports) {
+  test(`admin percorre todas as abas sem console, quebra ou overflow em ${viewport.width}px`, async ({ page }) => {
+    test.skip(!process.env.E2E_EMAIL || !process.env.E2E_PASSWORD, 'Credenciais E2E nao configuradas')
+    test.slow()
 
-  const consoleProblems = []
-  const apiProblems = watchApiProblems(page)
-  page.on('console', (message) => {
-    if (['warning', 'error'].includes(message.type())) consoleProblems.push(`${message.type()}: ${message.text()}`)
-  })
-  page.on('pageerror', (error) => consoleProblems.push(`pageerror: ${error.message}`))
+    const consoleProblems = []
+    const apiProblems = watchApiProblems(page)
+    page.on('console', (message) => {
+      if (['warning', 'error'].includes(message.type())) consoleProblems.push(`${message.type()}: ${message.text()}`)
+    })
+    page.on('pageerror', (error) => consoleProblems.push(`pageerror: ${error.message}`))
 
-  await signIn(page, process.env.E2E_EMAIL, process.env.E2E_PASSWORD)
-
-  for (const viewport of viewports) {
     await page.setViewportSize(viewport)
+    await signIn(page, process.env.E2E_EMAIL, process.env.E2E_PASSWORD)
+
     for (const route of moduleRoutes) {
-      await page.goto(route)
-      await expect(page.locator('main h1, main h2').first()).toBeVisible({ timeout: 15_000 })
-      await expect(page.getByText('Falha ao carregar esta aba')).toHaveCount(0)
+      await page.goto(route, { waitUntil: 'domcontentloaded' })
       await settlePage(page)
+      await expect(page.locator('main h1, main h2').first()).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByText('Falha ao carregar esta aba')).toHaveCount(0)
 
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
       )
       expect(overflow, `${route} em ${viewport.width}px`).toBe(false)
     }
-  }
 
-  expect(apiProblems).toEqual([])
-  expect(consoleProblems).toEqual([])
-})
+    expect(apiProblems).toEqual([])
+    expect(consoleProblems).toEqual([])
+  })
+}
 
 for (const role of [
   { name: 'usuario comum', email: 'E2E_COMMON_EMAIL', password: 'E2E_COMMON_PASSWORD' },
