@@ -48,27 +48,66 @@ async function settlePage(page) {
   await expect(page.getByText(/Sincronizando ambiente/i)).toHaveCount(0, { timeout: 30_000 })
 }
 
-function watchApiProblems(page) {
+function watchApiActivity(page) {
   const problems = []
+  const pending = new Set()
+  let lastActivityAt = Date.now()
+
+  const isSameOriginApi = (requestOrResponse) => {
+    const url = new URL(requestOrResponse.url())
+    const baseUrl = new URL(process.env.E2E_BASE_URL || page.url())
+    return url.origin === baseUrl.origin && url.pathname.startsWith('/api/')
+  }
+
+  const markFinished = (request) => {
+    if (!isSameOriginApi(request)) return
+    pending.delete(request)
+    lastActivityAt = Date.now()
+  }
+
+  page.on('request', (request) => {
+    if (!isSameOriginApi(request)) return
+    pending.add(request)
+    lastActivityAt = Date.now()
+  })
 
   page.on('response', (response) => {
+    if (!isSameOriginApi(response)) return
     const url = new URL(response.url())
-    if (url.origin !== new URL(page.url()).origin || !url.pathname.startsWith('/api/')) return
     if (response.status() >= 400) {
       problems.push(`${response.status()} ${response.request().method()} ${url.pathname}`)
     }
   })
 
+  page.on('requestfinished', markFinished)
+
   page.on('requestfailed', (request) => {
-    const url = new URL(request.url())
+    if (!isSameOriginApi(request)) return
     const failure = request.failure()?.errorText || 'request failed'
-    if (url.origin !== new URL(page.url()).origin || !url.pathname.startsWith('/api/')) return
+    const url = new URL(request.url())
     if (failure !== 'net::ERR_ABORTED') {
       problems.push(`${failure} ${request.method()} ${url.pathname}`)
     }
+    markFinished(request)
   })
 
-  return problems
+  return {
+    problems,
+    async waitForIdle({ timeout = 30_000, quietFor = 600 } = {}) {
+      const startedAt = Date.now()
+
+      while (Date.now() - startedAt < timeout) {
+        if (pending.size === 0 && Date.now() - lastActivityAt >= quietFor) return
+        await page.waitForTimeout(50)
+      }
+
+      const pendingRoutes = [...pending].map((request) => {
+        const url = new URL(request.url())
+        return `${request.method()} ${url.pathname}`
+      })
+      throw new Error(`A API nao ficou ociosa em ${timeout}ms: ${pendingRoutes.join(', ')}`)
+    },
+  }
 }
 
 async function signIn(page, email, password) {
@@ -94,7 +133,7 @@ for (const viewport of viewports) {
     test.slow()
 
     const consoleProblems = []
-    const apiProblems = watchApiProblems(page)
+    const api = watchApiActivity(page)
     page.on('console', (message) => {
       if (['warning', 'error'].includes(message.type())) consoleProblems.push(`${message.type()}: ${message.text()}`)
     })
@@ -102,11 +141,13 @@ for (const viewport of viewports) {
 
     await page.setViewportSize(viewport)
     await signIn(page, process.env.E2E_EMAIL, process.env.E2E_PASSWORD)
+    await api.waitForIdle()
 
     for (const route of moduleRoutes) {
       await page.goto(route, { waitUntil: 'domcontentloaded' })
       await settlePage(page)
       await expect(page.locator('main h1, main h2').first()).toBeVisible({ timeout: 30_000 })
+      await api.waitForIdle()
       await expect(page.getByText('Falha ao carregar esta aba')).toHaveCount(0)
 
       const overflow = await page.evaluate(
@@ -115,7 +156,7 @@ for (const viewport of viewports) {
       expect(overflow, `${route} em ${viewport.width}px`).toBe(false)
     }
 
-    expect(apiProblems).toEqual([])
+    expect(api.problems).toEqual([])
     expect(consoleProblems).toEqual([])
   })
 }
@@ -130,22 +171,25 @@ for (const role of [
     test.skip(!email || !password, `Credenciais de ${role.name} nao configuradas`)
 
     const errors = []
-    const apiProblems = watchApiProblems(page)
+    const api = watchApiActivity(page)
     page.on('console', (message) => {
       if (message.type() === 'error') errors.push(message.text())
     })
 
     await signIn(page, email, password)
+    await api.waitForIdle()
     await page.goto('/petshop/dashboard')
     await expect(page.locator('main h1, main h2').first()).toBeVisible({ timeout: 15_000 })
     await settlePage(page)
+    await api.waitForIdle()
 
     await page.reload()
     await expect(page).not.toHaveURL(/\/entrar/)
     await expect(page.locator('main h1, main h2').first()).toBeVisible({ timeout: 15_000 })
     await settlePage(page)
+    await api.waitForIdle()
 
-    expect(apiProblems).toEqual([])
+    expect(api.problems).toEqual([])
     expect(errors).toEqual([])
   })
 }
