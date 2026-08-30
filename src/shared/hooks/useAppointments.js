@@ -3,6 +3,13 @@ import { supabase, todayISO, getTimezoneOffset } from '../../lib/supabase'
 import { useModuleCtx } from '../../context/ModuleContext'
 import { useAuthCtx } from '../../context/AuthContext'
 import { applyTenantFilter, buildTenantPayload, runWithTenantFallback } from '../../lib/tenant'
+import {
+  createAppointmentCommand,
+  getAppointmentCommand,
+  listAppointmentsCommand,
+  removeAppointmentCommand,
+  updateAppointmentCommand,
+} from '../../modules/petshop/lib/appointmentCommands'
 
 const APPOINTMENT_BASE_FIELDS = `
   id, pet_id, client_id, service_type, service_group, service_items, scheduled_at, duration_min, price, status, notes, source, created_at,
@@ -226,6 +233,7 @@ async function ensurePetRecordForClient(activeModuleId, activeTenantId, clientId
 
   const petPayload = {
     id: client.id,
+    client_id: client.details?.tutor_group_id || client.id,
     tenant_id: activeTenantId,
     module_id: activeModuleId,
     owner_name: client.name || 'Cliente',
@@ -346,6 +354,15 @@ export function useAppointments() {
   const fetchAppointmentById = useCallback(async (appointmentId) => {
     if (!activeModuleId || !appointmentId) return null
 
+    if (activeModuleId === 'petshop') {
+      const appointment = await getAppointmentCommand({
+        tenantId: activeTenantId,
+        moduleId: activeModuleId,
+        appointmentId,
+      })
+      return mapAppointmentRow(appointment)
+    }
+
     let response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
       let query = supabase
         .from('appointments')
@@ -393,6 +410,24 @@ export function useAppointments() {
     const tz = getTimezoneOffset()
 
     try {
+      if (activeModuleId === 'petshop') {
+        const startDate = filters.startDate || filters.date || filters.endDate
+        const endDate = filters.endDate || filters.date || filters.startDate
+        const rows = await listAppointmentsCommand({
+          tenantId: activeTenantId,
+          moduleId: activeModuleId,
+          filters: {
+            start: startDate ? `${startDate}T00:00:00${tz}` : null,
+            end: endDate ? `${endDate}T23:59:59.999${tz}` : null,
+            status: filters.status,
+            service_type: filters.service_type,
+            employee_id: filters.employee_id,
+          },
+        })
+        setAppointments(rows.map(mapAppointmentRow))
+        return
+      }
+
       const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
         let query = supabase
           .from('appointments')
@@ -487,6 +522,22 @@ export function useAppointments() {
   const create = useCallback(async (payload) => {
     if (!activeTenantId) throw new Error('Selecione uma empresa ativa antes de salvar o agendamento.')
     const apiPayload = normalizeAppointmentPayload(payload, activeModuleId)
+
+    if (activeModuleId === 'petshop') {
+      const created = mapAppointmentRow(await createAppointmentCommand({
+        tenantId: activeTenantId,
+        moduleId: activeModuleId,
+        payload: {
+          ...apiPayload,
+          source: payload.source || 'manual',
+          idempotency_key: payload.idempotency_key || crypto.randomUUID(),
+        },
+      }))
+      setAppointments((current) => mergeAppointmentState(current, created))
+      emitAppointmentSync({ type: 'upsert', appointment: created, moduleId: activeModuleId, tenantId: activeTenantId })
+      return created
+    }
+
     if (apiPayload.client_id) {
       apiPayload.pet_id = await ensurePetRecordForClient(activeModuleId, activeTenantId, apiPayload.client_id)
     }
@@ -513,6 +564,19 @@ export function useAppointments() {
   const update = useCallback(async (id, payload) => {
     if (!activeTenantId) throw new Error('Selecione uma empresa ativa antes de salvar o agendamento.')
     const apiPayload = normalizeAppointmentPayload(payload)
+
+    if (activeModuleId === 'petshop') {
+      const updated = mapAppointmentRow(await updateAppointmentCommand({
+        tenantId: activeTenantId,
+        moduleId: activeModuleId,
+        appointmentId: id,
+        payload: { ...apiPayload, source: payload.source || 'manual' },
+      }))
+      setAppointments((current) => mergeAppointmentState(current, updated))
+      emitAppointmentSync({ type: 'upsert', appointment: updated, moduleId: activeModuleId, tenantId: activeTenantId })
+      return updated
+    }
+
     if (apiPayload.client_id) {
       apiPayload.pet_id = await ensurePetRecordForClient(activeModuleId, activeTenantId, apiPayload.client_id)
     }
@@ -577,6 +641,17 @@ export function useAppointments() {
   }
 
   const remove = useCallback(async (id) => {
+    if (activeModuleId === 'petshop') {
+      await removeAppointmentCommand({
+        tenantId: activeTenantId,
+        moduleId: activeModuleId,
+        appointmentId: id,
+      })
+      setAppointments((current) => current.filter((appointment) => String(appointment?.id) !== String(id)))
+      emitAppointmentSync({ type: 'remove', id, moduleId: activeModuleId, tenantId: activeTenantId })
+      return
+    }
+
     const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
       let query = supabase
         .from('appointments')

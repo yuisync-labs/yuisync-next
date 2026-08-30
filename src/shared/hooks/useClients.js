@@ -5,6 +5,13 @@ import { useModuleCtx } from '../../context/ModuleContext'
 import { useAuthCtx } from '../../context/AuthContext'
 import { applyTenantFilter, buildTenantPayload, runWithTenantFallback } from '../../lib/tenant'
 import { searchTerms } from '../lib/searchMatch'
+import {
+  createClientPetCommand,
+  getClientPetCommand,
+  listClientPetsCommand,
+  removeClientPetCommand,
+  updateClientPetCommand,
+} from '../../modules/petshop/lib/clientCommands'
 
 const BASE_SELECT = 'id, module_id, type, name, document, phone, email, address, neighborhood, city, notes, active, details, created_at'
 const CLIENT_PAGE_SIZE = 1000
@@ -142,6 +149,7 @@ async function syncPetRecord(client, moduleId) {
 
   const payload = {
     id: client.id,
+    client_id: client.tutor_group_id || client.id,
     module_id: moduleId,
     owner_name: client.owner_name || 'Cliente',
     owner_cpf: client.owner_cpf || null,
@@ -175,6 +183,15 @@ export function useClients() {
     if (!activeModuleId) return
     setLoading(true); setError(null)
     try {
+      if (activeModuleId === 'petshop') {
+        setClients(await listClientPetsCommand({
+          tenantId: activeTenantId,
+          moduleId: activeModuleId,
+          search: sanitizeSearch(search),
+        }))
+        return
+      }
+
       const term = sanitizeSearch(search)
       const runSearch = (includePetFields = true) => runWithTenantFallback(activeTenantId, async (includeTenant) => {
         return fetchAllClientPages(() => {
@@ -208,6 +225,10 @@ export function useClients() {
     if (!term) return []
     const limit = Math.min(50, Math.max(1, Number(options.limit || 20)))
 
+    if (activeModuleId === 'petshop') {
+      return listClientPetsCommand({ tenantId: activeTenantId, moduleId: activeModuleId, search: term, limit })
+    }
+
     const runSearch = (includePetFields = true) => runWithTenantFallback(activeTenantId, async (includeTenant) => {
       let query = supabase
         .from('clients')
@@ -230,6 +251,10 @@ export function useClients() {
   }, [activeModuleId, activeTenantId])
 
   const getById = useCallback(async (id) => {
+    if (activeModuleId === 'petshop') {
+      return getClientPetCommand({ tenantId: activeTenantId, moduleId: activeModuleId, id })
+    }
+
     const { data } = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
       let q = supabase
         .from('clients')
@@ -251,6 +276,12 @@ export function useClients() {
 
   const create = useCallback(async (payload) => {
     if (!activeTenantId) throw new Error('Selecione uma empresa ativa antes de salvar o cliente.')
+    if (activeModuleId === 'petshop') {
+      const newPet = await createClientPetCommand({ tenantId: activeTenantId, moduleId: activeModuleId, payload })
+      setClients(prev => [newPet, ...prev])
+      return newPet
+    }
+
     const clientPayload = mapPetToClient(payload, activeModuleId)
     const { data, error } = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
       const payloadWithTenant = buildTenantPayload(clientPayload, activeTenantId, includeTenant)
@@ -270,6 +301,12 @@ export function useClients() {
 
   const update = useCallback(async (id, payload) => {
     if (!activeTenantId) throw new Error('Selecione uma empresa ativa antes de salvar o cliente.')
+    if (activeModuleId === 'petshop') {
+      const updatedPet = await updateClientPetCommand({ tenantId: activeTenantId, moduleId: activeModuleId, id, payload })
+      setClients(prev => prev.map(p => p.id === id ? updatedPet : p))
+      return updatedPet
+    }
+
     const clientPayload = mapPetToClient(payload, activeModuleId)
     // Avoid updating module_id
     delete clientPayload.module_id; 
@@ -295,6 +332,12 @@ export function useClients() {
   }, [activeModuleId, activeTenantId])
 
   const remove = useCallback(async (id) => {
+    if (activeModuleId === 'petshop') {
+      await removeClientPetCommand({ tenantId: activeTenantId, moduleId: activeModuleId, id })
+      setClients(prev => prev.filter(p => p.id !== id))
+      return
+    }
+
     const { error } = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
       let q = supabase.from('clients').delete().eq('id', id).eq('module_id', activeModuleId)
       q = applyTenantFilter(q, activeTenantId, includeTenant)

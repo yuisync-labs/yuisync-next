@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { handleBetterAuthRequest } from '../src/auth/betterAuthRuntime'
 import { handleCompatApiRequest } from '../src/compatApi'
+import { handlePetshopAppointmentsApiRequest } from '../src/petshopAppointmentsApi'
 
 const AUTH_SECRET = 'appointment-command-test-secret-123456789012345678901'
 
@@ -127,6 +128,34 @@ describe('appointment command policy in workerd', () => {
       expect(firstBody.data.idempotent).toBe(false)
       expect(firstBody.data.appointment_id).toBeTruthy()
 
+      const nativeRead = await handlePetshopAppointmentsApiRequest(new Request(
+        'https://edge.test/api/petshop/appointments?start=2026-08-20T00%3A00%3A00-03%3A00&end=2026-08-20T23%3A59%3A59-03%3A00',
+        {
+          headers: {
+            cookie,
+            'x-tenant-id': tenantId,
+            'x-module-id': 'petshop',
+          },
+        },
+      ), bindings())
+      expect(nativeRead?.status).toBe(200)
+      await expect(nativeRead?.json()).resolves.toEqual({
+        appointments: [expect.objectContaining({
+          id: firstBody.data.appointment_id,
+          client_id: clientId,
+          pet_id: petId,
+          scheduled_at: '2026-08-20T13:00:00.000Z',
+          service_type: serviceCode,
+          status: 'agendado',
+          pets: expect.objectContaining({
+            id: petId,
+            client_id: clientId,
+            owner_name: 'Tutor Teste',
+            pet_name: 'Mel',
+          }),
+        })],
+      })
+
       const replay = await book(cookie, tenantId, basePayload)
       const replayBody = await replay.json<{ data: { appointment_id: string; idempotent: boolean } }>()
       expect(replay.status).toBe(200)
@@ -140,14 +169,25 @@ describe('appointment command policy in workerd', () => {
       expect(reusedKey.status).toBe(409)
       await expect(reusedKey.json()).resolves.toEqual(expect.objectContaining({ code: 'IDEMPOTENCY_KEY_REUSED' }))
 
-      const second = await book(cookie, tenantId, {
-        ...basePayload,
-        idempotency_key: `booking-second-${suffix}`,
-      })
-      const secondBody = await second.json<{ data: { appointment_id: string; idempotent: boolean } }>()
-      expect(second.status).toBe(200)
-      expect(secondBody.data.idempotent).toBe(false)
-      expect(secondBody.data.appointment_id).not.toBe(firstBody.data.appointment_id)
+      const second = await handlePetshopAppointmentsApiRequest(new Request('https://edge.test/api/petshop/appointments', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'x-tenant-id': tenantId,
+          'x-module-id': 'petshop',
+        },
+        body: JSON.stringify({
+          ...basePayload,
+          client_id: petId,
+          pet_id: petId,
+          idempotency_key: `booking-second-${suffix}`,
+        }),
+      }), bindings())
+      const secondBody = await second?.json<{ appointment: { id: string; client_id: string; pet_id: string } }>()
+      expect(second?.status).toBe(200)
+      expect(secondBody?.appointment.id).not.toBe(firstBody.data.appointment_id)
+      expect(secondBody?.appointment).toEqual(expect.objectContaining({ client_id: clientId, pet_id: petId }))
 
       const appointments = await db.prepare("SELECT id,operation_key,operation_fingerprint FROM appointments WHERE tenant_id=?1 AND module_id='petshop' ORDER BY id")
         .bind(tenantId).all<{ id:string; operation_key:string; operation_fingerprint:string }>()

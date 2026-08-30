@@ -5,6 +5,9 @@ import { handleAppApiRequest } from './appApi'
 import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
 import { handleAppointmentBillingIntentCompat } from './appointmentBillingIntentCompat'
 import { handleAppointmentFinancialReopenApi } from './appointmentFinancialReopenApi'
+import { handleAppointmentResponsibleAssignmentApi } from './appointmentResponsibleAssignmentApi'
+import { handlePetshopAppointmentsApiRequest } from './petshopAppointmentsApi'
+import { handlePetshopClientsApiRequest } from './petshopClientsApi'
 import { handleCheckoutApiRequest } from './checkoutApi'
 import { handleCompatApiRequest } from './compatApi'
 import { handleFinalReadiness } from './finalReadiness'
@@ -101,6 +104,15 @@ export default {
 
     const financialReopenResponse = await handleAppointmentFinancialReopenApi(request, bindings)
     if (financialReopenResponse) return respond(financialReopenResponse)
+
+    const responsibleAssignmentResponse = await handleAppointmentResponsibleAssignmentApi(request, bindings)
+    if (responsibleAssignmentResponse) return respond(responsibleAssignmentResponse)
+
+    const petshopAppointmentsResponse = await handlePetshopAppointmentsApiRequest(request, bindings)
+    if (petshopAppointmentsResponse) return respond(petshopAppointmentsResponse)
+
+    const petshopClientsResponse = await handlePetshopClientsApiRequest(request, bindings)
+    if (petshopClientsResponse) return respond(petshopClientsResponse)
 
     const explicitBillingResponse = await handleAppointmentBillingIntentCompat(request, bindings)
     if (explicitBillingResponse) return respond(explicitBillingResponse)
