@@ -1,12 +1,11 @@
 import { execFile as execFileCallback } from 'node:child_process'
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 
 const execFileAsync = promisify(execFileCallback)
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url))
+const WRANGLER_CLI = resolve(REPO_ROOT, 'node_modules/wrangler/bin/wrangler.js')
 const ALLOWED_ENVIRONMENTS = new Set(['staging', 'production'])
 
 export class BetterAuthCollisionPreflightError extends Error {
@@ -138,10 +137,21 @@ export function evaluateBetterAuthCollisionPreflight({ projection, target = {}, 
   }
 }
 
-function unwrapD1Json(stdout) {
+export function unwrapD1Json(stdout) {
+  const raw = String(stdout || '').replace(/\u001b\[[0-9;]*m/gu, '').trim()
   let parsed
-  try { parsed = JSON.parse(String(stdout || '').trim()) } catch {
-    throw new BetterAuthCollisionPreflightError('AUTH_PREFLIGHT_D1_JSON_INVALID')
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    const arrayStart = raw.indexOf('[')
+    const objectStart = raw.indexOf('{')
+    const starts = [arrayStart, objectStart].filter((value) => value >= 0)
+    const start = starts.length ? Math.min(...starts) : -1
+    const end = Math.max(raw.lastIndexOf(']'), raw.lastIndexOf('}'))
+    if (start < 0 || end < start) throw new BetterAuthCollisionPreflightError('AUTH_PREFLIGHT_D1_JSON_INVALID')
+    try { parsed = JSON.parse(raw.slice(start, end + 1)) } catch {
+      throw new BetterAuthCollisionPreflightError('AUTH_PREFLIGHT_D1_JSON_INVALID')
+    }
   }
   const blocks = Array.isArray(parsed) ? parsed : [parsed]
   const rows = []
@@ -165,14 +175,15 @@ export function createRemoteBetterAuthCollisionPreflight({
 
   return async function preflight({ projection, allowExistingTenant = false } = {}) {
     const queries = buildBetterAuthCollisionQueries(projection)
-    const directory = await mkdtemp(join(tmpdir(), 'yuisync-auth-preflight-'))
-    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
     const run = async (binding, name, query) => {
-      const file = join(directory, `${name}.sql`)
-      await writeFile(file, `${query}\n`, { encoding: 'utf8', mode: 0o600 })
-      await chmod(file, 0o600)
+      if (!/^SELECT\s/iu.test(query) || query.slice(0, -1).includes(';')) {
+        throw new BetterAuthCollisionPreflightError('AUTH_PREFLIGHT_QUERY_NOT_READ_ONLY', undefined, { binding, query: name })
+      }
       try {
-        const { stdout } = await execFile(npm, ['exec','--workspace','@yuisync/edge-api','--','wrangler','d1','execute',binding,'--remote','--env',environment,'--config',resolvedConfig,'--file',file,'--json'], {
+        // Wrangler's --file mode reports only import statistics, not SELECT
+        // result rows. These fixed, internally generated lookups contain no
+        // password hashes and use --command so collision rows are observable.
+        const { stdout } = await execFile(process.execPath, [WRANGLER_CLI,'d1','execute',binding,'--remote','--env',environment,'--config',resolvedConfig,'--command',query,'--json'], {
           cwd: REPO_ROOT,
           encoding: 'utf8',
           maxBuffer: 8 * 1024 * 1024,
@@ -186,19 +197,15 @@ export function createRemoteBetterAuthCollisionPreflight({
       }
     }
 
-    try {
-      const target = {
-        authUsers: await run('AUTH_DB', 'users', queries.authUsers),
-        authAccounts: await run('AUTH_DB', 'accounts', queries.authAccounts),
-        principals: await run('DB', 'principals', queries.principals),
-        memberships: await run('DB', 'memberships', queries.memberships),
-        tenant: await run('DB', 'tenant', queries.tenant),
-      }
-      const report = evaluateBetterAuthCollisionPreflight({ projection, target, allowExistingTenant })
-      if (!report.ok) throw new BetterAuthCollisionPreflightError('AUTH_PREFLIGHT_COLLISION', undefined, report)
-      return report
-    } finally {
-      await rm(directory, { recursive: true, force: true })
+    const target = {
+      authUsers: await run('AUTH_DB', 'users', queries.authUsers),
+      authAccounts: await run('AUTH_DB', 'accounts', queries.authAccounts),
+      principals: await run('DB', 'principals', queries.principals),
+      memberships: await run('DB', 'memberships', queries.memberships),
+      tenant: await run('DB', 'tenant', queries.tenant),
     }
+    const report = evaluateBetterAuthCollisionPreflight({ projection, target, allowExistingTenant })
+    if (!report.ok) throw new BetterAuthCollisionPreflightError('AUTH_PREFLIGHT_COLLISION', undefined, report)
+    return report
   }
 }

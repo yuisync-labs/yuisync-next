@@ -351,7 +351,7 @@ export default function ServicosPage() {
               onClick={() => setActiveGroup(group.id)}
               className={`flex min-w-fit items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-bold transition-colors ${selected ? 'bg-emerald-500 text-gray-950' : 'text-muted hover:bg-white/5 hover:text-text'}`}
             >
-              <Icon size={15}/>{group.label}<span className={`rounded-full px-2 py-0.5 text-[10px] ${selected ? 'bg-black/15' : 'bg-white/8'}`}>{counts[group.id] || 0}</span>
+              <Icon size={15}/>{group.label}<span className={`rounded-full px-2 py-0.5 text-[10px] ${selected ? 'bg-black/15' : 'bg-white/8'}`}>{loading ? '…' : (counts[group.id] || 0)}</span>
             </button>
           )
         })}
@@ -366,7 +366,7 @@ export default function ServicosPage() {
         </div>
         <div className="overflow-x-auto">
           <table className="tbl min-w-[980px]">
-            <thead><tr><th>Serviço</th><th>Valor</th><th>Duração</th><th>Espécie / peso</th><th>Comissão</th><th>Origem</th><th>Status</th><th>Ações</th></tr></thead>
+            <thead><tr><th>Serviço</th><th>Valor</th><th>Duração</th><th>Espécie / peso</th><th>Comissão</th><th>Origem</th><th>Status</th><th className="sticky right-0 z-10 bg-card">Ações</th></tr></thead>
             <tbody>
               {visibleServices.map((service) => {
                 const productManaged = service.service_source === 'product'
@@ -385,7 +385,7 @@ export default function ServicosPage() {
                     <td>{Number(service.commission_rate ?? defaultServiceCommissionRate(service)).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%</td>
                     <td><span className={`badge ${productManaged ? 'badge-blue' : 'badge-gray'}`}>{productManaged ? 'Produto / Estoque' : 'Manual'}</span></td>
                     <td><span className={`badge ${service.active !== false ? 'badge-green' : 'badge-gray'}`}>{service.active !== false ? 'Ativo' : 'Inativo'}</span></td>
-                    <td>
+                    <td className="sticky right-0 z-[1] !bg-card">
                       <div className="flex items-center gap-2">
                         <button type="button" title={productManaged ? 'Editar regras operacionais' : 'Editar serviço'} onClick={() => setModal({ mode: 'edit', service })} className="btn btn-secondary btn-sm"><Pencil size={13}/>{productManaged ? 'Regras' : 'Editar'}</button>
                         <button type="button" disabled={productManaged || changingId === service.id} onClick={() => toggleService(service)} className="btn btn-ghost btn-sm">

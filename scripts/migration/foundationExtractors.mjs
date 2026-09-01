@@ -313,14 +313,11 @@ export function createWranglerD1ReadOnlyRunner({
       throw new FoundationExtractorError('D1_NON_SELECT_REJECTED')
     }
 
-    const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+    const wranglerCli = resolve(REPO_ROOT, 'node_modules/wrangler/bin/wrangler.js')
     let result
     try {
-      result = await execFile(npmCommand, [
-        'exec',
-        '--workspace', '@yuisync/edge-api',
-        '--',
-        'wrangler',
+      result = await execFile(process.execPath, [
+        wranglerCli,
         'd1',
         'execute',
         binding,

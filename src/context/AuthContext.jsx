@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom'
 import { createAppTenant, getAppSettings } from '../lib/api'
 import { useAuth } from '../shared/hooks/useAuth'
 import { normalizeOperationalStaff } from '../../shared/petshopOperations'
+import { modulePermissionForTenant } from './authPermissions'
 
 export const AuthContext = createContext(null)
 
@@ -39,23 +40,6 @@ function modulesForTenant(tenant) {
   const modules = Array.isArray(tenant?.enabled_modules) ? tenant.enabled_modules : []
   const filtered = modules.filter((moduleId) => SUPPORTED_BUSINESS_MODULES.includes(moduleId))
   return filtered.length ? [...new Set(filtered)] : ['petshop']
-}
-
-function modulePermissionForTenant(tenant, moduleId) {
-  const explicit = tenant?.module_permissions?.[moduleId]
-  if (typeof explicit === 'string' && explicit.trim()) return explicit.trim()
-  if (explicit && typeof explicit === 'object') {
-    const role = String(explicit.role || explicit.id || '').trim()
-    if (role) return role
-  }
-
-  if (moduleId === 'petshop') {
-    return ['owner', 'admin'].includes(String(tenant?.role || '').toLowerCase())
-      ? 'admin_pet'
-      : 'funcionario_pet'
-  }
-
-  return explicit === true ? true : null
 }
 
 export function AuthProvider({ children }) {

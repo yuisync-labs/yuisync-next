@@ -47,12 +47,12 @@ const serviceCode = (value = {}) => String(value.code || value.service_type || v
 
 // Historical policy: a snapshot persisted on the appointment always wins.
 // Current catalog rate is used only to hydrate legacy rows that have no snapshot.
-const configuredCommissionPercent = (item = {}) => {
+const configuredCommissionPercent = (item = {}, category = 'other') => {
   if (item.commission_rate !== null && item.commission_rate !== undefined && item.commission_rate !== '') {
     const rate = Number(item.commission_rate)
     if (Number.isFinite(rate) && rate >= 0) return rate
   }
-  return anyGroomingCommissionPattern.test(itemText(item)) ? 10 : 5
+  return ['machine_grooming', 'scissor_grooming'].includes(category) ? 10 : 5
 }
 
 const enrichItemsFromCatalog = (items = [], services = []) => {
@@ -187,7 +187,7 @@ export function appointmentCommissionLines(appointment = {}) {
     const commissionPercent = configuredCommissionPercent({
       ...item,
       commission_rate: item.commission_rate ?? matchingBenefit?.commission_rate,
-    })
+    }, category)
     const rate = commissionPercent / 100
     const rawLabel = item.name || item.label || item.code || item.value || appointment.service_type || 'Servico estetico'
     const legacyGeneric = genericBathTosaPattern.test(normalizeText(item.service_type || item.code || appointment.service_type || ''))

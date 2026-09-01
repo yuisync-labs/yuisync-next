@@ -109,22 +109,34 @@ export async function loadCashDashboardSnapshot({ tenantId, moduleId = 'petshop'
   })
   if (appointmentsResponse.error) throw appointmentsResponse.error
 
+  const appointmentRows = appointmentsResponse.data || []
+  const saleAppointmentMap = new Map(appointmentRows.map((appointment) => [appointment.id, appointment]))
   const soldAppointmentIds = new Set(sales.map((sale) => String(sale.appointment_id || '')).filter(Boolean))
-  const candidateAppointments = (appointmentsResponse.data || []).filter((appointment) => (
+  const candidateAppointments = appointmentRows.filter((appointment) => (
     !soldAppointmentIds.has(String(appointment.id)) && isPackageCoveredAppointment(appointment)
   ))
   const clientMap = await loadClientMap({
     tenantId,
     moduleId,
-    clientIds: candidateAppointments.map((appointment) => appointment.client_id),
+    clientIds: [
+      ...candidateAppointments.map((appointment) => appointment.client_id),
+      ...sales.map((sale) => sale.client_id || saleAppointmentMap.get(sale.appointment_id)?.client_id),
+    ],
+  })
+  const enrichedSales = sales.map((sale) => {
+    const clientId = sale.client_id || saleAppointmentMap.get(sale.appointment_id)?.client_id
+    return {
+      ...sale,
+      client: clientId ? formatClient(clientMap.get(clientId) || {}) : null,
+    }
   })
   const packageAppointments = candidateAppointments.map((appointment) => ({
     ...appointment,
     client: formatClient(clientMap.get(appointment.client_id) || {}),
   }))
 
-  const summary = buildCashDashboardSummary({ sales, splitRows, packageAppointments })
-  return { registers, current, sales, packageAppointments, period, ...summary }
+  const summary = buildCashDashboardSummary({ sales: enrichedSales, splitRows, packageAppointments })
+  return { registers, current, sales: enrichedSales, packageAppointments, period, ...summary }
 }
 
 export async function openCashRegisterSnapshot({ tenantId, moduleId = 'petshop', openingBalance = 0, notes = '' } = {}) {

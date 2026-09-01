@@ -15,9 +15,39 @@ describe('legacy compat query adapter', () => {
 
     expect(body.filters).toEqual([
       { op: 'eq', column: 'tenant_id', value: 'tenant-1' },
-      { op: 'gte', column: 'created_at_ms', value: '2026-08-01T00:00:00.000Z' },
+      { op: 'gte', column: 'created_at_ms', value: 1785542400000 },
     ])
     expect(body.orders).toEqual([{ column: 'created_at_ms', ascending: false }])
+  })
+
+  it('normalizes appointment date filters to the SQLite datetime projection', () => {
+    const body = normalizeBaseCompatQueryBody({
+      table: 'appointments',
+      filters: [
+        { op: 'gte', column: 'scheduled_at', value: '2026-08-29T00:00:00-03:00' },
+        { op: 'lte', column: 'scheduled_at', value: '2026-08-29T23:59:59.999-03:00' },
+      ],
+    })
+
+    expect(body.filters).toEqual([
+      { op: 'gte', column: 'scheduled_at', value: '2026-08-29 03:00:00.000' },
+      { op: 'lte', column: 'scheduled_at', value: '2026-08-30 02:59:59.999' },
+    ])
+  })
+
+  it('normalizes sale date filters so history and cash include the complete local day', () => {
+    const body = normalizeBaseCompatQueryBody({
+      table: 'sales',
+      filters: [
+        { op: 'gte', column: 'created_at', value: '2026-08-29T00:00:00-03:00' },
+        { op: 'lte', column: 'created_at', value: '2026-08-29T23:59:59.999-03:00' },
+      ],
+    })
+
+    expect(body.filters).toEqual([
+      { op: 'gte', column: 'created_at', value: '2026-08-29 03:00:00.000' },
+      { op: 'lte', column: 'created_at', value: '2026-08-30 02:59:59.999' },
+    ])
   })
 
   it('normalizes the Growth, loyalty and fiscal timestamp orders seen in staging E2E', () => {

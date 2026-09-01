@@ -47,16 +47,15 @@ export function buildBetterAuthIntakeSql(projection) {
     throw new BetterAuthIntakeWriterError('AUTH_INTAKE_COUNT_MISMATCH')
   }
 
-  const auth = ['PRAGMA foreign_keys=ON;', 'BEGIN IMMEDIATE;']
+  const auth = ['PRAGMA foreign_keys=ON;']
   for (const user of authUsers) {
     auth.push(`INSERT INTO user(id,name,email,emailVerified,image,createdAt,updatedAt) VALUES(${sql(user.id)},${sql(user.name)},${sql(user.email)},${sql(user.emailVerified)},${sql(user.image)},${sql(user.createdAt)},${sql(user.updatedAt)}) ON CONFLICT(id) DO UPDATE SET name=excluded.name,email=excluded.email,emailVerified=excluded.emailVerified,image=excluded.image,updatedAt=excluded.updatedAt;`)
   }
   for (const account of authAccounts) {
     auth.push(`INSERT INTO account(id,userId,accountId,providerId,password,createdAt,updatedAt) VALUES(${sql(account.id)},${sql(account.userId)},${sql(account.accountId)},${sql(account.providerId)},${sql(account.password)},${sql(account.createdAt)},${sql(account.updatedAt)}) ON CONFLICT(id) DO UPDATE SET password=excluded.password,updatedAt=excluded.updatedAt;`)
   }
-  auth.push('COMMIT;')
 
-  const main = ['PRAGMA foreign_keys=ON;', 'BEGIN IMMEDIATE;']
+  const main = ['PRAGMA foreign_keys=ON;']
   for (const principal of principals) {
     main.push(`INSERT INTO identity_principals(id,provider,subject,display_name,email,status,created_at_ms,updated_at_ms) VALUES(${sql(principal.id)},${sql(principal.provider)},${sql(principal.subject)},${sql(principal.display_name)},${sql(principal.email)},${sql(principal.status)},${sql(principal.created_at_ms)},${sql(principal.updated_at_ms)}) ON CONFLICT(id) DO UPDATE SET provider=excluded.provider,subject=excluded.subject,display_name=excluded.display_name,email=excluded.email,status=excluded.status,updated_at_ms=excluded.updated_at_ms;`)
   }
@@ -66,7 +65,6 @@ export function buildBetterAuthIntakeSql(projection) {
   for (const profile of profiles) {
     main.push(`INSERT INTO managed_user_profiles(principal_id,staff_type,preferred_tenant_id,created_at_ms,updated_at_ms) VALUES(${sql(profile.principal_id)},${sql(profile.staff_type)},${sql(profile.preferred_tenant_id)},${sql(profile.created_at_ms)},${sql(profile.updated_at_ms)}) ON CONFLICT(principal_id) DO UPDATE SET staff_type=excluded.staff_type,preferred_tenant_id=excluded.preferred_tenant_id,updated_at_ms=excluded.updated_at_ms;`)
   }
-  main.push('COMMIT;')
   return { authSql: auth.join('\n'), mainSql: main.join('\n') }
 }
 
@@ -86,10 +84,10 @@ export function createBetterAuthIntakeWriter({
     const directory = await mkdtemp(join(tmpdir(), 'yuisync-auth-migration-'))
     const authFile = join(directory, 'auth.sql')
     const mainFile = join(directory, 'main.sql')
-    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+    const wrangler = resolve(REPO_ROOT, 'node_modules/wrangler/bin/wrangler.js')
     const execute = async (binding, file) => {
       try {
-        await execFile(npm, ['exec','--workspace','@yuisync/edge-api','--','wrangler','d1','execute',binding,'--remote','--env',environment,'--config',resolvedConfig,'--file',file], {
+        await execFile(process.execPath, [wrangler,'d1','execute',binding,'--remote','--env',environment,'--config',resolvedConfig,'--file',file], {
           cwd: REPO_ROOT,
           encoding: 'utf8',
           maxBuffer: 8 * 1024 * 1024,

@@ -4,7 +4,7 @@ type AuditInput = {
   tenantId: string
   moduleId: string
   appointmentId: string
-  eventType: 'appointment.completed' | 'appointment.reopened' | 'appointment.package_consumed' | 'appointment.package_released'
+  eventType: 'appointment.completed' | 'appointment.reopened' | 'appointment.package_consumed' | 'appointment.package_released' | 'appointment.responsible_assigned'
   transitionVersion: number
   title: string
   description?: string

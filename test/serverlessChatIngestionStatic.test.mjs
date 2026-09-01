@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 function read(path) {
   return readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
@@ -17,7 +18,7 @@ function listFilesRecursive(path) {
       else output.push(fullPath)
     }
   }
-  visit(root.pathname)
+  visit(fileURLToPath(root))
   return output
 }
 

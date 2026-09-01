@@ -12,7 +12,7 @@ const SOURCE_TABLES = Object.freeze({
   commission_rules:byId(), cash_register:byId(), invoices:byId(), billing_settings:singleton, accounting_services:byId(),
   petshop_campaign_logs:byId(), petshop_growth_booking_settings:singleton, petshop_growth_booking_requests:byId(),
   petshop_growth_leads:byId(), petshop_growth_no_show_events:byId(), petshop_growth_no_show_policy:singleton,
-  petshop_growth_report_cards:byId(), support_threads:byId(), support_messages:byId(),
+  petshop_growth_report_cards:byId(), support_threads:byId(), support_messages:byId(false),
   tenant_ai_usage_monthly:{ module:true, order:'tenant_id.asc,module_id.asc,period_month.asc' },
 })
 

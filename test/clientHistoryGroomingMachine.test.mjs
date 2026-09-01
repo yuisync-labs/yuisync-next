@@ -9,7 +9,7 @@ test('historico vincula pets do tutor e reune agendamentos e compras', async () 
   const source = await read('src/modules/petshop/components/ClientHistoryGroomingEnhancer.jsx')
 
   assert.match(source, /tutor_group_id/)
-  assert.match(source, /phoneDigits/)
+  assert.match(source, /groupPetsByTutor/)
   assert.match(source, /\.from\('appointments'\)/)
   assert.match(source, /\.from\('sales'\)/)
   assert.match(source, /saleByAppointment/)

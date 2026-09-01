@@ -73,10 +73,10 @@ function syntheticClient(pet, scope, now) {
   }
 }
 
-export function projectNormalizedSupabaseClientsPets({ clients = [], pets = [], scope, now = Date.now() } = {}) {
+export function projectNormalizedSupabaseClientsPets({ clients = [], pets = [], appointments = [], scope, now = Date.now() } = {}) {
   const normalizedScope = { tenant_id: text(scope?.tenant_id), module_id: lower(scope?.module_id) }
   if (!normalizedScope.tenant_id || !normalizedScope.module_id) throw new NormalizedClientsPetsIntakeError('SCOPE_REQUIRED')
-  if (!Array.isArray(clients) || !Array.isArray(pets)) throw new NormalizedClientsPetsIntakeError('INPUT_INVALID')
+  if (!Array.isArray(clients) || !Array.isArray(pets) || !Array.isArray(appointments)) throw new NormalizedClientsPetsIntakeError('INPUT_INVALID')
 
   const canonicalClients = clients.map((row) => canonicalClient(row, normalizedScope, now))
   const byId = new Map()
@@ -92,7 +92,19 @@ export function projectNormalizedSupabaseClientsPets({ clients = [], pets = [], 
   const canonicalPets = []
   const syntheticIds = []
   const fallbackMatchedIds = []
+  const appointmentMatchedIds = []
   const seenPets = new Set()
+  const appointmentClientsByPet = new Map()
+
+  for (const appointment of appointments) {
+    if (text(appointment.tenant_id) !== normalizedScope.tenant_id) continue
+    if (lower(appointment.module_id || normalizedScope.module_id) !== normalizedScope.module_id) continue
+    const petId = text(appointment.pet_id)
+    const clientId = text(appointment.client_id)
+    if (!petId || !clientId) continue
+    if (!appointmentClientsByPet.has(petId)) appointmentClientsByPet.set(petId, new Set())
+    appointmentClientsByPet.get(petId).add(clientId)
+  }
 
   for (const pet of pets) {
     if (text(pet.tenant_id) !== normalizedScope.tenant_id) throw new NormalizedClientsPetsIntakeError('PET_TENANT_MISMATCH')
@@ -101,6 +113,15 @@ export function projectNormalizedSupabaseClientsPets({ clients = [], pets = [], 
     seenPets.add(id)
 
     let clientId = byId.has(id) ? id : null
+    if (!clientId) {
+      const appointmentClients = [...(appointmentClientsByPet.get(id) || [])]
+      if (appointmentClients.length > 1) throw new NormalizedClientsPetsIntakeError('PET_APPOINTMENT_CLIENT_AMBIGUOUS')
+      if (appointmentClients.length === 1) {
+        if (!byId.has(appointmentClients[0])) throw new NormalizedClientsPetsIntakeError('PET_APPOINTMENT_CLIENT_NOT_FOUND')
+        clientId = appointmentClients[0]
+        appointmentMatchedIds.push(id)
+      }
+    }
     if (!clientId) {
       const matches = ownerIndex.get(key(pet.owner_name, pet.phone)) || []
       if (matches.length > 1) throw new NormalizedClientsPetsIntakeError('PET_OWNER_MATCH_AMBIGUOUS')
@@ -145,8 +166,23 @@ export function projectNormalizedSupabaseClientsPets({ clients = [], pets = [], 
       source_pets: pets.length,
       destination_clients: canonicalClients.length,
       destination_pets: canonicalPets.length,
+      appointment_client_matches: appointmentMatchedIds.sort(),
       fallback_owner_matches: fallbackMatchedIds.sort(),
       synthetic_clients: syntheticIds.sort(),
     },
   }
+}
+
+export function attachNormalizedAppointmentClients({ appointments = [], pets = [] } = {}) {
+  if (!Array.isArray(appointments) || !Array.isArray(pets)) throw new NormalizedClientsPetsIntakeError('INPUT_INVALID')
+  const clientByPet = new Map(pets.map((pet) => [text(pet.id), text(pet.client_id)]).filter(([petId, clientId]) => petId && clientId))
+  let inferred = 0
+  const rows = appointments.map((appointment) => {
+    if (text(appointment.client_id)) return appointment
+    const clientId = clientByPet.get(text(appointment.pet_id))
+    if (!clientId) throw new NormalizedClientsPetsIntakeError('APPOINTMENT_CLIENT_NOT_RESOLVED')
+    inferred += 1
+    return { ...appointment, client_id:clientId }
+  })
+  return { appointments:rows, inferred_client_ids:inferred }
 }

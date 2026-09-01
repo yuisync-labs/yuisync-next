@@ -5,13 +5,15 @@ import app from '../src/app'
 import type { EdgeAppEnvironment } from '../src/types'
 
 const testEnv = env as EdgeEnv & { DB: D1Database }
+const { COORDINATOR: testCoordinatorBinding, ...testEnvWithoutCoordinator } = testEnv
+void testCoordinatorBinding
 const NOW_MS = 1_786_108_800_000
 
 type AppBindings = EdgeAppEnvironment['Bindings']
 
 function createBindings(overrides: Partial<AppBindings> = {}): AppBindings {
   return {
-    ...testEnv,
+    ...testEnvWithoutCoordinator,
     APP_ENV: 'test',
     SERVICE_NAME: 'yuisync-edge-api',
     RELEASE_CHANNEL: 'test',

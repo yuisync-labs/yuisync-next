@@ -34,4 +34,22 @@ describe('teamCommissionSummary service categories', () => {
 
     expect(line.category).toBe('bath')
   })
+
+  it('mantem banho com tosa higienica como banho na taxa padrao de 5%', () => {
+    const [line] = appointmentCommissionLines({
+      id: 'bath-with-hygienic-grooming',
+      service_group: 'banho_tosa',
+      service_items: [{
+        name: 'Banho com tosa higienica',
+        group_type: 'banho_tosa',
+        unit_price: 50,
+      }],
+    })
+
+    expect(line).toMatchObject({
+      category: 'bath',
+      rate: 0.05,
+      commission: 2.5,
+    })
+  })
 })

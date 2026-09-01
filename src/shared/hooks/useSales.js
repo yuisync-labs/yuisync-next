@@ -43,13 +43,19 @@ function isSalePaymentSplitSchemaError(error) {
 
 function mapSalesRows(data = []) {
   return data.map((sale) => {
-    if (sale.clients) {
-      sale.pets = {
-        pet_name: sale.clients.details?.pet_name || sale.clients.name || '',
-      }
-      delete sale.clients
+    const client = sale.clients || null
+    const normalized = {
+      ...sale,
+      customer_name: sale.customer_name || client?.name || 'Balcao',
+      customer_phone: sale.customer_phone || client?.phone || null,
+      ...(client ? {
+        pets: {
+          pet_name: client.details?.pet_name || client.name || '',
+        },
+      } : {}),
     }
-    return sale
+    delete normalized.clients
+    return normalized
   })
 }
 
@@ -537,7 +543,7 @@ export function useSales() {
     const result = await checkoutPetshop({
       tenantId: activeTenantId,
       moduleId: activeModuleId,
-      clientId: saleData.pet_id || saleData.client_id || null,
+      clientId: saleData.client_id || saleData.pet_id || null,
       customerName: saleData.customer_name || 'Balcao',
       customerPhone: saleData.customer_phone || null,
       paymentMethod: saleData.payment_method,

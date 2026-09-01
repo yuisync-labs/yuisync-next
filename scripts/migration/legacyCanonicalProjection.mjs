@@ -131,6 +131,8 @@ function legacyBenefits(row) {
 
 function projectAppointmentsV2(base, source, scope) {
   const legacyAppointments = byId(source, 'appointments', scope)
+  const catalogById = new Map(base.services.map((service) => [service.id, service]))
+  const catalogByCode = new Map(base.services.map((service) => [service.code, service]).filter(([code]) => code))
   const appointments = base.appointments.map((appointment) => {
     const legacy = legacyAppointments.get(appointment.id) || {}
     const benefits = legacyBenefits(legacy)
@@ -167,12 +169,15 @@ function projectAppointmentsV2(base, source, scope) {
   const appointment_services = base.appointment_services.map((service) => {
     const legacy = legacyAppointments.get(service.appointment_id) || {}
     const item = arr(parseJson(legacy.service_items, []))[service.position] || {}
+    const catalogService = catalogById.get(service.service_id) || catalogByCode.get(service.service_code)
+    if (!catalogService) throw new Error(`LEGACY_APPOINTMENT_SERVICE_NOT_FOUND:${service.appointment_id}:${service.position}:${service.service_code}`)
     const minKg = item.min_weight_kg == null ? null : Math.max(0, finite(item.min_weight_kg))
     const maxKg = item.max_weight_kg == null ? null : Math.max(0, finite(item.max_weight_kg))
     const species = ['dog','cat'].includes(text(item.species_target).toLowerCase())
       ? text(item.species_target).toLowerCase() : null
     return {
       ...service,
+      service_id: catalogService.id,
       catalog_price_cents: cents(item.catalog_price ?? item.unit_price ?? item.price ?? legacy.price),
       commission_basis_points: item.commission_rate == null ? null
         : Math.min(10000, Math.max(0, Math.round(finite(item.commission_rate) * 100))),
@@ -201,10 +206,18 @@ function projectPackageLedger(source, scope) {
     updated_at_ms: ms(row.updated_at, ms(row.created_at, 0)) ?? 0,
   })).filter((row) => row.id)
 
+  const legacySubscriptionRows = rows(source, 'client_subscriptions', scope)
+  const subscriptionStatusById = new Map(legacySubscriptionRows.map((row) => {
+    const statusRaw = text(row.status, 'active').toLowerCase()
+    return [text(row.id), ['pending_payment','active','paused','cancelled','expired'].includes(statusRaw) ? statusRaw : 'active']
+  }).filter(([id]) => id))
   const subscription_benefit_allocations = []
+  const historicalAllocationsBySubscription = new Map()
   for (const appointment of rows(source, 'appointments', scope)) {
     const subscriptionId = nullable(appointment.subscription_id)
     if (!subscriptionId) continue
+    const subscriptionStatus = subscriptionStatusById.get(subscriptionId)
+    if (!subscriptionStatus) throw new Error(`LEGACY_PACKAGE_SUBSCRIPTION_NOT_FOUND:${subscriptionId}`)
     const defaultState = normalizeBenefitState(appointment)
     legacyBenefits(appointment).forEach((benefit, index) => {
       const kind = text(benefit.kind || benefit.benefit_kind, 'service').toLowerCase() === 'transport' ? 'transport' : 'service'
@@ -215,7 +228,7 @@ function projectPackageLedger(source, scope) {
       const position = kind === 'transport' ? -1 : Math.max(0, integer(benefit.position, index))
       const createdAt = ms(appointment.created_at, ms(appointment.scheduled_at, 0)) ?? 0
       const updatedAt = ms(appointment.updated_at, createdAt) ?? createdAt
-      subscription_benefit_allocations.push({
+      const allocation = {
         tenant_id: scope.tenant_id,
         module_id: scope.module_id,
         id: stableId('benefit', `${subscriptionId}:${appointment.id}:${kind}:${position}:${benefitKey}`),
@@ -234,7 +247,15 @@ function projectPackageLedger(source, scope) {
         released_at_ms: state === 'released' ? updatedAt : null,
         created_at_ms: createdAt,
         updated_at_ms: updatedAt,
-      })
+      }
+      // D1 intentionally allows benefit allocations only for active
+      // subscriptions. Preserve historical rows from cancelled/expired plans
+      // in migration metadata instead of violating the operational ledger.
+      if (subscriptionStatus === 'active') subscription_benefit_allocations.push(allocation)
+      else {
+        if (!historicalAllocationsBySubscription.has(subscriptionId)) historicalAllocationsBySubscription.set(subscriptionId, [])
+        historicalAllocationsBySubscription.get(subscriptionId).push(allocation)
+      }
     })
   }
 
@@ -245,14 +266,35 @@ function projectPackageLedger(source, scope) {
     consumed.set(key, (consumed.get(key) || 0) + 1)
   }
 
-  const client_subscriptions = rows(source, 'client_subscriptions', scope).map((row) => {
+  const planCapacity = new Map()
+  for (const plan of subscription_plans) {
+    for (const benefit of arr(parseJson(plan.services_json, []))) {
+      const benefitKey = nullable(benefit.service_type || benefit.service_code || benefit.code)
+      if (!benefitKey) continue
+      const capacity = Math.max(0, integer(benefit.qty_per_cycle ?? benefit.quantity ?? benefit.qty, 0))
+      const key = `${plan.id}\u0000${benefitKey}`
+      planCapacity.set(key, Math.max(planCapacity.get(key) || 0, capacity))
+    }
+  }
+
+  const client_subscriptions = legacySubscriptionRows.map((row) => {
     const usage = parseJson(row.services_used, {}) || {}
+    const normalizedUsage = { ...usage }
     const baseUsage = {}
     for (const [benefitKey, raw] of Object.entries(usage)) {
       const total = Math.max(0, integer(raw, 0))
       const allocated = consumed.get(`${text(row.id)}\u0000${benefitKey}`) || 0
       if (allocated > total) {
-        throw new Error(`LEGACY_PACKAGE_USAGE_UNDERFLOW:${row.id}:${benefitKey}:${total}:${allocated}`)
+        const capacity = planCapacity.get(`${text(row.plan_id)}\u0000${benefitKey}`) || 0
+        if (!capacity || allocated > capacity) {
+          throw new Error(`LEGACY_PACKAGE_USAGE_UNDERFLOW:${row.id}:${benefitKey}:${total}:${allocated}`)
+        }
+        // Some legacy subscriptions have a stale aggregate counter even though
+        // their completed appointment ledger is complete. The immutable
+        // appointment evidence wins only while it remains within plan capacity.
+        normalizedUsage[benefitKey] = allocated
+        baseUsage[benefitKey] = 0
+        continue
       }
       baseUsage[benefitKey] = total - allocated
     }
@@ -266,11 +308,13 @@ function projectPackageLedger(source, scope) {
       status: ['pending_payment','active','paused','cancelled','expired'].includes(statusRaw) ? statusRaw : 'active',
       started_at_ms: ms(row.started_at, ms(row.created_at, 0)) ?? 0,
       next_billing_date: nullable(row.next_billing_date),
-      services_used_json: json(usage),
+      services_used_json: json(normalizedUsage),
       benefit_ledger_base_used_json: json(baseUsage),
       cancelled_at_ms: ms(row.cancelled_at, null),
       legacy_metadata_json: json({
+        source_services_used: usage,
         services_reserved: parseJson(row.services_reserved, {}),
+        historical_benefit_allocations: historicalAllocationsBySubscription.get(text(row.id)) || [],
         first_appointment_at: nullable(row.first_appointment_at),
         recurring_appointments_created_at: nullable(row.recurring_appointments_created_at),
       }),

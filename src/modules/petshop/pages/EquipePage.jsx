@@ -21,6 +21,7 @@ import { usePetshopAdvanced } from '../hooks/usePetshopAdvanced'
 import { fmtCurrency } from '../../../lib/supabase'
 import { useAuthCtx } from '../../../context/AuthContext'
 import { useModuleCtx } from '../../../context/ModuleContext'
+import { MetricCard } from '../../../components/ui'
 import {
   normalizeOperationalStaff,
   PETSHOP_COMMISSION_RESET_TEMPLATE_KEY,
@@ -40,6 +41,11 @@ import {
 } from '../lib/deliveryOperations'
 import { persistPetshopTeamSettings } from '../lib/teamSettingsOperations'
 import { enrichPackageCommissionAppointments } from '../lib/packageCommissionOperations'
+import {
+  petshopDateLabel,
+  petshopDateTimeLabel,
+  petshopMonthRange,
+} from '../lib/petshopDateTime'
 
 const TABS = [
   { id: 'fechamento', label: 'Comissoes', icon: Wallet },
@@ -47,16 +53,9 @@ const TABS = [
   { id: 'motoboy', label: 'Motoboy', icon: Bike },
 ]
 
-const emptyRange = () => {
-  const now = new Date()
-  return {
-    startDate: new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10),
-    endDate: new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10),
-  }
-}
-
-const dateLabel = (value) => value ? new Date(value).toLocaleDateString('pt-BR') : '-'
-const dateTimeLabel = (value) => value ? new Date(value).toLocaleString('pt-BR') : '-'
+const emptyRange = () => petshopMonthRange()
+const dateLabel = petshopDateLabel
+const dateTimeLabel = petshopDateTimeLabel
 const escapeHtml = (value = '') => String(value ?? '')
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -173,6 +172,7 @@ export default function EquipePage() {
   const [deliveryRows, setDeliveryRows] = useState([])
   const [range, setRange] = useState(emptyRange)
   const [loading, setLoading] = useState(true)
+  const [hasLoaded, setHasLoaded] = useState(false)
   const [error, setError] = useState('')
   const [assigningServiceId, setAssigningServiceId] = useState('')
   const [assigningDeliveryId, setAssigningDeliveryId] = useState('')
@@ -260,6 +260,7 @@ export default function EquipePage() {
       setError(err.message || 'Nao foi possivel carregar a equipe.')
     } finally {
       setLoading(false)
+      setHasLoaded(true)
     }
   }
 
@@ -331,6 +332,7 @@ export default function EquipePage() {
     serviceRevenue: acc.serviceRevenue + Number(row.service_revenue || 0),
     commission: acc.commission + Number(row.total_commission || 0),
   }), { serviceCount: 0, packageCount: 0, packageRevenue: 0, serviceRevenue: 0, commission: 0 }), [displayRows])
+  const initialLoading = loading && !hasLoaded
 
   const deliverySummary = useMemo(() => {
     const map = new Map(configuredDeliveryStaff.map((person) => [person.key, {
@@ -532,7 +534,7 @@ export default function EquipePage() {
   }
 
   return (
-    <div className="page animate-fade-up space-y-6">
+    <div className="page animate-fade-up space-y-6" aria-busy={loading}>
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="page-title flex items-center gap-2">
@@ -601,10 +603,10 @@ export default function EquipePage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-            <div className="bg-card border border-[var(--border)] rounded-xl p-5"><p className="text-xs uppercase tracking-widest text-muted font-bold mb-2">Servicos concluidos</p><p className="font-display font-bold text-3xl text-text">{totals.serviceCount}</p></div>
-            <div className="bg-card border border-[var(--border)] rounded-xl p-5"><p className="text-xs uppercase tracking-widest text-muted font-bold mb-2">Pacotes executados</p><p className="font-display font-bold text-3xl text-amber-400">{totals.packageCount}</p><p className="mt-1 text-xs text-muted">{fmtCurrency(totals.packageRevenue)} em servicos</p></div>
-            <div className="bg-card border border-[var(--border)] rounded-xl p-5"><p className="text-xs uppercase tracking-widest text-muted font-bold mb-2">Receita estetica</p><p className="font-display font-bold text-3xl text-emerald-400">{fmtCurrency(totals.serviceRevenue)}</p></div>
-            <div className="bg-card border border-[var(--border)] rounded-xl p-5"><p className="text-xs uppercase tracking-widest text-muted font-bold mb-2">Total a pagar</p><p className="font-display font-bold text-3xl text-amber-400">{fmtCurrency(totals.commission)}</p></div>
+            <MetricCard label="Servicos concluidos" value={initialLoading ? '—' : totals.serviceCount}/>
+            <MetricCard label="Pacotes executados" value={initialLoading ? '—' : totals.packageCount} description={initialLoading ? 'Carregando dados...' : `${fmtCurrency(totals.packageRevenue)} em servicos`} tone="warning"/>
+            <MetricCard label="Receita estetica" value={initialLoading ? '—' : fmtCurrency(totals.serviceRevenue)} tone="success"/>
+            <MetricCard label="Total a pagar" value={initialLoading ? '—' : fmtCurrency(totals.commission)} tone="warning"/>
           </div>
 
           {commissionPendingServices.length > 0 && (
@@ -636,11 +638,12 @@ export default function EquipePage() {
             </div>
           )}
 
-          <div className="tbl-wrapper overflow-hidden">
+          <div className="tbl-wrapper overflow-x-auto">
             <table className="tbl min-w-[1130px]">
-              <thead><tr><th>Esteticista</th><th>Banhos</th><th>Tosa maquina/total</th><th>Tosa tesoura</th><th>Pacote</th><th>Outros</th><th>Receita</th><th>Total</th><th>Conferencia</th></tr></thead>
+              <thead><tr><th>Esteticista</th><th>Banhos</th><th>Tosa maquina/total</th><th>Tosa tesoura</th><th>Pacote</th><th>Outros</th><th>Receita</th><th>Total</th><th className="sticky right-0 z-10 bg-card">Conferencia</th></tr></thead>
               <tbody>
-                {displayRows.map((row) => (
+                {initialLoading && <tr><td colSpan={9} className="text-center text-muted py-10">Carregando fechamento...</td></tr>}
+                {!initialLoading && displayRows.map((row) => (
                   <tr key={row.staff_key}>
                     <td>{renderEditableStaffName(configuredStaffByKey.get(row.staff_key) || { key: row.staff_key, name: row.collaborator_name, active: true }, true)}</td>
                     <td>{row.bath_count}</td>
@@ -650,7 +653,7 @@ export default function EquipePage() {
                     <td>{row.other_service_count}</td>
                     <td>{fmtCurrency(row.service_revenue)}</td>
                     <td className="text-emerald-400 font-bold">{fmtCurrency(row.total_commission)}</td>
-                    <td><button type="button" title="Visualizar e imprimir historico" aria-label="Visualizar e imprimir historico" onClick={() => setHistoryRow(row)} className="btn btn-secondary btn-sm"><Eye size={13}/> Conferir</button></td>
+                    <td className="sticky right-0 z-[1] !bg-card"><button type="button" title="Visualizar e imprimir historico" aria-label="Visualizar e imprimir historico" onClick={() => setHistoryRow(row)} className="btn btn-secondary btn-sm"><Eye size={13}/> Conferir</button></td>
                   </tr>
                 ))}
                 {!displayRows.length && !loading && <tr><td colSpan={9} className="text-center text-muted py-10">Sem producao concluida no periodo.</td></tr>}
@@ -709,7 +712,7 @@ export default function EquipePage() {
             ))}
           </div>
 
-          <div className="tbl-wrapper overflow-hidden">
+          <div className="tbl-wrapper overflow-x-auto">
             <table className="tbl min-w-[930px]">
               <thead><tr><th>Data</th><th>Motoboy</th><th>Cliente</th><th>Pet</th><th>Origem</th><th>Valor integral</th></tr></thead>
               <tbody>

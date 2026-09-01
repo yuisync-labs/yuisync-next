@@ -10,7 +10,7 @@ import { useAppointments } from '../../../shared/hooks/useAppointments'
 import { useClients }         from '../../../shared/hooks/useClients'
 import { useAuthCtx }      from '../../../context/AuthContext'
 import { Card } from '../../../components/ui'
-import { fmtCurrency, fmtTime, todayISO } from '../../../lib/supabase'
+import { fmtCurrency, todayISO } from '../../../lib/supabase'
 import { printThermalReceipt } from '../../../lib/thermalPrint'
 import { usePetshopAdvanced } from '../hooks/usePetshopAdvanced'
 import { useCatalogPlans } from '../hooks/useCatalogPlans'
@@ -383,6 +383,8 @@ function ApptModal({ appt, onClose, onCreate, onUpdate, onReceipt, onRefreshSubs
   const now = new Date()
   const defaultDate = appt?.date || isoDate(now)
   const defaultTime = appt?.time || `${String(now.getHours() + 1).padStart(2, '0')}:00`
+  const scheduledDate = isEdit && appt?.scheduled_at ? new Date(appt.scheduled_at) : null
+  const hasValidScheduledDate = scheduledDate && !Number.isNaN(scheduledDate.getTime())
   const serviceGroup = isEdit ? getAppointmentServiceGroup(appt, services) : (appt?.serviceGroup || 'banho_tosa')
   const groupOptions = serviceOptionsForGroup(serviceGroup, services)
   const existingCodes = isEdit ? appointmentServiceCodes(appt) : []
@@ -411,8 +413,10 @@ function ApptModal({ appt, onClose, onCreate, onUpdate, onReceipt, onRefreshSubs
     pet_id: isEdit ? appt.pets?.id || appt.client_id || '' : '',
     pet_search: '',
     service_codes: initialServiceCodes,
-    date: isEdit ? appt.scheduled_at?.slice(0, 10) || defaultDate : defaultDate,
-    time: isEdit && appt.scheduled_at ? fmtTime(appt.scheduled_at).replace('h', ':') : defaultTime,
+    date: hasValidScheduledDate ? isoDate(scheduledDate) : defaultDate,
+    time: hasValidScheduledDate
+      ? `${String(scheduledDate.getHours()).padStart(2, '0')}:${String(scheduledDate.getMinutes()).padStart(2, '0')}`
+      : defaultTime,
     status: isEdit ? appt.status || 'agendado' : 'agendado',
     notes: isEdit ? appt.notes || '' : '',
     responsible_staff_key: isEdit ? appt.responsible_staff_key || '' : '',
@@ -688,8 +692,12 @@ function ApptModal({ appt, onClose, onCreate, onUpdate, onReceipt, onRefreshSubs
       }
       if (isEdit) await onUpdate(appt.id, payload)
       else await onCreate(payload)
-      await onRefreshSubscriptions?.()
       onClose()
+      if (onRefreshSubscriptions) {
+        void Promise.resolve().then(() => onRefreshSubscriptions()).catch((refreshError) => {
+          console.warn('Falha ao atualizar os pacotes apos salvar o agendamento:', refreshError)
+        })
+      }
     } catch (error) {
       setErr(error.message)
     } finally {

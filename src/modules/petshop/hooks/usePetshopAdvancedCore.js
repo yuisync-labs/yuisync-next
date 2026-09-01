@@ -5,6 +5,7 @@ import { useAuthCtx } from '../../../context/AuthContext'
 import { createManagedUser, listManagedUsers, updateManagedUser, updateManagedUserStatus } from '../../../lib/api'
 import { applyTenantFilter, buildTenantPayload, runWithTenantFallback } from '../../../lib/tenant'
 import { normalizeCode, normalizeServices } from '../lib/petshopTeam'
+import { assignAppointmentResponsibleCommand, listAppointmentsCommand } from '../lib/appointmentCommands'
 
 const DEFAULT_LOYALTY_SETTINGS = { points_per_real: 1, points_per_service: 10, redemption_rate: 100, expiry_days: 365 }
 const CLIENT_SELECT = 'id,name,phone,email,address,neighborhood,city,details'
@@ -58,30 +59,6 @@ const getMonthRange = (ref = new Date()) => {
 }
 const normalizePlanServices = (services = []) => (services || []).filter((x) => x?.service_type).map((x) => ({ service_type: x.service_type, qty_per_cycle: Number(x.qty_per_cycle || 0) }))
 const getCycleDays = (cycle) => BILLING_CYCLES[cycle]?.days || 30
-const hasCommissionsSignatureError = (error) => {
-  const m = String(error?.message || '').toLowerCase()
-  return m.includes('calculate_commissions') && (
-    m.includes('does not exist')
-    || m.includes('schema cache')
-    || m.includes('could not find the function')
-  )
-}
-const hasCommissionsV2SignatureError = (error) => {
-  const m = String(error?.message || '').toLowerCase()
-  return m.includes('calculate_petshop_commissions_v2') && (
-    m.includes('does not exist')
-    || m.includes('schema cache')
-    || m.includes('could not find the function')
-  )
-}
-const hasOperationalCommissionsSignatureError = (error) => {
-  const m = String(error?.message || '').toLowerCase()
-  return m.includes('calculate_petshop_operational_commissions') && (
-    m.includes('does not exist')
-    || m.includes('schema cache')
-    || m.includes('could not find the function')
-  )
-}
 const isPetshopServicesSchemaError = (error) => {
   const m = String(error?.message || '').toLowerCase()
   return m.includes('petshop_services') && (
@@ -658,167 +635,31 @@ export function usePetshopAdvanced() {
     const range = getMonthRange(new Date())
     const start = startDate ? getDateBounds(startDate).start : range.start
     const end = endDate ? getDateBounds(endDate).end : range.end
-
-    let profiles = []
-    let rows = []
-    let usingLegacy = false
-    const operationalRes = await supabase.rpc('calculate_petshop_operational_commissions', {
-      p_module_id: moduleId,
-      p_start: start,
-      p_end: end,
-      p_tenant_id: activeTenantId || null,
+    assertActiveTenant(activeTenantId, 'carregar as comissoes operacionais')
+    const completedAppointments = await listAppointmentsCommand({
+      tenantId: activeTenantId,
+      moduleId,
+      filters: { status: 'concluido', start, end },
     })
-
-    if (!operationalRes.error) {
-      rows = (operationalRes.data || []).map((entry) => ({
-        ...entry,
-        service_count: Number(entry.service_count || 0),
-        grooming_count: Number(entry.grooming_count || 0),
-        other_service_count: Number(entry.other_service_count || 0),
-        service_revenue: Number(entry.service_revenue || 0),
-        grooming_revenue: Number(entry.grooming_revenue || 0),
-        other_service_revenue: Number(entry.other_service_revenue || 0),
-        grooming_commission: Number(entry.grooming_commission || 0),
-        other_service_commission: Number(entry.other_service_commission || 0),
-        total_commission: Number(entry.total_commission || 0),
-        sales_count: 0,
-        motoboy_count: 0,
-        sales_revenue: 0,
-        motoboy_revenue: 0,
-        sales_commission: 0,
-        motoboy_commission: 0,
-      }))
-    } else {
-      if (!hasOperationalCommissionsSignatureError(operationalRes.error)) throw operationalRes.error
-
-      let rpcRes = await supabase.rpc('calculate_petshop_commissions_v2', { p_module_id: moduleId, p_start: start, p_end: end, p_tenant_id: activeTenantId || null })
-      if (rpcRes.error && hasCommissionsV2SignatureError(rpcRes.error)) {
-        usingLegacy = true
-        rpcRes = await supabase.rpc('calculate_commissions', { p_module_id: moduleId, p_start: start, p_end: end, p_tenant_id: activeTenantId || null })
-        if (rpcRes.error && hasCommissionsSignatureError(rpcRes.error)) {
-          rpcRes = await supabase.rpc('calculate_commissions', { p_module_id: moduleId, p_start: start, p_end: end })
-        }
-      }
-      if (rpcRes.error) throw rpcRes.error
-
-      const commissionState = await loadCommissionRules()
-      profiles = commissionState.profiles
-      const ruleMap = new Map((commissionState.rules || []).map((rule) => [rule.profile_id, rule]))
-      rows = (rpcRes.data || []).map((entry) => usingLegacy ? ({
-        ...entry,
-        collaborator_name: entry.groomer_name,
-        service_count: Number(entry.appointments_count || 0),
-        grooming_count: 0,
-        other_service_count: Number(entry.appointments_count || 0),
-        service_revenue: Number(entry.revenue || 0),
-        grooming_commission: 0,
-        other_service_commission: Number(entry.commission || 0),
-        total_commission: Number(entry.commission || 0),
-        rule: ruleMap.get(entry.profile_id) || null,
-      }) : ({
-        ...entry,
-        service_count: Number(entry.service_count || 0),
-        grooming_count: Number(entry.grooming_count || 0),
-        other_service_count: Number(entry.other_service_count || entry.service_count || 0),
-        service_revenue: Number(entry.service_revenue || 0),
-        grooming_commission: Number(entry.grooming_commission || 0),
-        other_service_commission: Number(entry.other_service_commission || entry.service_commission || 0),
-        total_commission: Number(entry.total_commission || 0),
-        rule: ruleMap.get(entry.profile_id) || null,
-      }))
-    }
-
-    let pendingRes = await runScoped(async (includeTenant) => {
-      let query = supabase
-        .from('appointments')
-        .select(APPT_SELECT)
-        .eq('module_id', moduleId)
-        .eq('status', 'concluido')
-        .is('responsible_staff_key', null)
-        .gte('scheduled_at', start)
-        .lte('scheduled_at', end)
-        .order('scheduled_at', { ascending: false })
-      return applyTenantFilter(query, activeTenantId, includeTenant)
-    })
-
-    if (pendingRes.error && isAppointmentClientRelationError(pendingRes.error)) {
-      pendingRes = await runScoped(async (includeTenant) => {
-        let query = supabase
-          .from('appointments')
-          .select(APPT_BASE_SELECT)
-          .eq('module_id', moduleId)
-          .eq('status', 'concluido')
-          .is('responsible_staff_key', null)
-          .gte('scheduled_at', start)
-          .lte('scheduled_at', end)
-          .order('scheduled_at', { ascending: false })
-        return applyTenantFilter(query, activeTenantId, includeTenant)
-      })
-      if (pendingRes.error) throw pendingRes.error
-      const clientMap = await loadClientMap((pendingRes.data || []).map((appointment) => appointment.client_id))
-      pendingRes.data = (pendingRes.data || []).map((appointment) => ({
+    const normalizedAppointments = completedAppointments
+      .map((appointment) => ({
         ...appointment,
-        clients: clientMap.get(appointment.client_id) || null,
+        client: { ...(appointment.pets || {}), id: appointment.client_id },
+        price: Number(appointment.price || 0),
       }))
-    }
-    if (pendingRes.error) throw pendingRes.error
-
-    const pendingServices = (pendingRes.data || []).map((appointment) => ({
-      ...appointment,
-      client: formatClient(appointment.clients || {}),
-      price: Number(appointment.price || 0),
-    }))
-
-    let historyRes = await runScoped(async (includeTenant) => {
-      let query = supabase
-        .from('appointments')
-        .select(APPT_SELECT)
-        .eq('module_id', moduleId)
-        .eq('status', 'concluido')
-        .not('responsible_staff_key', 'is', null)
-        .gte('scheduled_at', start)
-        .lte('scheduled_at', end)
-        .order('scheduled_at', { ascending: false })
-      return applyTenantFilter(query, activeTenantId, includeTenant)
-    })
-
-    if (historyRes.error && isAppointmentClientRelationError(historyRes.error)) {
-      historyRes = await runScoped(async (includeTenant) => {
-        let query = supabase
-          .from('appointments')
-          .select(APPT_BASE_SELECT)
-          .eq('module_id', moduleId)
-          .eq('status', 'concluido')
-          .not('responsible_staff_key', 'is', null)
-          .gte('scheduled_at', start)
-          .lte('scheduled_at', end)
-          .order('scheduled_at', { ascending: false })
-        return applyTenantFilter(query, activeTenantId, includeTenant)
-      })
-      if (historyRes.error) throw historyRes.error
-      const clientMap = await loadClientMap((historyRes.data || []).map((appointment) => appointment.client_id))
-      historyRes.data = (historyRes.data || []).map((appointment) => ({
-        ...appointment,
-        clients: clientMap.get(appointment.client_id) || null,
-      }))
-    }
-    if (historyRes.error) throw historyRes.error
-
-    const serviceHistory = (historyRes.data || []).map((appointment) => ({
-      ...appointment,
-      client: formatClient(appointment.clients || {}),
-      price: Number(appointment.price || 0),
-    }))
+      .sort((left, right) => new Date(right.scheduled_at).getTime() - new Date(left.scheduled_at).getTime())
+    const pendingServices = normalizedAppointments.filter((appointment) => !String(appointment.responsible_staff_key || '').trim())
+    const serviceHistory = normalizedAppointments.filter((appointment) => String(appointment.responsible_staff_key || '').trim())
 
     return {
-      profiles,
-      rows,
+      profiles: [],
+      rows: [],
       pendingServices,
       serviceHistory,
-      usingLegacy,
+      usingLegacy: false,
       range: { startDate: startDate || range.startDate, endDate: endDate || range.endDate },
     }
-  }, [activeTenantId, loadClientMap, loadCommissionRules, moduleId, runScoped])
+  }, [activeTenantId, moduleId])
 
   const assignPendingServiceResponsible = useCallback(async (appointmentId, staff = {}) => {
     assertActiveTenant(activeTenantId, 'atribuir o responsavel do servico')
@@ -826,27 +667,14 @@ export function usePetshopAdvanced() {
     const staffName = String(staff?.name || '').trim()
     if (!appointmentId || !staffKey || !staffName) throw new Error('Selecione um responsavel valido.')
 
-    const updates = { responsible_staff_key: staffKey, responsible_staff_name: staffName }
-    if (Array.isArray(staff.service_items) && staff.service_items.length) {
-      updates.service_items = staff.service_items
-    }
-
-    const res = await runScoped(async (includeTenant) => {
-      let query = supabase
-        .from('appointments')
-        .update(updates)
-        .eq('id', appointmentId)
-        .eq('module_id', moduleId)
-        .eq('status', 'concluido')
-        .is('responsible_staff_key', null)
-      query = applyTenantFilter(query, activeTenantId, includeTenant)
-      return query.select(APPT_BASE_SELECT).maybeSingle()
+    return assignAppointmentResponsibleCommand({
+      tenantId: activeTenantId,
+      moduleId,
+      appointmentId,
+      staffKey,
+      staffName,
     })
-
-    if (res.error) throw res.error
-    if (!res.data) throw new Error('Este atendimento ja possui responsavel ou nao esta mais disponivel para atribuicao.')
-    return res.data
-  }, [activeTenantId, moduleId, runScoped])
+  }, [activeTenantId, moduleId])
 
   const exportCommissionCsv = useCallback((rows, fileName = 'comissoes-petshop.csv') => {
     const operational = (rows || []).some((row) => row.staff_key)

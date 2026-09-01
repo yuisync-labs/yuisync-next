@@ -3,6 +3,7 @@ import { hash } from 'bcryptjs'
 import { describe, expect, it } from 'vitest'
 
 import { handleBetterAuthRequest } from '../src/auth/betterAuthRuntime'
+import { handleCompatApiRequest } from '../src/compatApi'
 import { handleCheckoutApiRequest } from '../src/checkoutApi'
 
 const AUTH_SECRET = 'pdv-checkout-d1-test-secret-123456789012345678901234'
@@ -46,6 +47,8 @@ describe('PDV checkout D1 integration', () => {
     const tenantId = `checkout-tenant-${suffix}`
     const userId = `checkout-user-${suffix}`
     const principalId = `checkout-principal-${suffix}`
+    const clientId = `checkout-client-${suffix}`
+    const petId = `checkout-pet-${suffix}`
     const productId = `checkout-product-${suffix}`
     const email = `checkout-${suffix}@test.invalid`
     const password = 'ValidPassword123!'
@@ -67,6 +70,10 @@ describe('PDV checkout D1 integration', () => {
         .bind(principalId, userId, email, now),
       database.prepare("INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'active',?3,?3,'staff',?4)")
         .bind(tenantId, principalId, now, JSON.stringify({ petshop: { role: 'funcionario_pet' } })),
+      database.prepare("INSERT INTO clients(tenant_id,module_id,id,name,phone,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,'Cliente Teste','11999999999','active',?3,?3)")
+        .bind(tenantId, clientId, now),
+      database.prepare("INSERT INTO pets(tenant_id,module_id,id,client_id,name,species,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,?3,'Mel','dog','active',?4,?4)")
+        .bind(tenantId, petId, clientId, now),
       database.prepare("INSERT INTO catalog_products(tenant_id,module_id,id,name,price_cents,cost_cents,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,'Shampoo Teste',1250,500,'active',?3,?3)")
         .bind(tenantId, productId, now),
       database.prepare("INSERT INTO inventory_balances(tenant_id,module_id,product_id,on_hand_milliunits,reserved_milliunits,reorder_milliunits,version,updated_at_ms) VALUES(?1,'petshop',?2,5000,0,0,1,?3)")
@@ -78,6 +85,7 @@ describe('PDV checkout D1 integration', () => {
       const requestBody = {
         tenantId,
         moduleId: 'petshop',
+        clientId: petId,
         customerName: 'Cliente Balcao',
         paymentMethod: 'pix',
         discount: 2.5,
@@ -114,6 +122,9 @@ describe('PDV checkout D1 integration', () => {
       expect(firstBody.data.fiscal).toEqual({ status: 'not_requested' })
 
       const saleId = String(firstBody.data.sale.id)
+      const storedSale = await database.prepare('SELECT client_id FROM sales WHERE tenant_id=?1 AND module_id=?2 AND id=?3')
+        .bind(tenantId, 'petshop', saleId).first<{ client_id: string }>()
+      expect(storedSale?.client_id).toBe(clientId)
       const balanceAfterFirst = await database.prepare('SELECT on_hand_milliunits,reserved_milliunits,version FROM inventory_balances WHERE tenant_id=?1 AND module_id=?2 AND product_id=?3')
         .bind(tenantId, 'petshop', productId).first<Record<string, number>>()
       expect(balanceAfterFirst).toEqual(expect.objectContaining({ on_hand_milliunits: 3000, reserved_milliunits: 0, version: 2 }))
@@ -123,6 +134,42 @@ describe('PDV checkout D1 integration', () => {
       expect(items.results).toEqual([
         expect.objectContaining({ position: 1, item_name: 'Shampoo Teste', quantity_milliunits: 2000, unit_price_cents: 1250, subtotal_cents: 2500, upsell: 1 }),
       ])
+
+      const historyResponse = await handleCompatApiRequest(new Request('https://edge.test/api/compat/query', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'x-tenant-id': tenantId,
+          'x-module-id': 'petshop',
+        },
+        body: JSON.stringify({
+          table: 'sales',
+          action: 'select',
+          columns: 'id, client_id, created_at, clients ( id, name, phone, details ), sale_items ( id, quantity, unit_price, subtotal, upsell, products ( id, name, category ) )',
+          filters: [
+            { op: 'gte', column: 'created_at', value: new Date(now - 60_000).toISOString() },
+            { op: 'lte', column: 'created_at', value: new Date(now + 60_000).toISOString() },
+          ],
+        }),
+      }), runtime)
+      expect(historyResponse?.status).toBe(200)
+      await expect(historyResponse?.json()).resolves.toEqual({
+        data: [expect.objectContaining({
+          id: saleId,
+          client_id: clientId,
+          clients: expect.objectContaining({ id: clientId, name: 'Cliente Teste', phone: '11999999999' }),
+          sale_items: [expect.objectContaining({
+            id: `${saleId}:1`,
+            quantity: 2,
+            unit_price: 12.5,
+            subtotal: 25,
+            upsell: true,
+            products: expect.objectContaining({ id: productId, name: 'Shampoo Teste' }),
+          })],
+        })],
+        count: 1,
+      })
 
       const payments = await database.prepare('SELECT method,amount_cents,status FROM payments WHERE tenant_id=?1 AND module_id=?2 AND sale_id=?3')
         .bind(tenantId, 'petshop', saleId).all<Record<string, unknown>>()
@@ -202,6 +249,8 @@ describe('PDV checkout D1 integration', () => {
       await database.prepare('DELETE FROM module_settings_extensions WHERE tenant_id=?1 AND module_id=?2').bind(tenantId, 'petshop').run()
       await database.prepare('DELETE FROM inventory_balances WHERE tenant_id=?1 AND module_id=?2').bind(tenantId, 'petshop').run()
       await database.prepare('DELETE FROM catalog_products WHERE tenant_id=?1 AND module_id=?2').bind(tenantId, 'petshop').run()
+      await database.prepare('DELETE FROM pets WHERE tenant_id=?1 AND module_id=?2').bind(tenantId, 'petshop').run()
+      await database.prepare('DELETE FROM clients WHERE tenant_id=?1 AND module_id=?2').bind(tenantId, 'petshop').run()
       await database.prepare('DELETE FROM tenant_memberships WHERE tenant_id=?1').bind(tenantId).run()
       await database.prepare('DELETE FROM identity_principals WHERE id=?1').bind(principalId).run()
       await database.prepare('DELETE FROM tenants WHERE id=?1').bind(tenantId).run()

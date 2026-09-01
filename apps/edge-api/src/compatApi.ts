@@ -65,6 +65,25 @@ const LEGACY_TIMESTAMP_COLUMNS: Readonly<Record<string, Readonly<Record<string, 
   tenant_ai_usage_monthly: Object.freeze({ updated_at: 'updated_at_ms' }),
 })
 
+const LEGACY_VIEW_TIMESTAMP_COLUMNS: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({
+  appointments: new Set(['scheduled_at', 'created_at', 'updated_at']),
+  sales: new Set(['created_at', 'updated_at']),
+})
+
+function epochFilterValue(value: unknown): unknown {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string' || !value.trim()) return value
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : value
+}
+
+function sqliteDateTimeFilterValue(value: unknown): unknown {
+  if (typeof value !== 'string' || !value.trim()) return value
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) return value
+  return new Date(parsed).toISOString().replace('T', ' ').replace('Z', '')
+}
+
 function asObject(value: unknown): CompatQueryBody {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? { ...(value as CompatQueryBody) }
@@ -81,7 +100,13 @@ function rewriteFilters(table: string, value: unknown): unknown {
   return value.map((filter) => {
     if (!filter || typeof filter !== 'object' || Array.isArray(filter)) return filter
     const next = { ...(filter as Record<string, unknown>) }
+    const originalColumn = typeof next.column === 'string' ? next.column : ''
     next.column = mapColumn(table, next.column)
+    if (typeof next.column === 'string' && next.column !== originalColumn) {
+      next.value = epochFilterValue(next.value)
+    } else if (LEGACY_VIEW_TIMESTAMP_COLUMNS[table]?.has(originalColumn)) {
+      next.value = sqliteDateTimeFilterValue(next.value)
+    }
 
     if (next.op === 'or' && typeof next.expression === 'string') {
       next.expression = next.expression
