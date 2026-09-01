@@ -76,6 +76,10 @@ const sourceLabelForSale = (sale = {}) => {
   return 'Venda PDV'
 }
 
+const saleDescription = (sale = {}) => String(sale.notes || '')
+  .replace(/^Agendamento:\s*[0-9a-f-]{36}\s*(?:\|\s*)?/i, '')
+  .trim()
+
 export function buildCashDashboardSummary({ sales = [], splitRows = [], packageAppointments = [] } = {}) {
   const splitMap = new Map()
   splitRows.forEach((row) => {
@@ -115,9 +119,9 @@ export function buildCashDashboardSummary({ sales = [], splitRows = [], packageA
       occurred_at: sale.created_at,
       source_key: sourceKey,
       source_label: sourceLabelForSale(sale),
-      client_name: sale.customer_name || 'Cliente',
-      pet_name: '',
-      description: sale.notes || '',
+      client_name: sale.client?.owner_name || sale.customer_name || 'Cliente',
+      pet_name: sale.client?.pet_name || '',
+      description: saleDescription(sale),
       payment_method: sale.payment_method || 'outros',
       amount: Number(sale.total_price || 0),
     }

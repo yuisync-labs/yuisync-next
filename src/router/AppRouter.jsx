@@ -90,17 +90,6 @@ function AppLayout() {
     return () => document.body.classList.remove('yuisync-dark')
   }, [darkMode])
 
-  useEffect(() => {
-    const pathParts = location.pathname.split('/').filter(Boolean)
-    if (pathParts.length > 0) {
-      if (activeModuleId !== pathParts[0]) {
-        setActiveModuleId(pathParts[0])
-      }
-    } else if (activeModuleId !== null) {
-      setActiveModuleId(null)
-    }
-  }, [location.pathname])
-
   if (!activeModule) return <LauncherPage />
 
   if (tenantLoading || !activeTenantId) return <LoadingScreen />

@@ -9,8 +9,8 @@ const TABLES: Readonly<Record<string, TableSpec>> = Object.freeze({
   services:{ columns:['tenant_id','module_id','id','code','name','category','description','group_type','default_price_cents','default_duration_min','commission_type','commission_basis_points','sort_order','icon','source_product_id','status','created_at_ms','updated_at_ms'], key:['tenant_id','module_id','id'] },
   inventory_balances:{ columns:['tenant_id','module_id','product_id','on_hand_milliunits','reserved_milliunits','reorder_milliunits','version','updated_at_ms'], key:['tenant_id','module_id','product_id'] },
   inventory_movements:{ columns:['tenant_id','module_id','id','operation_key','product_id','movement_type','delta_milliunits','stock_before_milliunits','stock_after_milliunits','unit_cost_cents','reference_type','reference_id','reason','created_at_ms'], key:['tenant_id','module_id','id'] },
-  module_operational_settings:{ columns:['tenant_id','module_id','timezone','booking_horizon_days','booking_lead_time_min','default_service_duration_min','max_services_per_appointment','autonomy_mode','version','updated_at_ms'], key:['tenant_id','module_id'] },
-  booking_hours:{ columns:['tenant_id','module_id','weekday','open_minute','close_minute','active'], key:['tenant_id','module_id','weekday'] },
+  module_operational_settings:{ columns:['tenant_id','module_id','timezone','booking_horizon_days','minimum_lead_minutes','default_duration_minutes','max_services_per_appointment','autonomy_mode','version','updated_at_ms'], key:['tenant_id','module_id'] },
+  booking_hours:{ columns:['tenant_id','module_id','weekday','opens_minute','closes_minute','active'], key:['tenant_id','module_id','weekday','opens_minute'] },
   payment_method_settings:{ columns:['tenant_id','module_id','method','enabled','sort_order'], key:['tenant_id','module_id','method'] },
   appointments:{ columns:['tenant_id','module_id','id','operation_key','client_id','pet_id','scheduled_at_ms','duration_min','service_group','status','source','subtotal_cents','transport_fee_cents','notes','version','created_at_ms','updated_at_ms'], key:['tenant_id','module_id','id'] },
   appointment_services:{ columns:['tenant_id','module_id','appointment_id','position','service_id','service_code','service_name','service_group','unit_price_cents','duration_min','benefit_used'], key:['tenant_id','module_id','appointment_id','position'] },
@@ -22,7 +22,7 @@ const TABLES: Readonly<Record<string, TableSpec>> = Object.freeze({
   payment_splits:{ columns:['tenant_id','module_id','payment_id','position','recipient_type','recipient_id','amount_cents','status','provider_reference','updated_at_ms'], key:['tenant_id','module_id','payment_id','position'] },
   chat_threads:{ columns:['tenant_id','module_id','id','channel','external_thread_id','client_id','pet_id','status','last_message_at_ms','created_at_ms','updated_at_ms'], key:['tenant_id','module_id','id'] },
   chat_messages:{ columns:['tenant_id','module_id','id','thread_id','external_message_id','direction','actor_type','content_text','content_json','created_at_ms'], key:['tenant_id','module_id','id'] },
-  fiscal_documents:{ columns:['tenant_id','module_id','id','sale_id','operation_key','document_type','status','issuer_reference','access_key','request_hash','authorized_at_ms','cancelled_at_ms','created_at_ms','updated_at_ms'], key:['tenant_id','module_id','id'] },
+  fiscal_documents:{ columns:['tenant_id','module_id','id','sale_id','operation_key','document_type','provider','status','issuer_reference','access_key','request_hash','schema_version','ruleset_version','authorized_at_ms','cancelled_at_ms','created_at_ms','updated_at_ms'], key:['tenant_id','module_id','id'] },
 })
 
 export type OperationalWriterErrorCode = 'INVALID_SNAPSHOT'|'DESTINATION_DIVERGED'|'DATABASE_UNAVAILABLE'|'WRITE_FAILED'

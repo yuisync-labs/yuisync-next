@@ -631,6 +631,10 @@ export default function VendasPage() {
   const [customerSearch, setCustomerSearch] = useState('')
   const [showResults, setShowResults] = useState(false)
   const searchRef = useRef(null)
+  const selectedPet = useMemo(
+    () => (pets || []).find((pet) => String(pet.id) === String(petId)) || null,
+    [pets, petId],
+  )
 
   const filteredPets = useMemo(() => (pets || []).filter(p => {
     const raw = (v) => (v || '').toString().replace(/\D/g, '')
@@ -931,6 +935,7 @@ export default function VendasPage() {
 
       const createdSale = await createSale({
         customer_name:   customerName || 'Balcão',
+        client_id:       selectedPet?.tutor_group_id || null,
         pet_id:          petId || null,
         payment_method:  paymentBreakdownEnabled ? 'multiplo' : payment,
         discount:        Number(discount) || 0,
@@ -1199,9 +1204,9 @@ export default function VendasPage() {
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <h3 className="text-[10px] font-black uppercase tracking-widest text-muted flex items-center gap-2">
                     <Package size={12}/>
-                    Itens Gerais ({otherProducts.length})
+                    {prodLoading ? 'Carregando catálogo...' : `Itens Gerais (${otherProducts.length})`}
                   </h3>
-                  {otherProducts.length > 0 && (
+                  {!prodLoading && otherProducts.length > 0 && (
                     <div className="flex flex-wrap items-center gap-2 text-xs">
                       <span className="text-muted">
                         {productPageStart + 1}-{productPageEnd} de {otherProducts.length}
@@ -1240,7 +1245,13 @@ export default function VendasPage() {
                     </div>
                   )}
                 </div>
-                {otherProducts.length === 0 ? (
+                {prodLoading ? (
+                  <div className="yuisync-pos-empty" role="status" aria-live="polite">
+                    <span><RefreshCw size={22} className="animate-spin"/></span>
+                    <p>Carregando catálogo...</p>
+                    <small>Os produtos disponíveis aparecerão em instantes.</small>
+                  </div>
+                ) : otherProducts.length === 0 ? (
                   <div className="yuisync-pos-empty">
                     <span><Package size={22}/></span>
                     <p>Nenhum produto encontrado</p>
@@ -1318,7 +1329,7 @@ export default function VendasPage() {
                       setCustomerSearch(e.target.value)
                       setCustomerName(e.target.value)
                       setShowResults(true)
-                      if (!e.target.value) setPetId('')
+                      setPetId('')
                     }}
                     onFocus={() => setShowResults(true)}
                   />
@@ -1350,7 +1361,7 @@ export default function VendasPage() {
                           onClick={() => {
                             setCustomerName(p.owner_name)
                             setPetId(p.id)
-                            setCustomerSearch(p.owner_name)
+                            setCustomerSearch('')
                             setShowResults(false)
                           }}
                           className="w-full text-left p-3 hover:bg-white/5 border-b border-[var(--border2)] last:border-0 transition-colors"
@@ -1370,6 +1381,11 @@ export default function VendasPage() {
                       ))
                     )}
                   </div>
+                )}
+                {selectedPet && !showResults && (
+                  <p className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400">
+                    <Check size={12}/> Venda vinculada a {selectedPet.owner_name} · {selectedPet.pet_name || 'Pet'}
+                  </p>
                 )}
               </div>
               <div className="space-y-2">

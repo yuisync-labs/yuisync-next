@@ -29,6 +29,7 @@ function milli(value) { return Math.round((finite(value, 0) + Number.EPSILON) * 
 function ms(value, fallback = 0) { const n = Date.parse(String(value || '')); return Number.isFinite(n) ? n : fallback }
 function json(value, fallback) { try { return JSON.stringify(value ?? fallback) } catch { return JSON.stringify(fallback) } }
 function stableId(prefix, key) { return `${prefix}_${createHash('sha256').update(String(key)).digest('hex').slice(0, 32)}` }
+function stablePosition(prefix, key) { return Number.parseInt(createHash('sha256').update(`${prefix}:${String(key)}`).digest('hex').slice(0, 12), 16) }
 function normalizeModule(row, moduleId) { return text(row?.module_id, moduleId).toLowerCase() }
 function inScope(row, tenantId, moduleId) { return text(row?.tenant_id) === tenantId && normalizeModule(row, moduleId) === moduleId }
 function rows(source, name, tenantId, moduleId) { return arr(source?.tables?.[name]).filter((row) => inScope(row, tenantId, moduleId)) }
@@ -92,10 +93,12 @@ function projectConfig(source, scope) {
   const setting = first(source, 'settings', scope.tenant_id, scope.module_id) || {}
   const config = [{ tenant_id: scope.tenant_id, module_id: scope.module_id,
     timezone: text(setting.petbot_timezone, 'America/Sao_Paulo'), booking_horizon_days: Math.max(1, Math.round(finite(setting.petbot_booking_horizon_days, 60))),
-    booking_lead_time_min: Math.max(0, Math.round(finite(setting.petbot_booking_lead_time_min, 15))),
-    default_service_duration_min: Math.max(15, Math.round(finite(setting.petbot_default_service_duration_min, 60))),
+    minimum_lead_minutes: Math.max(0, Math.round(finite(setting.petbot_booking_lead_time_min, 15))),
+    default_duration_minutes: Math.max(15, Math.round(finite(setting.petbot_default_service_duration_min, 60))),
     max_services_per_appointment: Math.max(1, Math.min(10, Math.round(finite(setting.petbot_max_services_per_appointment, 10)))),
-    autonomy_mode: ['manual','assisted','autonomous'].includes(text(setting.petbot_autonomy_mode)) ? text(setting.petbot_autonomy_mode) : 'assisted',
+    autonomy_mode: text(setting.petbot_autonomy_mode) === 'manual'
+      ? 'disabled'
+      : (['disabled','assisted','autonomous'].includes(text(setting.petbot_autonomy_mode)) ? text(setting.petbot_autonomy_mode) : 'assisted'),
     version: 1, updated_at_ms: ms(setting.updated_at, ms(setting.created_at, 0)) }]
 
   const hours = parseJson(setting.petbot_business_hours, {})
@@ -106,7 +109,7 @@ function projectConfig(source, scope) {
     const period = periods[0] || {}
     const open = timeMinutes(period.open); const close = timeMinutes(period.close)
     if (open == null || close == null || close <= open) continue
-    booking_hours.push({ tenant_id: scope.tenant_id, module_id: scope.module_id, weekday, open_minute: open, close_minute: close, active: 1 })
+    booking_hours.push({ tenant_id: scope.tenant_id, module_id: scope.module_id, weekday: weekday === 7 ? 0 : weekday, opens_minute: open, closes_minute: close, active: 1 })
   }
   const configuredPayments = arr(parseJson(setting.payment_methods || setting.sales_payment_methods, null))
   const methods = configuredPayments.length ? configuredPayments.map((item) => typeof item === 'string' ? item : item?.id || item?.method) : ['pix','dinheiro','cartao']
@@ -141,10 +144,24 @@ function projectAppointments(source, scope) {
 
 function projectTransport(source, scope, setting) {
   const configured = arr(parseJson(setting.pet_transport_options, []))
-  const optionRows = configured.length ? configured : [
+  const optionRows = configured.length ? [...configured] : [
     { id:'cliente_leva', label:'Cliente leva e busca', fee:0 }, { id:'buscar_e_levar', label:'Buscar e levar', fee:setting.pet_transport_fee || 0 },
     { id:'somente_buscar', label:'Somente buscar', fee:setting.pet_transport_fee || 0 }, { id:'somente_levar', label:'Somente levar', fee:setting.pet_transport_fee || 0 },
   ]
+  const supported = new Set(['cliente_leva','motodog','buscar_e_levar','buscar_e_levar_fora_muriae','somente_buscar','somente_levar'])
+  const configuredIds = new Set(optionRows.map((item) => text(item.id)))
+  for (const appointment of rows(source, 'appointments', scope.tenant_id, scope.module_id)) {
+    const id = nullable(appointment.transport_mode || appointment.motodog_option || appointment.pet_transport_option)
+    if (!id || id === 'cliente_leva' || configuredIds.has(id) || !supported.has(id)) continue
+    optionRows.push({
+      id,
+      label: id === 'buscar_e_levar_fora_muriae' ? 'Buscar e levar fora de Muriaé' : id.replaceAll('_', ' '),
+      fee: id === 'buscar_e_levar_fora_muriae'
+        ? (setting.pet_transport_fee_outside_city || setting.pet_transport_fee || 0)
+        : (setting.pet_transport_fee || 0),
+    })
+    configuredIds.add(id)
+  }
   const transport_options = optionRows.map((item, index) => {
     const id = text(item.id)
     return { tenant_id: scope.tenant_id, module_id: scope.module_id, id, label: text(item.label, id), fee_cents: cents(item.fee),
@@ -152,7 +169,7 @@ function projectTransport(source, scope, setting) {
       pickup_required: ['motodog','buscar_e_levar','buscar_e_levar_fora_muriae','somente_buscar'].includes(id) ? 1 : 0,
       dropoff_required: ['motodog','buscar_e_levar','buscar_e_levar_fora_muriae','somente_levar'].includes(id) ? 1 : 0,
       outside_city: id === 'buscar_e_levar_fora_muriae' ? 1 : 0, status: bool(item.active, true) ? 'active' : 'inactive', sort_order: index }
-  }).filter((row) => ['cliente_leva','motodog','buscar_e_levar','buscar_e_levar_fora_muriae','somente_buscar','somente_levar'].includes(row.id))
+  }).filter((row) => supported.has(row.id))
 
   const appointment_transport = rows(source, 'appointments', scope.tenant_id, scope.module_id).flatMap((row) => {
     const option = nullable(row.transport_mode || row.motodog_option || row.pet_transport_option)
@@ -177,19 +194,30 @@ function projectSales(source, scope) {
     status: SALE_STATUS.get(text(row.status).toLowerCase()) || 'pending', notes: nullable(row.notes), created_at_ms: ms(row.created_at, 0), updated_at_ms: ms(row.updated_at, ms(row.created_at, 0)) }))
     .filter((row) => row.id && row.total_cents === row.subtotal_cents - row.discount_cents + row.transport_fee_cents)
 
-  const sale_items = rows(source, 'sale_items', scope.tenant_id, scope.module_id).map((row, index) => {
+  const projectedSaleIds = new Set(sales.map((sale) => sale.id))
+  const sale_items = rows(source, 'sale_items', scope.tenant_id, scope.module_id).map((row) => {
     const productId = nullable(row.product_id); const serviceId = nullable(row.service_id)
-    return { tenant_id: scope.tenant_id, module_id: scope.module_id, sale_id: text(row.sale_id), position: Math.max(0, Math.round(finite(row.position, index))),
+    const saleId = text(row.sale_id)
+    const sourceKey = text(row.id, `${saleId}:${productId || serviceId}:${row.created_at || ''}:${row.unit_price || ''}:${row.quantity || ''}`)
+    return { tenant_id: scope.tenant_id, module_id: scope.module_id, sale_id: saleId, position: stablePosition('sale-item', sourceKey),
       item_type: serviceId && !productId ? 'service' : 'product', product_id: productId, service_id: serviceId,
       item_name: text(row.item_name || row.product_name || row.service_name, 'Item'), quantity_milliunits: Math.max(1, milli(row.quantity || 1)),
       unit_price_cents: cents(row.unit_price), subtotal_cents: cents(row.subtotal), upsell: bool(row.upsell, false) ? 1 : 0 }
-  }).filter((row) => row.sale_id && ((row.item_type === 'product' && row.product_id) || (row.item_type === 'service' && row.service_id)))
+  }).filter((row) => projectedSaleIds.has(row.sale_id) && ((row.item_type === 'product' && row.product_id) || (row.item_type === 'service' && row.service_id)))
+
+  const itemKeys = new Set()
+  for (const item of sale_items) {
+    const key = `${item.sale_id}:${item.position}`
+    if (itemKeys.has(key)) throw new Error('Legacy sale item identity collision.')
+    itemKeys.add(key)
+  }
 
   const splitRows = rows(source, 'sale_payment_splits', scope.tenant_id, scope.module_id)
   const payments = []
   const payment_splits = []
   for (const sale of legacySales) {
     const saleId = text(sale.id); if (!saleId) continue
+    if (!projectedSaleIds.has(saleId)) continue
     const splits = splitRows.filter((row) => text(row.sale_id) === saleId)
     if (splits.length) {
       splits.forEach((split, index) => {
@@ -232,9 +260,11 @@ function projectFiscal(source, scope) {
   const fiscal_documents = rows(source, 'fiscal_documents', scope.tenant_id, scope.module_id).map((row) => ({ tenant_id: scope.tenant_id, module_id: scope.module_id,
     id: text(row.id), sale_id: text(row.sale_id), operation_key: text(row.operation_key || row.idempotency_key, `legacy:${text(row.id)}`),
     document_type: ['nfe','nfce','nfse'].includes(text(row.document_type || row.type).toLowerCase()) ? text(row.document_type || row.type).toLowerCase() : 'nfe',
+    provider: text(row.document_type || row.type).toLowerCase() === 'nfse' ? 'nfse_nacional' : 'sefaz_mg',
     status: ['pending','queued','processing','authorized','rejected','cancelled','failed'].includes(text(row.status).toLowerCase()) ? text(row.status).toLowerCase() : 'pending',
     issuer_reference: nullable(row.issuer_reference || row.provider_reference), access_key: nullable(row.access_key || row.chave),
     request_hash: text(row.request_hash, createHash('sha256').update(json(row.request_payload || row.payload || {}, {})).digest('hex')),
+    schema_version: 'legacy', ruleset_version: 'legacy',
     authorized_at_ms: ms(row.authorized_at, null), cancelled_at_ms: ms(row.cancelled_at, null), created_at_ms: ms(row.created_at, 0), updated_at_ms: ms(row.updated_at, ms(row.created_at, 0)) }))
     .filter((row) => row.id && row.sale_id && /^[a-f0-9]{64}$/.test(row.request_hash))
   return { fiscal_documents }

@@ -1,7 +1,5 @@
-import { useState, useEffect } from 'react'
 import { MODULES } from '../../config/modules'
 import { useAuthCtx } from '../../context/AuthContext'
-import { useModuleCtx } from '../../context/ModuleContext'
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight, LogOut, Shield } from 'lucide-react'
 import StarField from '../components/StarField'
@@ -10,7 +8,6 @@ import YuiSyncMark from '../../public/components/YuiSyncMark'
 // Uma página sem Sidebar, que apenas mostra os "Apps" que o usuário tem acesso.
 export default function LauncherPage() {
   const { profile, signOut, tenantEnabledModules = [] } = useAuthCtx()
-  const { setActiveModuleId } = useModuleCtx()
   const navigate = useNavigate()
 
   // Se o usuário tem allowed_modules no banco, nós filtramos as chaves disponíveis.
@@ -26,15 +23,6 @@ export default function LauncherPage() {
     if (allowed.length === 0) return m.id === 'petshop' // fallback legado: quem não tem array, vê petshop
     return allowed.includes(m.id)
   })
-
-  // No momento que o Launcher monta, limpamos qualquer módulo ativo 
-  // para garantir que o usuário não seja "puxado" por estados antigos.
-  useEffect(() => {
-    setActiveModuleId(null)
-  }, [setActiveModuleId])
-
-  // Lógica de redirecionamento automático REMOVIDA. 
-  // Agora todos os usuários (Admin e Funcionário) passam pelo Hub para ver seu app disponível.
 
   return (
     <div className="min-h-screen bg-bg flex flex-col items-center justify-center font-body p-6 animate-fade-up relative overflow-hidden">

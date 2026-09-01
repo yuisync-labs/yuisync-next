@@ -67,6 +67,7 @@ const LEGACY_TIMESTAMP_COLUMNS: Readonly<Record<string, Readonly<Record<string, 
 
 const LEGACY_VIEW_TIMESTAMP_COLUMNS: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({
   appointments: new Set(['scheduled_at', 'created_at', 'updated_at']),
+  sales: new Set(['created_at', 'updated_at']),
 })
 
 function epochFilterValue(value: unknown): unknown {

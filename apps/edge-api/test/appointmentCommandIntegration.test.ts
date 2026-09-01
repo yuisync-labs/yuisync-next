@@ -169,6 +169,59 @@ describe('appointment command policy in workerd', () => {
       expect(reusedKey.status).toBe(409)
       await expect(reusedKey.json()).resolves.toEqual(expect.objectContaining({ code: 'IDEMPOTENCY_KEY_REUSED' }))
 
+      const updatedScheduledAt = '2026-08-20T15:30:00.000Z'
+      const update = await handlePetshopAppointmentsApiRequest(new Request(
+        `https://edge.test/api/petshop/appointments/${encodeURIComponent(firstBody.data.appointment_id)}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'content-type': 'application/json',
+            cookie,
+            'x-tenant-id': tenantId,
+            'x-module-id': 'petshop',
+          },
+          body: JSON.stringify({
+            ...basePayload,
+            scheduled_at: updatedScheduledAt,
+            notes: 'Horario alterado pelo cliente',
+          }),
+        },
+      ), bindings())
+      expect(update?.status).toBe(200)
+      await expect(update?.json()).resolves.toEqual({
+        appointment: expect.objectContaining({
+          id: firstBody.data.appointment_id,
+          scheduled_at: updatedScheduledAt,
+          notes: 'Horario alterado pelo cliente',
+        }),
+      })
+
+      const machineUpdate = await handleCompatApiRequest(new Request('https://edge.test/api/compat/query', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'x-tenant-id': tenantId,
+          'x-module-id': 'petshop',
+        },
+        body: JSON.stringify({
+          table: 'appointments',
+          action: 'update',
+          payload: { grooming_machine_no: 7 },
+          filters: [{ op: 'eq', column: 'id', value: firstBody.data.appointment_id }],
+          mode: 'single',
+        }),
+      }), bindings())
+      expect(machineUpdate?.status).toBe(200)
+      await expect(machineUpdate?.json()).resolves.toEqual({
+        data: expect.objectContaining({
+          id: firstBody.data.appointment_id,
+          scheduled_at: '2026-08-20 15:30:00',
+          grooming_machine_no: 7,
+        }),
+        count: 1,
+      })
+
       const second = await handlePetshopAppointmentsApiRequest(new Request('https://edge.test/api/petshop/appointments', {
         method: 'POST',
         headers: {
@@ -189,11 +242,16 @@ describe('appointment command policy in workerd', () => {
       expect(secondBody?.appointment.id).not.toBe(firstBody.data.appointment_id)
       expect(secondBody?.appointment).toEqual(expect.objectContaining({ client_id: clientId, pet_id: petId }))
 
-      const appointments = await db.prepare("SELECT id,operation_key,operation_fingerprint FROM appointments WHERE tenant_id=?1 AND module_id='petshop' ORDER BY id")
-        .bind(tenantId).all<{ id:string; operation_key:string; operation_fingerprint:string }>()
+      const appointments = await db.prepare("SELECT id,operation_key,operation_fingerprint,scheduled_at_ms,grooming_machine_no FROM appointments WHERE tenant_id=?1 AND module_id='petshop' ORDER BY id")
+        .bind(tenantId).all<{ id:string; operation_key:string; operation_fingerprint:string; scheduled_at_ms:number; grooming_machine_no:number|null }>()
       expect(appointments.results).toHaveLength(2)
       expect(new Set(appointments.results.map((row) => row.operation_key)).size).toBe(2)
       expect(appointments.results.every((row) => row.operation_fingerprint?.length === 64)).toBe(true)
+      expect(appointments.results).toContainEqual(expect.objectContaining({
+        id: firstBody.data.appointment_id,
+        scheduled_at_ms: Date.parse(updatedScheduledAt),
+        grooming_machine_no: 7,
+      }))
 
       const snapshots = await db.prepare(`SELECT catalog_price_cents,commission_basis_points,min_weight_kg,max_weight_kg,species_target
         FROM appointment_services WHERE tenant_id=?1 AND module_id='petshop' ORDER BY appointment_id,position`)

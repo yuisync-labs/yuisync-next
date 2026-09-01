@@ -1,30 +1,18 @@
-import { createContext, useContext, useState, useEffect, useMemo } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { createContext, useCallback, useContext, useMemo } from 'react'
+import { useLocation } from 'react-router-dom'
 
 const ModuleContext = createContext()
 
 export function ModuleProvider({ children, modules }) {
   const location = useLocation()
-  const navigate = useNavigate()
-  
-  const getModuleFromPath = () => {
+  const activeModuleId = useMemo(() => {
     const parts = location.pathname.split('/').filter(Boolean)
     return parts[0] || null
-  }
-
-  const [activeModuleId, setActiveModuleIdState] = useState(getModuleFromPath())
-
-  // Sincroniza estado -> App
-  useEffect(() => {
-    const mid = getModuleFromPath()
-    if (mid !== activeModuleId) {
-       setActiveModuleIdState(mid)
-    }
   }, [location.pathname])
 
-  const setActiveModuleId = (mid) => {
-    setActiveModuleIdState(mid)
-  }
+  // Compatibilidade para consumidores existentes. A URL é a única fonte de
+  // verdade; os componentes que trocam de módulo também navegam para a rota.
+  const setActiveModuleId = useCallback(() => {}, [])
 
   const activeModule = activeModuleId ? modules[activeModuleId] : null
 

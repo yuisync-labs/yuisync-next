@@ -1,5 +1,6 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
+  "account_id": "7eb4b696a14fde38c74edde4ebfcd1d9",
   "name": "yuisync-edge-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-05",

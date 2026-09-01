@@ -182,6 +182,8 @@ describe('Better Auth native D1 runtime', () => {
     const passwordHash = await hash(password, 12)
     const now = Date.now()
     const nowIso = new Date(now).toISOString()
+    const chatThreadId = `compat-thread-${suffix}`
+    const chatMessageId = `compat-message-${suffix}`
 
     await authDatabase.batch([
       authDatabase.prepare('INSERT INTO user(id,name,email,emailVerified,image,createdAt,updatedAt) VALUES(?1,?2,?3,1,NULL,?4,?4)')
@@ -196,6 +198,10 @@ describe('Better Auth native D1 runtime', () => {
         .bind(principalId, userId, email, now),
       database.prepare("INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'active',?3,?3,'staff',?4)")
         .bind(tenantId, principalId, now, JSON.stringify({ petshop: { role: 'funcionario_pet' } })),
+      database.prepare("INSERT INTO chat_threads(tenant_id,module_id,id,channel,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,'internal','open',?3,?3)")
+        .bind(tenantId, chatThreadId, now),
+      database.prepare("INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,'outbound','assistant','Compat large IN',?4)")
+        .bind(tenantId, chatMessageId, chatThreadId, now),
     ])
 
     try {
@@ -238,11 +244,38 @@ describe('Better Auth native D1 runtime', () => {
       expect(response.status).toBe(200)
       expect(responseBody.code).not.toBe('INVALID_JSON')
       expect(responseBody).toHaveProperty('data')
+
+      const sessionIds = Array.from({ length: 600 }, (_, index) => `missing-thread-${suffix}-${index}`)
+      sessionIds[317] = chatThreadId
+      const largeInResponse = await handleCompatApiRequest(new Request('https://edge.test/api/compat/query', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: sessionCookie,
+          'x-tenant-id': tenantId,
+          'x-module-id': 'petshop',
+        },
+        body: JSON.stringify({
+          table: 'chat_messages',
+          action: 'select',
+          filters: [{ op: 'in', column: 'session_id', value: sessionIds }],
+          limit: 1000,
+        }),
+      }), runtimeBindings)
+
+      expect(largeInResponse).not.toBeNull()
+      if (!largeInResponse) return
+      const largeInBody = await largeInResponse.json<{ data: Array<Record<string, unknown>> }>()
+      expect(largeInResponse.status).toBe(200)
+      expect(largeInBody.data).toHaveLength(1)
+      expect(largeInBody.data[0]).toMatchObject({ id: chatMessageId, session_id: chatThreadId })
     } finally {
       await authDatabase.prepare('DELETE FROM session WHERE userId=?1').bind(userId).run()
       await authDatabase.prepare('DELETE FROM account WHERE userId=?1').bind(userId).run()
       await authDatabase.prepare('DELETE FROM user WHERE id=?1').bind(userId).run()
       await database.prepare('DELETE FROM tenant_memberships WHERE tenant_id=?1').bind(tenantId).run()
+      await database.prepare('DELETE FROM chat_messages WHERE tenant_id=?1').bind(tenantId).run()
+      await database.prepare('DELETE FROM chat_threads WHERE tenant_id=?1').bind(tenantId).run()
       await database.prepare('DELETE FROM identity_principals WHERE id=?1').bind(principalId).run()
       await database.prepare('DELETE FROM tenants WHERE id=?1').bind(tenantId).run()
     }

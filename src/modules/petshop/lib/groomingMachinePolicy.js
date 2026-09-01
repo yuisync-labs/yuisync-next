@@ -33,5 +33,5 @@ export function appointmentRequiresGroomingMachineNumber(appointment = {}) {
   const serviceText = appointmentServiceText(appointment)
   if (!serviceText) return false
 
-  return /\bmaquina\b|\bmachine\s+grooming\b|\btosa\s+(?:na\s+)?(?:total|completa)\b/.test(serviceText)
+  return /\bmaquina\b|\bmachine\s+grooming\b/.test(serviceText)
 }

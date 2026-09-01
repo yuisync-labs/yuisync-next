@@ -70,6 +70,26 @@ test('caixa reaberto usa somente vendas posteriores a nova abertura', () => {
   assert.equal(period.mode, 'register')
 })
 
+test('movimento de agendamento mostra tutor e pet sem expor UUID operacional', () => {
+  const appointmentId = '65aa1111-2222-4333-8444-555555555555'
+  const summary = buildCashDashboardSummary({
+    sales: [{
+      id: 'sale-appointment',
+      appointment_id: appointmentId,
+      total_price: 75,
+      payment_method: 'pix',
+      created_at: '2026-08-31T15:00:00Z',
+      notes: `Agendamento: ${appointmentId} | Banho e tosa`,
+      client: { owner_name: 'Daiany', pet_name: 'Francisco' },
+    }],
+  })
+
+  assert.equal(summary.movements[0].client_name, 'Daiany')
+  assert.equal(summary.movements[0].pet_name, 'Francisco')
+  assert.equal(summary.movements[0].description, 'Banho e tosa')
+  assert.doesNotMatch(summary.movements[0].description, /65aa1111/)
+})
+
 test('tela do caixa usa grade fluida e operacoes financeiras integradas', async () => {
   const [page, operations] = await Promise.all([
     readFile(new URL('../src/modules/petshop/pages/CaixaPage.jsx', import.meta.url), 'utf8'),

@@ -175,7 +175,13 @@ function whereClause(list, scope, global = false) {
     if (op === 'in') {
       const items=Array.isArray(f.value)?f.value.slice(0,MAX_ROWS):[]
       if (!items.length) clauses.push('1=0')
-      else { clauses.push(`${column} IN (${items.map(()=>'?').join(',')})`); values.push(...items.map(scalar)) }
+      else {
+        // D1 limits the number of bound SQL variables. Passing the list as a
+        // single JSON value keeps large dashboard/chat queries below that
+        // limit while preserving SQLite's typed comparison semantics.
+        clauses.push(`${column} IN (SELECT value FROM json_each(?))`)
+        values.push(JSON.stringify(items.map(scalar)))
+      }
       continue
     }
     if (op === 'contains') { clauses.push(`instr(CAST(${column} AS TEXT), ?) > 0`); values.push(typeof f.value === 'string' ? f.value : jsonString(f.value, null)); continue }
@@ -243,7 +249,31 @@ async function enrich(db,table,columns,rows,scope) {
   if(!rows.length)return
   if(/(?:^|,)\s*clients\s*\(/.test(columns)) {
     const ids=[...new Set(rows.map((r)=>str(r.client_id)).filter(Boolean))]
-    if(ids.length){const q=ids.map(()=>'?').join(',');const res=await db.prepare(`SELECT * FROM compat_clients WHERE tenant_id=? AND module_id=? AND id IN (${q})`).bind(scope.tenantId,scope.moduleId,...ids).all();const map=new Map(res.results.map((r)=>[String(r.id),normalize('clients',r)]));for(const r of rows)r.clients=map.get(String(r.client_id||''))||null}
+    if(ids.length){const q=ids.map(()=>'?').join(',');const source=table==='sales'?'clients':'compat_clients';const res=await db.prepare(`SELECT * FROM ${source} WHERE tenant_id=? AND module_id=? AND id IN (${q})`).bind(scope.tenantId,scope.moduleId,...ids).all();const map=new Map(res.results.map((r)=>[String(r.id),source==='clients'?{...r,active:r.status==='active',details:{}}:normalize('clients',r)]));for(const r of rows)r.clients=map.get(String(r.client_id||''))||null}
+  }
+  if(table==='sales'&&/sale_items\s*\(/.test(columns)) {
+    const saleIds=[...new Set(rows.map((row)=>str(row.id)).filter(Boolean))]
+    if(saleIds.length){
+      const saleMarks=saleIds.map(()=>'?').join(',')
+      const itemResult=await db.prepare(`SELECT * FROM compat_sale_items WHERE tenant_id=? AND module_id=? AND sale_id IN (${saleMarks}) ORDER BY sale_id,position`).bind(scope.tenantId,scope.moduleId,...saleIds).all()
+      const items=itemResult.results.map((item)=>({
+        ...normalize('sale_items',item),
+        id:`${String(item.sale_id)}:${String(item.position)}`,
+        upsell:Boolean(item.upsell),
+      }))
+      if(/products\s*\(/.test(columns)){
+        const productIds=[...new Set(items.map((item)=>str(item.product_id)).filter(Boolean))]
+        if(productIds.length){
+          const productMarks=productIds.map(()=>'?').join(',')
+          const productResult=await db.prepare(`SELECT * FROM compat_products WHERE tenant_id=? AND module_id=? AND id IN (${productMarks})`).bind(scope.tenantId,scope.moduleId,...productIds).all()
+          const productMap=new Map(productResult.results.map((product)=>[String(product.id),normalize('products',product)]))
+          for(const item of items)item.products=productMap.get(String(item.product_id||''))||null
+        }
+      }
+      const grouped=new Map(saleIds.map((saleId)=>[String(saleId),[]]))
+      for(const item of items)grouped.get(String(item.sale_id))?.push(item)
+      for(const row of rows)row.sale_items=grouped.get(String(row.id))||[]
+    }
   }
   if(table==='client_subscriptions'&&/subscription_plans\s*\(/.test(columns)) {
     const ids=[...new Set(rows.map((r)=>str(r.plan_id)).filter(Boolean))]
@@ -294,7 +324,8 @@ async function mutateAppointments(db, action, body, scope) {
   const fs=filters(body.filters);checkScopeFilters(fs,scope);const idFilter=fs.find((f)=>f.op==='eq'&&f.column==='id'),id=str(idFilter?.value)
   if(action==='delete'){if(!id)throw new Error('WRITE_REQUIRES_ID');await db.prepare("UPDATE appointments SET status='cancelled',version=version+1,updated_at_ms=? WHERE tenant_id=? AND module_id=? AND id=?").bind(Date.now(),scope.tenantId,scope.moduleId,id).run();return}
   const rows=Array.isArray(body.payload)?body.payload.map(obj):[obj(body.payload)]
-  for(const raw of rows){const now=Date.now(),appointmentId=id||str(raw.id)||crypto.randomUUID();const old=await db.prepare('SELECT * FROM compat_appointments WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(scope.tenantId,scope.moduleId,appointmentId).first();const m={...old,...raw};const petId=str(m.pet_id)||str(m.client_id);let clientId=str(m.client_id);if(petId){const pet=await db.prepare('SELECT client_id FROM pets WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(scope.tenantId,scope.moduleId,petId).first();clientId=pet?.client_id||clientId}if(!clientId||!petId)throw new Error('APPOINTMENT_PARTY_REQUIRED');const items=Array.isArray(m.service_items)?m.service_items:jsonValue(m.service_items,[]);const primary=items[0]||{};const duration=Math.max(15,Math.round(num(m.duration_min||primary.duration_min,60)));const subtotal=cents(m.price??m.subtotal);await db.prepare("INSERT INTO appointments(tenant_id,module_id,id,client_id,pet_id,scheduled_at_ms,duration_min,service_group,status,source,subtotal_cents,transport_fee_cents,notes,version,created_at_ms,updated_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(tenant_id,module_id,id) DO UPDATE SET client_id=excluded.client_id,pet_id=excluded.pet_id,scheduled_at_ms=excluded.scheduled_at_ms,duration_min=excluded.duration_min,service_group=excluded.service_group,status=excluded.status,source=excluded.source,subtotal_cents=excluded.subtotal_cents,notes=excluded.notes,version=appointments.version+1,updated_at_ms=excluded.updated_at_ms").bind(scope.tenantId,scope.moduleId,appointmentId,clientId,petId,epoch(m.scheduled_at),duration,str(m.service_group)||str(primary.group_type)||'outro',legacyStatus(m.status,'appointment'),str(m.source)||'manual',Math.max(0,subtotal),Math.max(0,cents(m.delivery_fee??m.transport_fee)),str(m.notes),epoch(m.created_at,now),now).run();if(items.length){await db.prepare('DELETE FROM appointment_services WHERE tenant_id=?1 AND module_id=?2 AND appointment_id=?3').bind(scope.tenantId,scope.moduleId,appointmentId).run();const statements=items.slice(0,20).map((item,index)=>{const serviceId=str(item.service_id)||str(item.id);if(!serviceId)throw new Error('SERVICE_REQUIRED');return db.prepare('INSERT INTO appointment_services(tenant_id,module_id,appointment_id,position,service_id,service_code,service_name,service_group,unit_price_cents,duration_min,benefit_used) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(scope.tenantId,scope.moduleId,appointmentId,index,serviceId,str(item.code)||serviceId,str(item.name)||str(m.service_type)||'Servico',str(item.group_type)||str(m.service_group)||'outro',Math.max(0,cents(item.unit_price??m.price)),Math.max(15,Math.round(num(item.duration_min,duration))),flag(item.benefit_used))});await db.batch(statements)}}
+  if(action==='update'&&id&&rows.length===1&&Object.keys(rows[0]).every((key)=>['grooming_machine_no','updated_at','tenant_id','module_id'].includes(key))){const rawMachine=rows[0].grooming_machine_no;const machineNo=rawMachine==null||rawMachine===''?null:Math.round(num(rawMachine));if(machineNo!==null&&![4,7,10].includes(machineNo))throw new Error('INVALID_GROOMING_MACHINE_NUMBER');await db.prepare('UPDATE appointments SET grooming_machine_no=?1,version=version+1,updated_at_ms=?2 WHERE tenant_id=?3 AND module_id=?4 AND id=?5').bind(machineNo,Date.now(),scope.tenantId,scope.moduleId,id).run();return}
+  for(const raw of rows){const now=Date.now(),appointmentId=id||str(raw.id)||crypto.randomUUID();const old=await db.prepare('SELECT * FROM compat_appointments WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(scope.tenantId,scope.moduleId,appointmentId).first();const m={...old,...raw};const petId=str(m.pet_id)||str(m.client_id);let clientId=str(m.client_id);if(petId){const pet=await db.prepare('SELECT client_id FROM pets WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(scope.tenantId,scope.moduleId,petId).first();clientId=pet?.client_id||clientId}if(!clientId||!petId)throw new Error('APPOINTMENT_PARTY_REQUIRED');const items=Array.isArray(m.service_items)?m.service_items:jsonValue(m.service_items,[]);const primary=items[0]||{};const duration=Math.max(15,Math.round(num(m.duration_min||primary.duration_min,60)));const subtotal=cents(m.price??m.subtotal);const machineNo=m.grooming_machine_no==null||m.grooming_machine_no===''?null:Math.round(num(m.grooming_machine_no));if(machineNo!==null&&![4,7,10].includes(machineNo))throw new Error('INVALID_GROOMING_MACHINE_NUMBER');await db.prepare("INSERT INTO appointments(tenant_id,module_id,id,client_id,pet_id,scheduled_at_ms,duration_min,service_group,status,source,subtotal_cents,transport_fee_cents,notes,grooming_machine_no,version,created_at_ms,updated_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(tenant_id,module_id,id) DO UPDATE SET client_id=excluded.client_id,pet_id=excluded.pet_id,scheduled_at_ms=excluded.scheduled_at_ms,duration_min=excluded.duration_min,service_group=excluded.service_group,status=excluded.status,source=excluded.source,subtotal_cents=excluded.subtotal_cents,notes=excluded.notes,grooming_machine_no=excluded.grooming_machine_no,version=appointments.version+1,updated_at_ms=excluded.updated_at_ms").bind(scope.tenantId,scope.moduleId,appointmentId,clientId,petId,epoch(m.scheduled_at),duration,str(m.service_group)||str(primary.group_type)||'outro',legacyStatus(m.status,'appointment'),str(m.source)||'manual',Math.max(0,subtotal),Math.max(0,cents(m.delivery_fee??m.transport_fee)),str(m.notes),machineNo,epoch(m.created_at,now),now).run();if(items.length){await db.prepare('DELETE FROM appointment_services WHERE tenant_id=?1 AND module_id=?2 AND appointment_id=?3').bind(scope.tenantId,scope.moduleId,appointmentId).run();const statements=items.slice(0,20).map((item,index)=>{const serviceId=str(item.service_id)||str(item.id);if(!serviceId)throw new Error('SERVICE_REQUIRED');return db.prepare('INSERT INTO appointment_services(tenant_id,module_id,appointment_id,position,service_id,service_code,service_name,service_group,unit_price_cents,duration_min,benefit_used) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(scope.tenantId,scope.moduleId,appointmentId,index,serviceId,str(item.code)||serviceId,str(item.name)||str(m.service_type)||'Servico',str(item.group_type)||str(m.service_group)||'outro',Math.max(0,cents(item.unit_price??m.price)),Math.max(15,Math.round(num(item.duration_min,duration))),flag(item.benefit_used))});await db.batch(statements)}}
 }
 
 function canonical(table, raw, scope) {
@@ -374,7 +405,7 @@ async function query(request, env) {
     if(mode==='single'){if(selected.rows.length!==1)return json({code:'ROW_NOT_SINGLE',count:selected.count},406);return json({data:selected.rows[0],count:selected.count})}
     if(mode==='maybeSingle'){if(selected.rows.length>1)return json({code:'ROW_NOT_SINGLE',count:selected.count},406);return json({data:selected.rows[0]||null,count:selected.count})}
     return json({data:selected.rows,count:selected.count})
-  }catch(error){const code=error instanceof Error?error.message:'COMPAT_QUERY_FAILED';if(code==='STOCK_MUTATION_REQUIRES_INVENTORY_COMMAND')return json({code},409);if(code.includes('CASH_REGISTER_ALREADY_OPEN'))return json({code:'CASH_REGISTER_ALREADY_OPEN'},409);if(['SCOPE_MISMATCH','INVALID_FILTER','INVALID_ORDER','WRITE_REQUIRES_ID','WRITE_NOT_SUPPORTED','APPOINTMENT_PARTY_REQUIRED','SERVICE_REQUIRED'].includes(code))return json({code},400);console.error('compat.query.failed',{table,action,code});return json({code:'COMPAT_QUERY_FAILED'},500)}
+  }catch(error){const code=error instanceof Error?error.message:'COMPAT_QUERY_FAILED';if(code==='STOCK_MUTATION_REQUIRES_INVENTORY_COMMAND')return json({code},409);if(code.includes('CASH_REGISTER_ALREADY_OPEN'))return json({code:'CASH_REGISTER_ALREADY_OPEN'},409);if(['SCOPE_MISMATCH','INVALID_FILTER','INVALID_ORDER','WRITE_REQUIRES_ID','WRITE_NOT_SUPPORTED','APPOINTMENT_PARTY_REQUIRED','SERVICE_REQUIRED','INVALID_GROOMING_MACHINE_NUMBER'].includes(code))return json({code},400);console.error('compat.query.failed',{table,action,code});return json({code:'COMPAT_QUERY_FAILED'},500)}
 }
 
 async function rpc(request, env) {
