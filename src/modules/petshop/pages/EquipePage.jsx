@@ -21,6 +21,7 @@ import { usePetshopAdvanced } from '../hooks/usePetshopAdvanced'
 import { fmtCurrency } from '../../../lib/supabase'
 import { useAuthCtx } from '../../../context/AuthContext'
 import { useModuleCtx } from '../../../context/ModuleContext'
+import { MetricCard } from '../../../components/ui'
 import {
   normalizeOperationalStaff,
   PETSHOP_COMMISSION_RESET_TEMPLATE_KEY,
@@ -602,10 +603,10 @@ export default function EquipePage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-            <div className="bg-card border border-[var(--border)] rounded-xl p-5"><p className="text-xs uppercase tracking-widest text-muted font-bold mb-2">Servicos concluidos</p><p className="font-display font-bold text-3xl text-text">{initialLoading ? '—' : totals.serviceCount}</p></div>
-            <div className="bg-card border border-[var(--border)] rounded-xl p-5"><p className="text-xs uppercase tracking-widest text-muted font-bold mb-2">Pacotes executados</p><p className="font-display font-bold text-3xl text-amber-400">{initialLoading ? '—' : totals.packageCount}</p><p className="mt-1 text-xs text-muted">{initialLoading ? 'Carregando dados...' : `${fmtCurrency(totals.packageRevenue)} em servicos`}</p></div>
-            <div className="bg-card border border-[var(--border)] rounded-xl p-5"><p className="text-xs uppercase tracking-widest text-muted font-bold mb-2">Receita estetica</p><p className="font-display font-bold text-3xl text-emerald-400">{initialLoading ? '—' : fmtCurrency(totals.serviceRevenue)}</p></div>
-            <div className="bg-card border border-[var(--border)] rounded-xl p-5"><p className="text-xs uppercase tracking-widest text-muted font-bold mb-2">Total a pagar</p><p className="font-display font-bold text-3xl text-amber-400">{initialLoading ? '—' : fmtCurrency(totals.commission)}</p></div>
+            <MetricCard label="Servicos concluidos" value={initialLoading ? '—' : totals.serviceCount}/>
+            <MetricCard label="Pacotes executados" value={initialLoading ? '—' : totals.packageCount} description={initialLoading ? 'Carregando dados...' : `${fmtCurrency(totals.packageRevenue)} em servicos`} tone="warning"/>
+            <MetricCard label="Receita estetica" value={initialLoading ? '—' : fmtCurrency(totals.serviceRevenue)} tone="success"/>
+            <MetricCard label="Total a pagar" value={initialLoading ? '—' : fmtCurrency(totals.commission)} tone="warning"/>
           </div>
 
           {commissionPendingServices.length > 0 && (

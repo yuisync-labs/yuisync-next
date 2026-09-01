@@ -340,7 +340,7 @@ export default function ServicosPage() {
         </div>
       </div>
 
-      <nav className="flex max-w-full gap-1 overflow-x-auto rounded-xl border border-[var(--border)] bg-card p-1" aria-label="Áreas do catálogo de serviços" aria-busy={loading}>
+      <nav className="flex max-w-full gap-1 overflow-x-auto rounded-xl border border-[var(--border)] bg-card p-1" aria-label="Áreas do catálogo de serviços">
         {SERVICE_GROUPS.map((group) => {
           const Icon = group.icon
           const selected = activeGroup === group.id

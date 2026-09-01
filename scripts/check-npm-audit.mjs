@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const severityRank = { info: 0, low: 1, moderate: 2, high: 3, critical: 4 }
 
@@ -119,9 +120,11 @@ function annotationEscape(value) {
 async function main() {
   const allowlistPath = path.resolve('config/npm-audit-allowlist.json')
   const allowlist = JSON.parse(await readFile(allowlistPath, 'utf8'))
-  const result = spawnSync('npm', ['audit', '--json'], { encoding: 'utf8' })
+  const npmCli = process.env.npm_execpath
+    || path.resolve(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js')
+  const result = spawnSync(process.execPath, [npmCli, 'audit', '--json'], { encoding: 'utf8' })
   if (!result.stdout?.trim()) {
-    console.error(result.stderr || 'npm audit did not return JSON.')
+    console.error(result.error || result.stderr || 'npm audit did not return JSON.')
     process.exit(1)
   }
 
@@ -147,6 +150,6 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   await main()
 }
