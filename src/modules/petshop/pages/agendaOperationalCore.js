@@ -112,7 +112,14 @@ export function appointmentPriceBreakdown(appointment, transportOptions) {
   const stored = Math.max(0, moneyNumber(appointment?.price))
   const items = Array.isArray(appointment?.service_items) ? appointment.service_items : []
   const itemService = servicePriceFromItems(appointment)
+  const benefits = Array.isArray(appointment?.subscription_benefits)
+    ? appointment.subscription_benefits
+    : []
   const transportCovered = items.some((item) => item?.transport_benefit_used === true)
+    || benefits.some((benefit) => (
+      ['reserved', 'consumed'].includes(String(benefit?.status || benefit?.state || '').toLowerCase())
+      && String(benefit?.kind || benefit?.type || '').toLowerCase() === 'transport'
+    ))
 
   // O snapshot explicita quando o MotoDog foi abatido. Sem essa marca, preserva
   // a reconciliacao legada: servico armazenado + tarifa configurada.

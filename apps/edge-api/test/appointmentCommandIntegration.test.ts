@@ -147,6 +147,7 @@ describe('appointment command policy in workerd', () => {
           scheduled_at: '2026-08-20T13:00:00.000Z',
           service_type: serviceCode,
           status: 'agendado',
+          subscription_benefits: [],
           pets: expect.objectContaining({
             id: petId,
             client_id: clientId,

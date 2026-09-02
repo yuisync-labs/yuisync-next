@@ -38,6 +38,17 @@ describe('agenda operational core', () => {
     expect(result).toEqual({ service: 55, transport: 20, total: 75 })
   })
 
+  it('mantem apenas o valor da tosa quando o pacote cobre somente o MotoDog', () => {
+    const result = appointmentPriceBreakdown({
+      price: 130,
+      transport_mode: 'buscar_e_levar',
+      service_items: [{ name: 'Tosa tesoura', unit_price: 130, benefit_used: false }],
+      subscription_benefits: [{ kind: 'transport', key: 'motodog', status: 'reserved' }],
+    }, transportOptions)
+
+    expect(result).toEqual({ service: 130, transport: 0, total: 130 })
+  })
+
   it('separa o transporte de um total legado sem snapshots de servico', () => {
     const result = appointmentPriceBreakdown({
       price: 75,
