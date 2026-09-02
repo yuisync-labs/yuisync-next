@@ -347,81 +347,87 @@ body.product-ui-active :is(.theme-petshop, .theme-petshop-modal) :is(button, inp
   opacity: 0.58;
 }
 
-/* Agenda used to encode service types with full-card gradients and glow. Keep
- * the operational distinction, but reduce it to a semantic edge and neutral
- * product surface so it behaves like the rest of the application.
+/* Agenda service colors are deliberately richer than the surrounding product
+ * chrome. Layered highlights give the cards the polished, metallic depth of
+ * the legacy agenda while keeping each category immediately recognizable.
  */
 body.product-ui-active .yuisync-agenda-card-surface,
 body.product-ui-active .yuisync-resolved-card {
-  border-color: var(--border) !important;
-  border-left: 3px solid #10b981 !important;
-  background: color-mix(in srgb, #10b981 8%, var(--card)) !important;
-  color: var(--text) !important;
-  box-shadow: none !important;
+  --agenda-card-border: rgba(110, 231, 183, 0.92);
+  --agenda-card-shadow: rgba(2, 44, 34, 0.34);
+  --agenda-card-background:
+    radial-gradient(circle at 18% -12%, rgba(209, 250, 229, 0.34) 0%, rgba(209, 250, 229, 0) 38%),
+    linear-gradient(118deg, #064e3b 0%, #047857 34%, #059669 55%, #065f46 76%, #022c22 100%);
+  border-color: var(--agenda-card-border) !important;
+  border-left: 3px solid var(--agenda-card-border) !important;
+  background: var(--agenda-card-background) !important;
+  color: #f8fafc !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.28),
+    0 9px 22px var(--agenda-card-shadow) !important;
+  transition: border-color 180ms ease, box-shadow 180ms ease, filter 180ms ease !important;
 }
 
 body.product-ui-active .yuisync-agenda-card-surface[data-yuisync-card-kind='grooming'],
 body.product-ui-active .yuisync-resolved-card[data-yuisync-card-kind='grooming'] {
-  border-color: var(--border) !important;
-  border-left-color: #3b82f6 !important;
-  background: color-mix(in srgb, #3b82f6 8%, var(--card)) !important;
-  box-shadow: none !important;
+  --agenda-card-border: rgba(147, 197, 253, 0.94);
+  --agenda-card-shadow: rgba(23, 37, 84, 0.38);
+  --agenda-card-background:
+    radial-gradient(circle at 18% -12%, rgba(219, 234, 254, 0.34) 0%, rgba(219, 234, 254, 0) 38%),
+    linear-gradient(118deg, #172554 0%, #1e40af 34%, #2563eb 55%, #1e3a8a 76%, #0f172a 100%);
 }
 
 body.product-ui-active .yuisync-agenda-card-surface[data-yuisync-card-kind='package'],
 body.product-ui-active .yuisync-resolved-card[data-yuisync-card-kind='package'] {
-  border-color: var(--border) !important;
-  border-left-color: #f59e0b !important;
-  background: color-mix(in srgb, #f59e0b 9%, var(--card)) !important;
-  box-shadow: none !important;
+  --agenda-card-border: rgba(253, 224, 71, 0.96);
+  --agenda-card-shadow: rgba(120, 53, 15, 0.38);
+  --agenda-card-background:
+    radial-gradient(circle at 18% -12%, rgba(254, 243, 199, 0.36) 0%, rgba(254, 243, 199, 0) 38%),
+    linear-gradient(118deg, #78350f 0%, #b45309 34%, #d97706 55%, #92400e 76%, #451a03 100%);
 }
 
-body.product-ui-active.yuisync-dark .yuisync-agenda-card-surface[data-yuisync-card-kind='bath'],
-body.product-ui-active.yuisync-dark .yuisync-resolved-card[data-yuisync-card-kind='bath'] {
-  border-color: #6ee7b7 !important;
-  background: linear-gradient(135deg, #065f46 0%, #047857 58%, #064e3b 100%) !important;
+body.product-ui-active :is(.yuisync-agenda-card-surface, .yuisync-resolved-card):hover {
+  filter: saturate(1.08) brightness(1.035);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+    0 11px 26px var(--agenda-card-shadow) !important;
 }
 
-body.product-ui-active.yuisync-dark .yuisync-agenda-card-surface[data-yuisync-card-kind='grooming'],
-body.product-ui-active.yuisync-dark .yuisync-resolved-card[data-yuisync-card-kind='grooming'] {
-  border-color: #93c5fd !important;
-  background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 58%, #172554 100%) !important;
+body.product-ui-active :is(.yuisync-agenda-card-surface, .yuisync-resolved-card)
+  :is(.yuisync-card-time, .yuisync-card-pet) {
+  color: #ffffff !important;
 }
 
-body.product-ui-active.yuisync-dark .yuisync-agenda-card-surface[data-yuisync-card-kind='package'],
-body.product-ui-active.yuisync-dark .yuisync-resolved-card[data-yuisync-card-kind='package'] {
-  border-color: #fde047 !important;
-  background: linear-gradient(135deg, #92400e 0%, #b45309 54%, #713f12 100%) !important;
+body.product-ui-active :is(.yuisync-agenda-card-surface, .yuisync-resolved-card)
+  :is(.yuisync-card-tutor, .yuisync-card-service, .yuisync-card-transport, .yuisync-card-responsible) {
+  color: rgba(248, 250, 252, 0.86) !important;
 }
 
-body.product-ui-active .yuisync-resolved-card :is(.text-text, .text-text\/90, p, span) {
-  color: var(--text) !important;
-}
-
-body.product-ui-active .yuisync-resolved-card .text-muted {
-  color: var(--muted) !important;
-}
-
-body.product-ui-active .yuisync-resolved-card :is(.text-emerald-400, .text-emerald-300) {
-  color: var(--ui-success-fg) !important;
+body.product-ui-active :is(.yuisync-agenda-card-surface, .yuisync-resolved-card)
+  .yuisync-card-service > span:last-child {
+  color: #ffffff !important;
 }
 
 body.product-ui-active .yuisync-package-label {
-  color: var(--ui-warning-fg) !important;
+  color: #fef3c7 !important;
 }
 
 body.product-ui-active .yuisync-resolved-action,
 body.product-ui-active [data-yuisync-card-kind='grooming'] .yuisync-resolved-action,
 body.product-ui-active [data-yuisync-card-kind='package'] .yuisync-resolved-action {
-  border-color: var(--border) !important;
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  box-shadow: none !important;
+  border-color: rgba(255, 255, 255, 0.42) !important;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(15, 23, 42, 0.22)) !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+  backdrop-filter: blur(8px);
   transform: none !important;
 }
 
 body.product-ui-active .yuisync-resolved-action:hover {
-  background: var(--ui-hover) !important;
+  border-color: rgba(255, 255, 255, 0.68) !important;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.25), rgba(15, 23, 42, 0.28)) !important;
   transform: none !important;
 }
 
