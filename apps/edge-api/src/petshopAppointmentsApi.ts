@@ -35,6 +35,7 @@ type AppointmentReadRow = {
   subscription_id: string | null
   subscription_benefit_used: number
   subscription_benefit_status: string | null
+  subscription_benefits_json: string
   billing_intent_type: string | null
   billing_intent_subscription_id: string | null
   service_items_json: string
@@ -173,6 +174,7 @@ function appointmentPayload(row: AppointmentReadRow) {
     subscription_id: row.subscription_id,
     subscription_benefit_used: row.subscription_benefit_used === 1,
     subscription_benefit_status: row.subscription_benefit_status,
+    subscription_benefits: parseItems(row.subscription_benefits_json),
     billing_intent_type: row.billing_intent_type,
     billing_intent_subscription_id: row.billing_intent_subscription_id,
     pets: {
@@ -206,7 +208,7 @@ const APPOINTMENT_READ_SQL = `
     a.responsible_staff_key,a.responsible_staff_name,a.delivery_staff_key,a.delivery_staff_name,
     t.option_id AS transport_mode,o.label AS transport_label,t.pickup_address AS transport_address,
     t.pickup_reference AS transport_reference,a.live_status,a.checkin_at_ms,a.ready_at_ms,
-    a.subscription_id,a.subscription_benefit_used,a.subscription_benefit_status,
+    a.subscription_id,a.subscription_benefit_used,a.subscription_benefit_status,a.subscription_benefits_json,
     a.billing_intent_type,a.billing_intent_subscription_id,
     COALESCE((SELECT json_group_array(json_object(
       'code',s.service_code,'service_id',s.service_id,'name',s.service_name,'group_type',s.service_group,

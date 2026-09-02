@@ -208,6 +208,18 @@ const FLUID_AGENDA_STYLES = `
     box-shadow: 0 10px 28px rgba(23, 37, 84, 0.42) !important;
   }
 
+  .yuisync-agenda-card-surface[data-yuisync-card-kind='bath'],
+  .yuisync-resolved-card[data-yuisync-card-kind='bath'] {
+    border-color: rgba(110, 231, 183, 0.92) !important;
+    background: linear-gradient(135deg, #065f46 0%, #047857 58%, #064e3b 100%) !important;
+    box-shadow: 0 10px 28px rgba(6, 78, 59, 0.4) !important;
+  }
+
+  [data-yuisync-card-kind='bath'] .yuisync-resolved-action {
+    border-color: rgba(167, 243, 208, 0.72) !important;
+    background: rgba(6, 95, 70, 0.97) !important;
+  }
+
   [data-yuisync-card-kind='grooming'] .yuisync-resolved-action {
     border-color: rgba(191, 219, 254, 0.72) !important;
     background: rgba(30, 58, 138, 0.97) !important;
@@ -225,6 +237,7 @@ const FLUID_AGENDA_STYLES = `
     background: rgba(146, 64, 14, 0.96) !important;
   }
 
+  [data-yuisync-card-kind='bath'] .yuisync-resolved-action.is-complete,
   [data-yuisync-card-kind='grooming'] .yuisync-resolved-action.is-complete,
   [data-yuisync-card-kind='package'] .yuisync-resolved-action.is-complete {
     background: #059669 !important;
@@ -290,14 +303,6 @@ const normalizeCardText = (value = '') => String(value || '')
   .toLowerCase()
   .trim()
 
-const currencyValue = (value = '') => {
-  const parsed = Number(String(value || '')
-    .replace(/[^\d,.-]/g, '')
-    .replace(/\.(?=\d{3}(?:\D|$))/g, '')
-    .replace(',', '.'))
-  return Number.isFinite(parsed) ? parsed : null
-}
-
 const minutesFromClock = (value = '') => {
   const match = String(value || '').match(/(\d{1,2}):(\d{2})/)
   if (!match) return null
@@ -327,29 +332,6 @@ const inferOverlapCount = (card) => {
 const applyCardPresentation = () => {
   document.querySelectorAll('.yuisync-agenda-card-surface').forEach((card) => {
     const text = normalizeCardText(card.textContent)
-    const serviceNode = card.querySelector('.yuisync-card-service > span:first-child')
-    const priceNode = card.querySelector('.yuisync-card-service > span:last-child')
-    const serviceText = normalizeCardText(serviceNode?.textContent)
-    const amount = currencyValue(priceNode?.textContent)
-    const packageAppointment = card.dataset.yuisyncPackage === 'true'
-      || text.includes('pacote')
-      || (amount !== null && Math.abs(amount) < 0.005 && /banho|tosa/.test(serviceText))
-    const genericGroup = ['banho/tosa', 'banho_tosa', 'banho tosa'].includes(serviceText)
-
-    if (priceNode) {
-      if (packageAppointment) {
-        priceNode.textContent = 'PACOTE · R$ 0,00'
-        priceNode.classList.add('yuisync-package-label')
-      } else {
-        priceNode.classList.remove('yuisync-package-label')
-      }
-    }
-
-    card.dataset.yuisyncCardKind = packageAppointment
-      ? 'package'
-      : serviceText.includes('tosa') && !genericGroup
-        ? 'grooming'
-        : 'bath'
     card.dataset.yuisyncMotodog = String(/motodog|buscar e trazer|buscar|trazer/.test(text))
 
     const count = inferOverlapCount(card)

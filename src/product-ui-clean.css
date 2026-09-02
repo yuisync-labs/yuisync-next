@@ -355,7 +355,7 @@ body.product-ui-active .yuisync-agenda-card-surface,
 body.product-ui-active .yuisync-resolved-card {
   border-color: var(--border) !important;
   border-left: 3px solid #10b981 !important;
-  background: var(--card) !important;
+  background: color-mix(in srgb, #10b981 8%, var(--card)) !important;
   color: var(--text) !important;
   box-shadow: none !important;
 }
@@ -364,7 +364,7 @@ body.product-ui-active .yuisync-agenda-card-surface[data-yuisync-card-kind='groo
 body.product-ui-active .yuisync-resolved-card[data-yuisync-card-kind='grooming'] {
   border-color: var(--border) !important;
   border-left-color: #3b82f6 !important;
-  background: var(--card) !important;
+  background: color-mix(in srgb, #3b82f6 8%, var(--card)) !important;
   box-shadow: none !important;
 }
 
@@ -372,8 +372,26 @@ body.product-ui-active .yuisync-agenda-card-surface[data-yuisync-card-kind='pack
 body.product-ui-active .yuisync-resolved-card[data-yuisync-card-kind='package'] {
   border-color: var(--border) !important;
   border-left-color: #f59e0b !important;
-  background: var(--card) !important;
+  background: color-mix(in srgb, #f59e0b 9%, var(--card)) !important;
   box-shadow: none !important;
+}
+
+body.product-ui-active.yuisync-dark .yuisync-agenda-card-surface[data-yuisync-card-kind='bath'],
+body.product-ui-active.yuisync-dark .yuisync-resolved-card[data-yuisync-card-kind='bath'] {
+  border-color: #6ee7b7 !important;
+  background: linear-gradient(135deg, #065f46 0%, #047857 58%, #064e3b 100%) !important;
+}
+
+body.product-ui-active.yuisync-dark .yuisync-agenda-card-surface[data-yuisync-card-kind='grooming'],
+body.product-ui-active.yuisync-dark .yuisync-resolved-card[data-yuisync-card-kind='grooming'] {
+  border-color: #93c5fd !important;
+  background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 58%, #172554 100%) !important;
+}
+
+body.product-ui-active.yuisync-dark .yuisync-agenda-card-surface[data-yuisync-card-kind='package'],
+body.product-ui-active.yuisync-dark .yuisync-resolved-card[data-yuisync-card-kind='package'] {
+  border-color: #fde047 !important;
+  background: linear-gradient(135deg, #92400e 0%, #b45309 54%, #713f12 100%) !important;
 }
 
 body.product-ui-active .yuisync-resolved-card :is(.text-text, .text-text\/90, p, span) {
