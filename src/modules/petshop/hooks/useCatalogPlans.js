@@ -93,8 +93,10 @@ export function useCatalogPlans() {
       id: payload.id,
       plan_id: payload.plan_id,
       client_id: payload.client_id,
+      pet_id: payload.pet_id,
       status,
       started_at: startedAt,
+      first_appointment_at: payload.first_appointment_at,
       next_billing_date: payload.next_billing_date || addDays(startedAt, BILLING_CYCLE_DAYS[cycle] || 30),
       services_used: payload.services_used || {},
     })

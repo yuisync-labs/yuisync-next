@@ -16,12 +16,15 @@ export const PETSHOP_SUBSCRIPTION_LIST_SQL = `
     plan.billing_cycle AS plan_billing_cycle,plan.services_json AS plan_services_json,plan.status AS plan_status,
     client.name AS client_name,client.phone AS client_phone,client.email AS client_email,
     client.address AS client_address,client.neighborhood AS client_neighborhood,client.city AS client_city,
+    pet.name AS pet_name,pet.species AS pet_species,pet.breed AS pet_breed,
     NULL AS client_details_json
   FROM client_subscriptions subscription
   JOIN subscription_plans plan
     ON plan.tenant_id=subscription.tenant_id AND plan.module_id=subscription.module_id AND plan.id=subscription.plan_id
   JOIN clients client
     ON client.tenant_id=subscription.tenant_id AND client.module_id=subscription.module_id AND client.id=subscription.client_id
+  LEFT JOIN pets pet
+    ON pet.tenant_id=subscription.tenant_id AND pet.module_id=subscription.module_id AND pet.id=subscription.pet_id
   WHERE subscription.tenant_id=?1 AND subscription.module_id=?2
   ORDER BY subscription.started_at_ms DESC,subscription.id DESC
 `
@@ -153,9 +156,9 @@ function clientPayload(row: any) {
     owner_neighborhood: row?.client_neighborhood || '',
     owner_city: row?.client_city || '',
     details,
-    pet_name: text(details.pet_name) || row?.client_name || '',
-    species: text(details.species) || 'other',
-    breed: text(details.breed) || '',
+    pet_name: text(row?.pet_name) || text(details.pet_name) || row?.client_name || '',
+    species: text(row?.pet_species) || text(details.species) || 'other',
+    breed: text(row?.pet_breed) || text(details.breed) || '',
   }
 }
 
@@ -172,9 +175,12 @@ function subscriptionPayload(row: any, usage?: { base: UsageMap; reserved: Usage
     id: row?.id,
     plan_id: row?.plan_id,
     client_id: row?.client_id,
+    pet_id: row?.pet_id || null,
     status: row?.status,
     started_at: row?.started_at_ms ? new Date(Number(row.started_at_ms)).toISOString() : null,
     next_billing_date: row?.next_billing_date,
+    first_appointment_at: row?.first_appointment_at_ms ? new Date(Number(row.first_appointment_at_ms)).toISOString() : null,
+    recurring_appointments_created_at: row?.recurring_appointments_created_at_ms ? new Date(Number(row.recurring_appointments_created_at_ms)).toISOString() : null,
     services_used: servicesUsed,
     services_reserved: usage?.reserved || {},
     services_consumed: consumed,
@@ -287,19 +293,36 @@ async function saveSubscription(request: Request, bindings: Bindings, subscripti
   if (!body) return json({ code: 'INVALID_JSON' }, 400)
   const { tenantId, moduleId } = resolved.scope!
   const planId = text(body.plan_id)
-  const clientId = text(body.client_id)
+  const requestedClientId = text(body.client_id)
+  const requestedPetId = text(body.pet_id)
   const status = text(body.status) || 'pending_payment'
   const startedAt = validDate(body.started_at)
   const nextBillingDate = validDate(body.next_billing_date)
-  if (!planId || !clientId) return json({ code: 'PLAN_AND_CLIENT_REQUIRED' }, 400)
+  if (!planId || (!requestedClientId && !requestedPetId)) return json({ code: 'PLAN_AND_CLIENT_REQUIRED' }, 400)
   if (!SUBSCRIPTION_STATUSES.has(status)) return json({ code: 'INVALID_SUBSCRIPTION_STATUS' }, 400)
   if (!startedAt || !nextBillingDate) return json({ code: 'INVALID_SUBSCRIPTION_DATES' }, 400)
   const plan = await bindings.DB!.prepare(`SELECT id FROM subscription_plans WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`)
     .bind(tenantId, moduleId, planId).first<{ id: string }>()
   if (!plan) return json({ code: 'PLAN_NOT_FOUND' }, 404)
-  const client = await bindings.DB!.prepare(`SELECT id FROM clients WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`)
-    .bind(tenantId, moduleId, clientId).first<{ id: string }>()
+  const petCandidateId = requestedPetId || requestedClientId
+  const pet = petCandidateId
+    ? await bindings.DB!.prepare(`SELECT id,client_id FROM pets WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`)
+      .bind(tenantId, moduleId, petCandidateId).first<{ id: string; client_id: string }>()
+    : null
+  const clientId = pet?.client_id || requestedClientId
+  const petId = pet?.id || requestedPetId || null
+  const client = clientId
+    ? await bindings.DB!.prepare(`SELECT id FROM clients WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`)
+      .bind(tenantId, moduleId, clientId).first<{ id: string }>()
+    : null
   if (!client) return json({ code: 'CLIENT_NOT_FOUND' }, 404)
+  if (petId && !pet) return json({ code: 'PET_NOT_FOUND' }, 404)
+  const firstAppointmentAtMs = body.first_appointment_at == null
+    ? null
+    : Date.parse(String(body.first_appointment_at))
+  if (firstAppointmentAtMs !== null && !Number.isFinite(firstAppointmentAtMs)) {
+    return json({ code: 'INVALID_FIRST_APPOINTMENT_AT' }, 400)
+  }
 
   const id = subscriptionId || crypto.randomUUID()
   if (!ID.test(id)) return json({ code: 'INVALID_SUBSCRIPTION_ID' }, 400)
@@ -310,18 +333,18 @@ async function saveSubscription(request: Request, bindings: Bindings, subscripti
   if (subscriptionId) {
     const result = await bindings.DB!.prepare(`
       UPDATE client_subscriptions
-      SET plan_id=?4,client_id=?5,status=?6,started_at_ms=?7,next_billing_date=?8,
-          cancelled_at_ms=?9,updated_at_ms=?10
+      SET plan_id=?4,client_id=?5,pet_id=COALESCE(?6,pet_id),status=?7,started_at_ms=?8,next_billing_date=?9,
+          first_appointment_at_ms=COALESCE(?10,first_appointment_at_ms),cancelled_at_ms=?11,updated_at_ms=?12
       WHERE tenant_id=?1 AND module_id=?2 AND id=?3
-    `).bind(tenantId, moduleId, id, planId, clientId, status, startedAtMs, nextBillingDate, cancelledAtMs, now).run()
+    `).bind(tenantId, moduleId, id, planId, clientId, petId, status, startedAtMs, nextBillingDate, firstAppointmentAtMs, cancelledAtMs, now).run()
     if (!result.meta.changes) return json({ code: 'SUBSCRIPTION_NOT_FOUND' }, 404)
   } else {
     await bindings.DB!.prepare(`
       INSERT INTO client_subscriptions(
-        tenant_id,module_id,id,plan_id,client_id,status,started_at_ms,next_billing_date,
-        services_used_json,cancelled_at_ms,created_at_ms,updated_at_ms,benefit_ledger_base_used_json
-      ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11,?9)
-    `).bind(tenantId, moduleId, id, planId, clientId, status, startedAtMs, nextBillingDate, JSON.stringify(servicesUsed), cancelledAtMs, now).run()
+        tenant_id,module_id,id,plan_id,client_id,pet_id,status,started_at_ms,next_billing_date,
+        services_used_json,first_appointment_at_ms,cancelled_at_ms,created_at_ms,updated_at_ms,benefit_ledger_base_used_json
+      ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13,?10)
+    `).bind(tenantId, moduleId, id, planId, clientId, petId, status, startedAtMs, nextBillingDate, JSON.stringify(servicesUsed), firstAppointmentAtMs, cancelledAtMs, now).run()
   }
   const row = await bindings.DB!.prepare(`SELECT * FROM client_subscriptions WHERE tenant_id=?1 AND module_id=?2 AND id=?3 LIMIT 1`)
     .bind(tenantId, moduleId, id).first()
@@ -435,6 +458,40 @@ async function cancelSubscription(request: Request, bindings: Bindings, subscrip
   return json({ subscription: subscriptionPayload(row) })
 }
 
+async function listSubscriptionAppointments(request: Request, bindings: Bindings, subscriptionId: string): Promise<Response> {
+  const resolved = await resolveScope(request, bindings)
+  if (resolved.error) return resolved.error
+  const scope = resolved.scope!
+  const rows = await bindings.DB!.prepare(`
+    SELECT a.id,a.scheduled_at_ms,a.status,a.service_group,a.source,a.notes,
+      COALESCE((SELECT json_group_array(json_object(
+        'code',s.service_code,
+        'service_id',s.service_id,
+        'name',s.service_name,
+        'group_type',s.service_group,
+        'unit_price',s.unit_price_cents/100.0,
+        'duration_min',s.duration_min,
+        'benefit_used',s.benefit_used=1
+      )) FROM appointment_services s
+        WHERE s.tenant_id=a.tenant_id AND s.module_id=a.module_id AND s.appointment_id=a.id),'[]') AS service_items_json
+    FROM appointments a
+    WHERE a.tenant_id=?1 AND a.module_id=?2 AND a.subscription_id=?3
+    ORDER BY a.scheduled_at_ms,a.id
+    LIMIT 64
+  `).bind(scope.tenantId, scope.moduleId, subscriptionId).all<any>()
+  return json({
+    appointments: rows.results.map((row) => ({
+      id: row.id,
+      scheduled_at: new Date(Number(row.scheduled_at_ms)).toISOString(),
+      status: row.status,
+      service_type: row.service_group,
+      service_items: parseArray(row.service_items_json),
+      notes: row.notes || '',
+      source: row.source || 'package_activation',
+    })),
+  })
+}
+
 export async function handlePetshopPlansApiRequest(request: Request, bindings: Bindings): Promise<Response | null> {
   const { pathname } = new URL(request.url)
   if (pathname === '/api/petshop/plans') {
@@ -454,6 +511,13 @@ export async function handlePetshopPlansApiRequest(request: Request, bindings: B
     if (request.method === 'GET') return listSubscriptions(request, bindings)
     if (request.method === 'POST') return saveSubscription(request, bindings, null)
     return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET, POST' })
+  }
+  const appointmentsMatch = /^\/api\/petshop\/subscriptions\/([^/]+)\/appointments$/.exec(pathname)
+  if (appointmentsMatch) {
+    const id = decodeURIComponent(appointmentsMatch[1])
+    if (!ID.test(id)) return json({ code: 'INVALID_SUBSCRIPTION_ID' }, 400)
+    if (request.method === 'GET') return listSubscriptionAppointments(request, bindings, id)
+    return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET' })
   }
   const usageMatch = /^\/api\/petshop\/subscriptions\/([^/]+)\/usage$/.exec(pathname)
   if (usageMatch) {

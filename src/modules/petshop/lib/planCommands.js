@@ -84,18 +84,20 @@ export function cancelSubscriptionCommand({ tenantId, moduleId = 'petshop', subs
 }
 
 export async function loadPackageAppointmentsCommand({ tenantId, moduleId = 'petshop', subscriptionId }) {
-  const response = await runWithTenantFallback(tenantId, async (includeTenant) => {
-    let query = supabase
-      .from('appointments')
-      .select('id,scheduled_at,status,service_type,service_items,notes,source')
-      .eq('module_id', moduleId)
-      .eq('subscription_id', subscriptionId)
-      .order('scheduled_at', { ascending: true })
-    query = applyTenantFilter(query, tenantId, includeTenant)
-    return query
-  })
-  if (response.error) throw response.error
-  return response.data || []
+  return nativeRequest(`/petshop/subscriptions/${encodeURIComponent(subscriptionId)}/appointments`, {
+    tenantId,
+    moduleId,
+    method: 'GET',
+  }).then((result) => result.appointments || [])
+}
+
+export function withPackageScheduleCommandPayload({ subscription, firstAppointmentAt, plan }) {
+  return {
+    ...subscription,
+    first_appointment_at: firstAppointmentAt,
+    plan,
+    billing_cycle: plan?.billing_cycle,
+  }
 }
 
 export async function reschedulePackageAppointmentCommand({ tenantId, moduleId = 'petshop', appointmentId, scheduledAt, source }) {

@@ -32,6 +32,7 @@ import {
   publishPackageScheduleHint,
   reschedulePackageAppointmentCommand,
   updateSubscriptionUsageCommand,
+  withPackageScheduleCommandPayload,
 } from '../lib/planCommands'
 import { usePetshopAdvanced, BILLING_CYCLES } from '../hooks/usePetshopAdvanced'
 import {
@@ -124,7 +125,9 @@ function asPetshopDateTime(value) {
   const raw = String(value || '')
   if (!raw) return DateTime.invalid('empty')
   const parsed = DateTime.fromISO(raw, { setZone: true })
-  return parsed.isValid ? parsed.setZone(PETSHOP_ZONE) : DateTime.invalid('invalid')
+  if (parsed.isValid) return parsed.setZone(PETSHOP_ZONE)
+  const sql = DateTime.fromSQL(raw, { zone: 'utc' })
+  return sql.isValid ? sql.setZone(PETSHOP_ZONE) : DateTime.invalid('invalid')
 }
 
 function localDateValue(value) {
@@ -162,10 +165,15 @@ function packageAppointmentServiceLabel(appointment = {}) {
 function packageAppointmentStatus(status) {
   return {
     agendado: { label: 'Agendado', cls: 'badge-amber' },
+    scheduled: { label: 'Agendado', cls: 'badge-amber' },
     confirmado: { label: 'Confirmado', cls: 'badge-blue' },
+    confirmed: { label: 'Confirmado', cls: 'badge-blue' },
     em_andamento: { label: 'Em andamento', cls: 'badge-purple' },
+    in_progress: { label: 'Em andamento', cls: 'badge-purple' },
     concluido: { label: 'Concluído', cls: 'badge-green' },
+    completed: { label: 'Concluído', cls: 'badge-green' },
     cancelado: { label: 'Cancelado', cls: 'badge-red' },
+    cancelled: { label: 'Cancelado', cls: 'badge-red' },
     no_show: { label: 'No-show', cls: 'badge-gray' },
   }[status] || { label: status || 'Indefinido', cls: 'badge-gray' }
 }
@@ -415,10 +423,15 @@ function SubscriptionModal({ plans, clients, catalogServices, context, onClose, 
   const renewal = Boolean(renewalOf)
   const fixedPlanId = pendingSubscription?.plan_id || renewalOf?.plan_id || ''
   const fixedClientId = pendingSubscription?.client_id || renewalOf?.client_id || ''
+  const fixedPetId = pendingSubscription?.pet_id
+    || renewalOf?.pet_id
+    || clients.find((client) => client.tutor_group_id === fixedClientId)?.id
+    || ''
   const [form, setForm] = useState(() => ({
     id: pendingSubscription?.id,
     plan_id: fixedPlanId || plans[0]?.id || '',
     client_id: fixedClientId,
+    pet_id: fixedPetId,
     status: pendingSubscription ? 'pending_payment' : 'active',
     started_at: renewal
       ? renewalStartDate(renewalOf, pendingSubscription)
@@ -427,14 +440,20 @@ function SubscriptionModal({ plans, clients, catalogServices, context, onClose, 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const selectedPlan = plans.find((plan) => plan.id === form.plan_id)
-  const selectedClient = clients.find((client) => client.id === form.client_id)
+  const selectedClient = clients.find((client) => client.id === form.pet_id)
 
   async function submit() {
-    if (!form.client_id) return setError('Selecione o pet que receberá o pacote.')
+    if (!form.pet_id || !form.client_id) return setError('Selecione o pet que receberá o pacote.')
+    const firstAppointmentAt = window.sessionStorage.getItem(PACKAGE_FIRST_APPOINTMENT_STORAGE_KEY)
+    if (!firstAppointmentAt) return setError('Informe a primeira data e o horário fixo.')
     setSaving(true)
     setError('')
     try {
-      await onSave({ ...form, plan: selectedPlan, billing_cycle: selectedPlan?.billing_cycle })
+      await onSave(withPackageScheduleCommandPayload({
+        subscription: form,
+        firstAppointmentAt,
+        plan: selectedPlan,
+      }))
       onClose()
     } catch (submitError) {
       setError(submitError?.message || 'Não foi possível iniciar a venda do pacote.')
@@ -455,7 +474,7 @@ function SubscriptionModal({ plans, clients, catalogServices, context, onClose, 
         </div>
 
         <div className="modal-body space-y-5">
-          <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm font-medium text-text">
             {renewal
               ? pendingSubscription
                 ? 'Esta renovação já está aguardando pagamento. Informe a agenda que faltou para liberar o recebimento.'
@@ -477,7 +496,19 @@ function SubscriptionModal({ plans, clients, catalogServices, context, onClose, 
               </div>
             </div>
           ) : (
-            <ClientPicker clients={clients} selectedId={form.client_id} onSelect={(clientId) => setForm((current) => ({ ...current, client_id: clientId }))} onManagePets={onManagePets}/>
+            <ClientPicker
+              clients={clients}
+              selectedId={form.pet_id}
+              onSelect={(petId) => {
+                const selected = clients.find((client) => client.id === petId)
+                setForm((current) => ({
+                  ...current,
+                  pet_id: petId,
+                  client_id: selected?.tutor_group_id || petId,
+                }))
+              }}
+              onManagePets={onManagePets}
+            />
           )}
           <div>
             <label className="inp-label">{renewal ? 'Primeiro atendimento do novo ciclo' : 'Início previsto do ciclo'}</label>
@@ -612,7 +643,7 @@ function PackageAppointmentsModal({ subscription, activeTenantId, moduleId, onCl
         </div>
 
         <div className="modal-body space-y-4">
-          <div className="rounded-xl border border-sky-500/25 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+          <div className="rounded-xl border border-sky-500/35 bg-sky-500/10 px-4 py-3 text-sm font-medium text-text">
             Todos os agendamentos vinculados ao ciclo são exibidos, incluindo datas futuras e passadas. Qualquer data e horário pode ser ajustado manualmente para controle operacional.
           </div>
 
@@ -645,7 +676,7 @@ function PackageAppointmentsModal({ subscription, activeTenantId, moduleId, onCl
                   </div>
                 )
               })}
-              {!rows.length && <p className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-5 text-center text-sm text-amber-200">Nenhum agendamento vinculado foi encontrado para este ciclo.</p>}
+              {!rows.length && <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-5 text-center text-sm font-medium text-text">Nenhum agendamento vinculado foi encontrado para este ciclo.</p>}
             </div>
           )}
 
@@ -692,7 +723,7 @@ function UsageEditModal({ subscription, onClose, onSave }) {
           <button type="button" onClick={onClose} className="text-muted hover:text-text"><X size={18}/></button>
         </div>
         <div className="modal-body space-y-4">
-          <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm font-medium text-text">
             <p className="flex items-start gap-2"><ShieldAlert size={16} className="mt-0.5 shrink-0"/> Reduzir o consumo libera saldo para novos agendamentos. O histórico dos atendimentos não é apagado.</p>
           </div>
           <div className="space-y-3">

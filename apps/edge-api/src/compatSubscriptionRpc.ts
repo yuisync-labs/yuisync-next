@@ -40,14 +40,26 @@ type AppointmentServiceRow = {
 type SubscriptionRow = {
   id: string
   client_id: string
+  pet_id: string | null
   plan_id: string
   status: string
   services_used_json: string
+  first_appointment_at_ms: number | null
+  recurring_appointments_created_at_ms: number | null
   plan_name: string
   plan_price_cents: number
   plan_billing_cycle: string
   plan_services_json: string
   plan_status: string
+}
+
+type CatalogServiceRow = {
+  id: string
+  code: string
+  name: string
+  group_type: string
+  default_price_cents: number
+  default_duration_min: number
 }
 
 type ExistingSaleRow = {
@@ -250,6 +262,160 @@ function planLimit(planService: JsonRecord): number {
   return Math.max(0, integer(planService.qty_per_cycle ?? planService.quantity ?? planService.qty, 0))
 }
 
+function planServiceCode(planService: JsonRecord): string | null {
+  return text(planService.service_type) || text(planService.service_code) || text(planService.code)
+}
+
+async function packageScheduleStatements(
+  env: CompatRuntimeBindings,
+  scope: Scope,
+  subscription: SubscriptionRow,
+  now: number,
+): Promise<{ statements: D1PreparedStatement[]; createdCount: number; totalCount: number; expectedCount: number } | Response> {
+  if (!env.DB) return json({ code: 'DATABASE_NOT_CONFIGURED' }, 503)
+  if (!subscription.pet_id) return json({ code: 'SUBSCRIPTION_PET_REQUIRED' }, 409)
+  if (!subscription.first_appointment_at_ms) return json({ code: 'SUBSCRIPTION_SCHEDULE_REQUIRED' }, 409)
+
+  const pet = await env.DB.prepare(`
+    SELECT id,client_id FROM pets
+    WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active'
+    LIMIT 1
+  `).bind(scope.tenantId, scope.moduleId, subscription.pet_id).first<{ id: string; client_id: string }>()
+  if (!pet || pet.client_id !== subscription.client_id) return json({ code: 'SUBSCRIPTION_PET_MISMATCH' }, 409)
+
+  const planServices = parseArray(subscription.plan_services_json)
+    .map((service) => ({ service, code: planServiceCode(service), quantity: planLimit(service) }))
+    .filter((entry) => entry.code && entry.quantity > 0)
+  const scheduleCount = Math.max(0, ...planServices.map((entry) => entry.quantity))
+  if (!scheduleCount) return json({ code: 'SUBSCRIPTION_PLAN_SERVICES_REQUIRED' }, 409)
+
+  const catalog = new Map<string, CatalogServiceRow>()
+  for (const entry of planServices) {
+    const row = await env.DB.prepare(`
+      SELECT id,code,name,group_type,default_price_cents,default_duration_min
+      FROM services
+      WHERE tenant_id=?1 AND module_id=?2 AND code=?3 AND status='active'
+      LIMIT 1
+    `).bind(scope.tenantId, scope.moduleId, entry.code).first<CatalogServiceRow>()
+    if (row) catalog.set(String(entry.code), row)
+  }
+  const schedulable = planServices.filter((entry) => catalog.has(String(entry.code)))
+  if (!schedulable.length) return json({ code: 'SUBSCRIPTION_CATALOG_SERVICES_REQUIRED' }, 409)
+
+  const existing = await env.DB.prepare(`
+    SELECT id,operation_key,scheduled_at_ms
+    FROM appointments
+    WHERE tenant_id=?1 AND module_id=?2 AND subscription_id=?3
+    ORDER BY scheduled_at_ms,id
+    LIMIT 128
+  `).bind(scope.tenantId, scope.moduleId, subscription.id).all<{
+    id: string
+    operation_key: string | null
+    scheduled_at_ms: number
+  }>()
+  const existingKeys = new Set(existing.results.map((row) => text(row.operation_key)).filter(Boolean))
+  const existingTimes = new Set(existing.results.map((row) => Number(row.scheduled_at_ms)))
+
+  const statements: D1PreparedStatement[] = []
+  let createdCount = 0
+  let totalCount = 0
+  for (let occurrence = 0; occurrence < scheduleCount; occurrence += 1) {
+    const items = schedulable
+      .filter((entry) => occurrence < entry.quantity)
+      .map((entry) => catalog.get(String(entry.code))!)
+    if (!items.length) continue
+    const appointmentId = crypto.randomUUID()
+    const scheduledAt = Number(subscription.first_appointment_at_ms) + occurrence * 7 * 86_400_000
+    const duration = Math.min(1440, Math.max(15, items.reduce((sum, item) => sum + Math.max(15, Number(item.default_duration_min || 60)), 0)))
+    const subtotal = items.reduce((sum, item) => sum + Math.max(0, Number(item.default_price_cents || 0)), 0)
+    const group = items.every((item) => item.group_type === 'banho_tosa')
+      ? 'banho_tosa'
+      : items.every((item) => item.group_type === 'veterinaria') ? 'veterinaria' : 'outro'
+    const benefits = items.map((item) => ({
+      kind: 'service',
+      key: item.code,
+      benefit_key: item.code,
+      service_code: item.code,
+      label: item.name,
+      catalog_price: Number(item.default_price_cents || 0) / 100,
+      status: 'reserved',
+    }))
+    const operationKey = `package:${subscription.id}:${occurrence + 1}`
+    if (existingKeys.has(operationKey) || existingTimes.has(scheduledAt)) {
+      totalCount += 1
+      continue
+    }
+
+    statements.push(env.DB.prepare(`
+      INSERT INTO appointments(
+        tenant_id,module_id,id,client_id,pet_id,scheduled_at_ms,duration_min,service_group,status,source,
+        subtotal_cents,transport_fee_cents,notes,version,created_at_ms,updated_at_ms,operation_key,
+        subscription_id,subscription_benefit_used,subscription_benefit_status,subscription_benefits_json,
+        subscription_label,subscription_discount_cents,billing_intent_type,billing_intent_subscription_id
+      ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'scheduled','package_activation',?9,0,?10,1,?11,?11,?12,?13,1,'reserved',?14,?15,?9,'subscription',?13)
+    `).bind(
+      scope.tenantId,
+      scope.moduleId,
+      appointmentId,
+      subscription.client_id,
+      subscription.pet_id,
+      scheduledAt,
+      duration,
+      group,
+      subtotal,
+      `Reserva automática do pacote ${subscription.plan_name}`,
+      now,
+      operationKey,
+      subscription.id,
+      JSON.stringify(benefits),
+      subscription.plan_name,
+    ))
+
+    items.forEach((item, position) => {
+      statements.push(env.DB!.prepare(`
+        INSERT INTO appointment_services(
+          tenant_id,module_id,appointment_id,position,service_id,service_code,service_name,service_group,
+          unit_price_cents,duration_min,benefit_used,catalog_price_cents,commission_basis_points,
+          min_weight_kg,max_weight_kg,min_weight_grams,max_weight_grams,species_target
+        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,1,?9,NULL,NULL,NULL,NULL,NULL,NULL)
+      `).bind(
+        scope.tenantId,
+        scope.moduleId,
+        appointmentId,
+        position,
+        item.id,
+        item.code,
+        item.name,
+        item.group_type,
+        Math.max(0, Number(item.default_price_cents || 0)),
+        Math.max(15, Number(item.default_duration_min || 60)),
+      ))
+      statements.push(env.DB!.prepare(`
+        INSERT INTO subscription_benefit_allocations(
+          tenant_id,module_id,id,subscription_id,appointment_id,appointment_service_position,
+          benefit_kind,benefit_key,service_code,state,operation_key,catalog_price_cents,
+          version,reserved_at_ms,consumed_at_ms,released_at_ms,created_at_ms,updated_at_ms
+        ) VALUES(?1,?2,?3,?4,?5,?6,'service',?7,?7,'reserved',?8,?9,1,?10,NULL,NULL,?10,?10)
+      `).bind(
+        scope.tenantId,
+        scope.moduleId,
+        crypto.randomUUID(),
+        subscription.id,
+        appointmentId,
+        position,
+        item.code,
+        `${operationKey}:benefit:${position}`,
+        Math.max(0, Number(item.default_price_cents || 0)),
+        now,
+      ))
+    })
+    createdCount += 1
+    totalCount += 1
+  }
+
+  return { statements, createdCount, totalCount, expectedCount: scheduleCount }
+}
+
 function consumedBenefitSnapshot(
   existing: JsonRecord | null,
   service: AppointmentServiceRow,
@@ -364,7 +530,8 @@ async function reconcileCompletedAppointment(
   }
 
   const subscription = await env.DB.prepare(`
-    SELECT cs.id,cs.client_id,cs.plan_id,cs.status,cs.services_used_json,
+    SELECT cs.id,cs.client_id,cs.pet_id,cs.plan_id,cs.status,cs.services_used_json,
+           cs.first_appointment_at_ms,cs.recurring_appointments_created_at_ms,
            sp.name AS plan_name,sp.price_cents AS plan_price_cents,
            sp.billing_cycle AS plan_billing_cycle,sp.services_json AS plan_services_json,
            sp.status AS plan_status
@@ -584,29 +751,9 @@ async function checkoutSubscription(
   )
   if (authorizationError) return authorizationError
 
-  const operationKey = `subscription:${subscriptionId}`
-  const existing = await env.DB.prepare(`
-    SELECT id,total_cents,status
-    FROM sales
-    WHERE tenant_id=?1 AND module_id=?2 AND (operation_key=?3 OR subscription_id=?4)
-    ORDER BY CASE WHEN operation_key=?3 THEN 0 ELSE 1 END
-    LIMIT 1
-  `).bind(scope.tenantId, scope.moduleId, operationKey, subscriptionId).first<ExistingSaleRow>()
-  if (existing?.id) {
-    return json({
-      data: {
-        sale_id: existing.id,
-        subscription_id: subscriptionId,
-        total: Number(existing.total_cents || 0) / 100,
-        payment_method: text(payload.payment_method) || null,
-        status: 'active',
-        duplicated: true,
-      },
-    })
-  }
-
   const subscription = await env.DB.prepare(`
-    SELECT cs.id,cs.client_id,cs.plan_id,cs.status,cs.services_used_json,
+    SELECT cs.id,cs.client_id,cs.pet_id,cs.plan_id,cs.status,cs.services_used_json,
+           cs.first_appointment_at_ms,cs.recurring_appointments_created_at_ms,
            sp.name AS plan_name,sp.price_cents AS plan_price_cents,
            sp.billing_cycle AS plan_billing_cycle,sp.services_json AS plan_services_json,
            sp.status AS plan_status
@@ -617,10 +764,73 @@ async function checkoutSubscription(
     LIMIT 1
   `).bind(scope.tenantId, scope.moduleId, subscriptionId).first<SubscriptionRow>()
   if (!subscription) return json({ code: 'SUBSCRIPTION_NOT_FOUND' }, 404)
+
+  const operationKey = `subscription:${subscriptionId}`
+  const existing = await env.DB.prepare(`
+    SELECT id,total_cents,status
+    FROM sales
+    WHERE tenant_id=?1 AND module_id=?2 AND operation_key=?3
+    LIMIT 1
+  `).bind(scope.tenantId, scope.moduleId, operationKey).first<ExistingSaleRow>()
+    || await env.DB.prepare(`
+      SELECT id,total_cents,status
+      FROM sales
+      WHERE tenant_id=?1 AND module_id=?2 AND subscription_id=?3
+      ORDER BY id
+      LIMIT 1
+    `).bind(scope.tenantId, scope.moduleId, subscriptionId).first<ExistingSaleRow>()
+  if (existing?.id) {
+    let appointmentsCreated = 0
+    let appointmentsTotal = 0
+    if (subscription.pet_id && subscription.first_appointment_at_ms && ['active', 'pending_payment'].includes(subscription.status)) {
+      const repair = await packageScheduleStatements(env, scope, subscription, Date.now())
+      if (!(repair instanceof Response)) {
+        appointmentsCreated = repair.createdCount
+        appointmentsTotal = repair.totalCount
+        if (repair.statements.length) {
+          try {
+            await env.DB.batch([
+              ...repair.statements,
+              env.DB.prepare(`
+                UPDATE client_subscriptions
+                SET recurring_appointments_created_at_ms=?4,updated_at_ms=?4
+                WHERE tenant_id=?1 AND module_id=?2 AND id=?3
+              `).bind(scope.tenantId, scope.moduleId, subscriptionId, Date.now()),
+            ])
+          } catch (error) {
+            console.error('compat.subscription.schedule_repair.failed', {
+              tenant_id: scope.tenantId,
+              module_id: scope.moduleId,
+              subscription_id: subscriptionId,
+              error_name: error instanceof Error ? error.name : 'Error',
+            })
+            return json({ code: 'SUBSCRIPTION_SCHEDULE_REPAIR_FAILED' }, 500)
+          }
+        }
+      }
+    }
+    return json({
+      data: {
+        sale_id: existing.id,
+        subscription_id: subscriptionId,
+        total: Number(existing.total_cents || 0) / 100,
+        payment_method: text(payload.payment_method) || null,
+        status: 'active',
+        appointments_created: appointmentsCreated,
+        appointments_total: appointmentsTotal,
+        duplicated: true,
+      },
+    })
+  }
+
   if (subscription.status !== 'pending_payment') {
     return json({ code: 'SUBSCRIPTION_NOT_PENDING_PAYMENT', status: subscription.status }, 409)
   }
   if (subscription.plan_status !== 'active') return json({ code: 'SUBSCRIPTION_PLAN_INACTIVE' }, 409)
+
+  const now = Date.now()
+  const packageSchedule = await packageScheduleStatements(env, scope, subscription, now)
+  if (packageSchedule instanceof Response) return packageSchedule
 
   const totalCents = Math.max(0, Number(subscription.plan_price_cents || 0))
   let payments: PaymentInput[] = []
@@ -633,7 +843,6 @@ async function checkoutSubscription(
   }
 
   const saleId = crypto.randomUUID()
-  const now = Date.now()
   const cycleDays = normalizeKey(subscription.plan_billing_cycle) === 'quarterly' ? 90 : 30
   const nextBillingDate = new Date(now + cycleDays * 86_400_000).toISOString().slice(0, 10)
   const notes = [
@@ -663,7 +872,7 @@ async function checkoutSubscription(
     env.DB.prepare(`
       UPDATE client_subscriptions
       SET status='active',started_at_ms=?1,next_billing_date=?2,services_used_json='{}',
-          cancelled_at_ms=NULL,updated_at_ms=?1
+          recurring_appointments_created_at_ms=?1,cancelled_at_ms=NULL,updated_at_ms=?1
       WHERE tenant_id=?3 AND module_id=?4 AND id=?5 AND status='pending_payment'
     `).bind(now, nextBillingDate, scope.tenantId, scope.moduleId, subscriptionId),
   ]
@@ -685,6 +894,7 @@ async function checkoutSubscription(
       now,
     ))
   })
+  statements.push(...packageSchedule.statements)
 
   try {
     await env.DB.batch(statements)
@@ -723,6 +933,8 @@ async function checkoutSubscription(
       total: totalCents / 100,
       payment_method: responsePaymentMethod,
       status: 'active',
+      appointments_created: packageSchedule.createdCount,
+      appointments_total: packageSchedule.totalCount,
       duplicated: false,
     },
   })
