@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "tenant_id": "29d6a509-8b35-47d0-ad19-7cee6f17328c",
+  "module_id": "petshop",
+  "overrides": [
+    {
+      "action": "exclude_subscription_benefit",
+      "appointment_id": "e3b133f3-b1fe-4693-8fef-dc847cc65a3c",
+      "subscription_id": "f323eebd-0c81-4853-96ac-be926140d18d",
+      "benefit_key": "motodog",
+      "reason": "Fifth MotoDog consumption exceeds the four-use package capacity; preserve the completed grooming appointment outside the package without creating a retroactive charge."
+    }
+  ]
+}

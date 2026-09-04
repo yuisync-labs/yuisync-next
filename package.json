@@ -61,7 +61,10 @@
     "edge:dev": "npm run dev --workspace @yuisync/edge-api",
     "edge:smoke": "node scripts/smoke-edge-staging.mjs",
     "test:cloudflare-audit": "node --test test/cloudflareReadonlyAudit.test.mjs",
-    "audit:cloudflare:readonly": "node scripts/migration/cloudflare-readonly-audit.mjs"
+    "audit:cloudflare:readonly": "node scripts/migration/cloudflare-readonly-audit.mjs",
+    "migration:quatro-patas:audit": "node scripts/migration/legacy-supabase/quatroPatasFinalSync.mjs audit",
+    "migration:quatro-patas:plan": "node scripts/migration/legacy-supabase/quatroPatasFinalSync.mjs plan",
+    "migration:quatro-patas:verify": "node scripts/migration/legacy-supabase/quatroPatasFinalSync.mjs verify"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",

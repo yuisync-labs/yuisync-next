@@ -1,5 +1,4 @@
-import { supabase } from '../../../lib/supabase'
-import { applyTenantFilter, runWithTenantFallback } from '../../../lib/tenant'
+import { updateAppointmentCommand } from './appointmentCommands'
 import { isVisualPreviewSession } from '../../../lib/visualPreview'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
@@ -101,17 +100,10 @@ export function withPackageScheduleCommandPayload({ subscription, firstAppointme
 }
 
 export async function reschedulePackageAppointmentCommand({ tenantId, moduleId = 'petshop', appointmentId, scheduledAt, source }) {
-  const response = await supabase.rpc('update_petshop_appointment_transaction', {
-    p_appointment_id: appointmentId,
-    p_payload: {
-      tenant_id: tenantId,
-      module_id: moduleId,
-      scheduled_at: scheduledAt,
-      source: source || 'package_activation',
-    },
-  })
-  if (response.error) throw response.error
-  return response.data
+  return updateAppointmentCommand({ tenantId, moduleId, appointmentId, payload: {
+    scheduled_at: scheduledAt,
+    source: source || 'package_activation',
+  } })
 }
 
 export function publishPackageScheduleHint({ subscriptionId, firstAppointmentAt }) {
