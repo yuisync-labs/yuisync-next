@@ -46,6 +46,35 @@ describe('legacy package usage normalization', () => {
     )
   })
 
+  it('supports an explicit audited exclusion without weakening capacity validation', () => {
+    const source = sourceWithCompletedUsage({ capacity: 4, aggregate: 4, completed: 5 })
+    source.tables.appointments[4].subscription_benefits = [{
+      kind: 'service', key: 'banho', service_code: 'banho', status: 'consumed', catalog_price: 100,
+    }]
+    source.tables.appointments[4].service_items = [{
+      code: 'banho', benefit_used: false, transport_benefit_used: true,
+    }]
+    const result = projectLegacyCanonicalSnapshot(source, {
+      tenantId: tenant_id,
+      moduleId: module_id,
+      reconciliationOverrides: [{
+        action: 'exclude_subscription_benefit',
+        appointment_id: 'appointment-5',
+        benefit_key: 'banho',
+      }],
+    })
+    const appointment = result.collections.appointments.find((row) => row.id === 'appointment-5')
+    const service = result.collections.appointment_services.find((row) => row.appointment_id === 'appointment-5')
+
+    assert.equal(result.collections.subscription_benefit_allocations.length, 4)
+    assert.equal(appointment.subscription_id, null)
+    assert.equal(appointment.subscription_benefit_used, 0)
+    assert.equal(appointment.subscription_benefit_status, 'released')
+    assert.equal(appointment.subscription_discount_cents, 0)
+    assert.deepEqual(JSON.parse(appointment.subscription_benefits_json), [])
+    assert.equal(service.benefit_used, 0)
+  })
+
   it('preserves cancelled subscription allocations as history outside the active D1 ledger', () => {
     const source = sourceWithCompletedUsage({ aggregate: 1, completed: 1 })
     source.tables.client_subscriptions[0].status = 'cancelled'

@@ -4,7 +4,7 @@
   "generated_from": "src/**/*.{js,jsx,ts,tsx}",
   "totals": {
     "from": 207,
-    "rpc": 12
+    "rpc": 11
   },
   "files": {
     "src/components/SupportWidget.jsx": {
@@ -54,10 +54,6 @@
     "src/modules/petshop/lib/packageCommissionOperations.js": {
       "from": 4,
       "rpc": 0
-    },
-    "src/modules/petshop/lib/planCommands.js": {
-      "from": 0,
-      "rpc": 1
     },
     "src/modules/petshop/lib/teamSettingsOperations.js": {
       "from": 1,

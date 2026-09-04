@@ -73,7 +73,7 @@ async function readSupabaseTable({ baseUrl, key, accessToken, table, config, sco
   throw new OperationalExtractorError('SUPABASE_PAGINATION_LIMIT_EXCEEDED')
 }
 
-export async function extractSupabaseOperationalSnapshot({ supabaseUrl, apiKey, adminApiKey, accessToken, scope: rawScope, fetcher=fetch } = {}) {
+export async function extractSupabaseOperationalTables({ supabaseUrl, apiKey, adminApiKey, accessToken, scope: rawScope, fetcher=fetch } = {}) {
   const scope = scopeOf(rawScope)
   const key = String(apiKey || adminApiKey || '').trim()
   const token = String(accessToken || '').trim()
@@ -84,7 +84,17 @@ export async function extractSupabaseOperationalSnapshot({ supabaseUrl, apiKey, 
   for (const [table,config] of Object.entries(SOURCE_TABLES)) {
     tables[table] = await readSupabaseTable({ baseUrl,key,accessToken:token,table,config,scope,fetcher })
   }
-  return projectLegacyCanonicalSnapshot({ tables }, { tenantId:scope.tenant_id, moduleId:scope.module_id })
+  return Object.freeze({ scope, tables })
+}
+
+export async function extractSupabaseOperationalSnapshot(options = {}) {
+  const extracted = await extractSupabaseOperationalTables(options)
+  const reconciliationOverrides = Array.isArray(options.reconciliationOverrides) ? options.reconciliationOverrides : []
+  return projectLegacyCanonicalSnapshot({ tables:extracted.tables }, {
+    tenantId:extracted.scope.tenant_id,
+    moduleId:extracted.scope.module_id,
+    reconciliationOverrides,
+  })
 }
 
 function sqlLiteral(value) { return `'${String(value).replaceAll("'","''")}'` }

@@ -204,6 +204,62 @@ export async function handlePetshopServicesApiRequest(
   bindings: Bindings,
 ): Promise<Response | null> {
   const { pathname } = new URL(request.url)
+  const collection = /^\/api\/petshop\/services\/?$/.test(pathname)
+  const item = /^\/api\/petshop\/services\/([^/]+)\/?$/.exec(pathname)
+  if (collection || item) {
+    const serviceId = item ? decodeURIComponent(item[1]) : null
+    if (serviceId && !ID.test(serviceId)) return json({ code: 'INVALID_SERVICE_ID' }, 400)
+    const resolved = await resolveScope(request, bindings)
+    if (resolved.error) return resolved.error
+    const { tenantId, moduleId } = resolved.scope!
+    if (request.method === 'GET') {
+      const params = new URL(request.url).searchParams
+      const limit = Math.max(1, Math.min(200, Number(params.get('limit') || 200)))
+      const cursor = params.get('cursor') || ''
+      const active = params.get('activeOnly') === 'true'
+      const rows = await bindings.DB!.prepare(`SELECT * FROM services
+        WHERE tenant_id=?1 AND module_id=?2 AND (?3 IS NULL OR id=?3)
+          AND id>?4 AND (?5=0 OR status='active') ORDER BY id LIMIT ?6`)
+        .bind(tenantId, moduleId, serviceId, cursor, active ? 1 : 0, limit + 1).all<ServiceRow>()
+      if (serviceId) return rows.results[0] ? json({ service: servicePayload(rows.results[0]) }) : json({ code: 'SERVICE_NOT_FOUND' }, 404)
+      return json({ services: rows.results.slice(0, limit).map(servicePayload), nextCursor: rows.results.length > limit ? rows.results[limit - 1].id : null })
+    }
+    if ((collection && request.method === 'POST') || (serviceId && request.method === 'PATCH')) {
+      let body: Record<string, unknown>
+      try {
+        const value = await request.json()
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return json({ code: 'INVALID_SERVICE' }, 400)
+        body = value as Record<string, unknown>
+      } catch { return json({ code: 'INVALID_JSON' }, 400) }
+      const allowed = new Set(['code','name','category','description','group_type','default_price','default_duration_min','commission_type','commission_rate','min_weight_kg','max_weight_kg','species_target','sort_order','icon','active'])
+      if (Object.keys(body).some((key) => !allowed.has(key))) return json({ code: 'INVALID_SERVICE_FIELDS' }, 400)
+      const current = serviceId ? await bindings.DB!.prepare('SELECT * FROM services WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(tenantId,moduleId,serviceId).first<ServiceRow>() : null
+      if (serviceId && !current) return json({ code: 'SERVICE_NOT_FOUND' }, 404)
+      const merged = { ...(current ? servicePayload(current) : {}), ...body }
+      const name = text(merged.name), code = text(merged.code)
+      const price = Number(merged.default_price || 0), duration = Number(merged.default_duration_min || 60)
+      const rate = Number(merged.commission_rate || 0), group = text(merged.group_type) || 'banho_tosa'
+      const min = optionalNumber(merged.min_weight_kg), max = optionalNumber(merged.max_weight_kg)
+      const species = text(merged.species_target), sort = Number(merged.sort_order ?? 999)
+      if (!name || !code || !Number.isFinite(price) || price < 0 || !Number.isInteger(duration) || duration < 1 || duration > 1440
+        || !Number.isFinite(rate) || rate < 0 || rate > 100 || !Number.isFinite(sort)
+        || (min !== null && (!Number.isFinite(min) || min < 0)) || (max !== null && (!Number.isFinite(max) || max < 0))
+        || (min !== null && max !== null && min > max) || (species && !['dog','cat','all'].includes(species))
+        || !['banho_tosa','veterinaria','motoboy','outro'].includes(group)) return json({ code: 'INVALID_SERVICE' }, 400)
+      const id = serviceId || crypto.randomUUID(), now = Date.now()
+      await bindings.DB!.prepare(`INSERT INTO services(tenant_id,module_id,id,code,name,category,description,group_type,default_price_cents,default_duration_min,
+        commission_type,commission_basis_points,min_weight_kg,max_weight_kg,species_target,sort_order,icon,source_product_id,status,created_at_ms,updated_at_ms)
+        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'percentage',?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)
+        ON CONFLICT(tenant_id,module_id,id) DO UPDATE SET code=excluded.code,name=excluded.name,category=excluded.category,description=excluded.description,
+        group_type=excluded.group_type,default_price_cents=excluded.default_price_cents,default_duration_min=excluded.default_duration_min,
+        commission_type=excluded.commission_type,commission_basis_points=excluded.commission_basis_points,min_weight_kg=excluded.min_weight_kg,
+        max_weight_kg=excluded.max_weight_kg,species_target=excluded.species_target,sort_order=excluded.sort_order,icon=excluded.icon,status=excluded.status,updated_at_ms=excluded.updated_at_ms`)
+        .bind(tenantId,moduleId,id,code,name,text(merged.category),text(merged.description),group,Math.round(price*100),duration,Math.round(rate*100),min,max,species === 'all' ? null : species,sort,text(merged.icon),current?.source_product_id || null,merged.active === false ? 'inactive' : 'active',current?.created_at_ms || now,now).run()
+      const saved = await bindings.DB!.prepare('SELECT * FROM services WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(tenantId,moduleId,id).first<ServiceRow>()
+      return json({ service: servicePayload(saved!) }, serviceId ? 200 : 201)
+    }
+    return json({ code: 'METHOD_NOT_ALLOWED' }, 405)
+  }
   const match = /^\/api\/petshop\/services\/([^/]+)\/rules$/.exec(pathname)
   if (!match) return null
 

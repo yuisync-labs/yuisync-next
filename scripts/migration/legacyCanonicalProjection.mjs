@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { projectOperationalSnapshot } from './phase8OperationalProjection.mjs'
 
-export const LEGACY_CANONICAL_PROJECTION = Object.freeze({ name: 'legacy-canonical', version: 'v2' })
+export const LEGACY_CANONICAL_PROJECTION = Object.freeze({ name: 'legacy-canonical', version: 'v3' })
 
 // These tables are projected by this adapter. Other canonical legacy domains
 // (foundation, clients/pets, identity and AI Lab) keep their dedicated adapters.
@@ -65,6 +65,50 @@ function sortCollections(collections) {
     if (Array.isArray(collection)) collection.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right), 'en'))
   }
   return collections
+}
+
+function applyReconciliationOverrides(source, overrides = []) {
+  if (!Array.isArray(overrides) || overrides.length === 0) return source
+  const appointments = arr(source?.tables?.appointments)
+  const byAppointment = new Map(overrides.map((override) => [text(override?.appointment_id), override]))
+  const applied = new Set()
+  const nextAppointments = appointments.map((appointment) => {
+    const override = byAppointment.get(text(appointment?.id))
+    if (!override) return appointment
+    if (override.action !== 'exclude_subscription_benefit') {
+      throw new Error(`LEGACY_RECONCILIATION_ACTION_INVALID:${appointment.id}`)
+    }
+    const benefitKey = text(override.benefit_key)
+    if (!benefitKey) throw new Error(`LEGACY_RECONCILIATION_BENEFIT_KEY_MISSING:${appointment.id}`)
+    const benefits = legacyBenefits(appointment)
+    const remaining = benefits.filter((benefit) => text(benefit.key || benefit.benefit_key || benefit.service_code) !== benefitKey)
+    if (remaining.length === benefits.length) {
+      throw new Error(`LEGACY_RECONCILIATION_BENEFIT_NOT_FOUND:${appointment.id}:${benefitKey}`)
+    }
+    applied.add(text(appointment.id))
+    const serviceItems = arr(parseJson(appointment.service_items, [])).map((item) => ({
+      ...item,
+      ...(benefitKey === 'motodog' ? { transport_benefit_used: false } : {}),
+    }))
+    const hasBenefits = remaining.length > 0
+    return {
+      ...appointment,
+      service_items: serviceItems,
+      subscription_benefits: remaining,
+      subscription_benefit_used: hasBenefits,
+      subscription_benefit_status: hasBenefits ? appointment.subscription_benefit_status : 'released',
+      subscription_discount: hasBenefits ? appointment.subscription_discount : 0,
+      subscription_discount_amount: hasBenefits ? appointment.subscription_discount_amount : 0,
+      subscription_id: hasBenefits ? appointment.subscription_id : null,
+      subscription_label: hasBenefits ? appointment.subscription_label : null,
+      subscription_plan_name: hasBenefits ? appointment.subscription_plan_name : null,
+      billing_intent_type: hasBenefits ? appointment.billing_intent_type : 'auto',
+      billing_intent_subscription_id: hasBenefits ? appointment.billing_intent_subscription_id : null,
+    }
+  })
+  const missing = [...byAppointment.keys()].filter((id) => !applied.has(id))
+  if (missing.length) throw new Error(`LEGACY_RECONCILIATION_APPOINTMENT_NOT_FOUND:${missing.join(',')}`)
+  return { ...source, tables: { ...(source?.tables || {}), appointments: nextAppointments } }
 }
 
 function enrichCatalog(base, source, scope) {
@@ -517,25 +561,26 @@ function projectAiUsage(source, scope) {
   }
 }
 
-export function projectLegacyCanonicalSnapshot(source, { tenantId, moduleId = 'petshop' } = {}) {
+export function projectLegacyCanonicalSnapshot(source, { tenantId, moduleId = 'petshop', reconciliationOverrides = [] } = {}) {
   const tenant_id = text(tenantId)
   const module_id = text(moduleId).toLowerCase()
   if (!tenant_id || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(module_id)) {
     throw new Error('Invalid legacy canonical projection scope.')
   }
   const scope = { tenant_id, module_id }
-  const base = projectOperationalSnapshot(source, { tenantId: tenant_id, moduleId: module_id })
-  const enriched = enrichCatalog(base.collections, source, scope)
+  const reconciledSource = applyReconciliationOverrides(source, reconciliationOverrides)
+  const base = projectOperationalSnapshot(reconciledSource, { tenantId: tenant_id, moduleId: module_id })
+  const enriched = enrichCatalog(base.collections, reconciledSource, scope)
   const collections = {
     ...enriched,
-    ...projectAppointmentsV2(enriched, source, scope),
-    module_settings_extensions: projectSettingsExtension(source, scope),
-    ...projectPackageLedger(source, scope),
-    ...projectLoyalty(source, scope),
-    ...projectCommercialAdmin(source, scope),
-    ...projectGrowth(source, scope),
-    ...projectSupport(source, scope),
-    ...projectAiUsage(source, scope),
+    ...projectAppointmentsV2(enriched, reconciledSource, scope),
+    module_settings_extensions: projectSettingsExtension(reconciledSource, scope),
+    ...projectPackageLedger(reconciledSource, scope),
+    ...projectLoyalty(reconciledSource, scope),
+    ...projectCommercialAdmin(reconciledSource, scope),
+    ...projectGrowth(reconciledSource, scope),
+    ...projectSupport(reconciledSource, scope),
+    ...projectAiUsage(reconciledSource, scope),
   }
   return Object.freeze({
     projection: `${LEGACY_CANONICAL_PROJECTION.name}/${LEGACY_CANONICAL_PROJECTION.version}`,
