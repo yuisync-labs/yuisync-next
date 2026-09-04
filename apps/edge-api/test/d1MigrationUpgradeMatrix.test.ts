@@ -37,6 +37,8 @@ async function dropVersion30() {
     DROP VIEW IF EXISTS compat_chat_sessions;
     DROP VIEW IF EXISTS compat_chat_messages;
     DROP VIEW IF EXISTS compat_appointments;
+    DROP VIEW IF EXISTS compat_client_subscriptions;
+    DROP INDEX IF EXISTS client_subscriptions_scope_pet_idx;
 
     ALTER TABLE chat_threads DROP COLUMN context_json;
     ALTER TABLE chat_threads DROP COLUMN closed_at_ms;
@@ -48,6 +50,9 @@ async function dropVersion30() {
     ALTER TABLE appointments DROP COLUMN grooming_machine_no;
     ALTER TABLE loyalty_points DROP COLUMN expires_at_ms;
     ALTER TABLE client_subscriptions DROP COLUMN legacy_metadata_json;
+    ALTER TABLE client_subscriptions DROP COLUMN recurring_appointments_created_at_ms;
+    ALTER TABLE client_subscriptions DROP COLUMN first_appointment_at_ms;
+    ALTER TABLE client_subscriptions DROP COLUMN pet_id;
     ALTER TABLE support_threads DROP COLUMN assigned_to;
     ALTER TABLE support_threads DROP COLUMN last_message_preview;
   `)
