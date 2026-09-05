@@ -204,6 +204,14 @@ export async function enforceCommercialRequest(
     return enforceFeature(request, bindings, 'whatsapp.official')
   }
 
+  if (
+    pathname === '/api/whatsapp/templates'
+    || pathname === '/api/whatsapp/onboarding/complete'
+    || pathname === '/api/whatsapp/onboarding/subscribe'
+  ) {
+    return enforceFeature(request, bindings, 'whatsapp.official')
+  }
+
   if (pathname.startsWith('/api/fiscal/')) {
     return enforceFeature(request, bindings, 'fiscal.enabled')
   }
