@@ -1,5 +1,5 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
-import { resolveCommercialEntitlement } from './commercialControlPlane'
+import { resolveCommercialEntitlement, resolveCommercialPlan } from './commercialControlPlane'
 
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 
@@ -59,6 +59,16 @@ async function authenticatedTenantMembership(
   return Boolean(row)
 }
 
+async function commercialEnforcementEnabled(
+  database: D1Database,
+  tenantId: string,
+): Promise<boolean> {
+  const plan = await resolveCommercialPlan(database, tenantId)
+  // Existing tenants are grandfathered until an explicit subscription is assigned.
+  // New tenants receive Essential automatically through migration 0033.
+  return !plan.fallback
+}
+
 async function activeUserCount(database: D1Database, tenantId: string): Promise<number> {
   const row = await database.prepare(`
     SELECT COUNT(DISTINCT m.principal_id) AS total
@@ -95,6 +105,7 @@ async function enforceUserLimit(
 
   for (const tenantId of tenantIds) {
     if (!await authenticatedTenantMembership(request, bindings, tenantId)) return null
+    if (!await commercialEnforcementEnabled(bindings.DB, tenantId)) continue
     const entitlement = await resolveCommercialEntitlement(bindings.DB, tenantId, 'users.max')
     if (!entitlement.enabled || entitlement.quota == null) continue
     if (await targetAlreadyBelongs(bindings.DB, tenantId, targetPrincipalId)) continue
@@ -129,6 +140,7 @@ async function enforceFeature(
   if (!bindings.DB) return null
   const tenantId = await tenantFromRequest(request)
   if (!tenantId || !await authenticatedTenantMembership(request, bindings, tenantId)) return null
+  if (!await commercialEnforcementEnabled(bindings.DB, tenantId)) return null
   const entitlement = await resolveCommercialEntitlement(bindings.DB, tenantId, entitlementKey)
   if (entitlement.enabled) return null
   return json({
