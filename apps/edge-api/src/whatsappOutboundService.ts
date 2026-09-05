@@ -5,6 +5,7 @@ import {
 } from '../../../shared/contracts/v1/index'
 import { D1EncryptedWhatsAppCredentialVault } from './adapters/d1EncryptedWhatsAppCredentialVault'
 import { D1WhatsAppConnectionRepository } from './adapters/d1WhatsAppConnectionRepository'
+import { releaseYuiOutboundMessage, reserveYuiOutboundMessage, type YuiMessageReservation } from './commercialYuiMeter'
 import {
   MetaWhatsAppGraphAdapter,
   MetaWhatsAppGraphError,
@@ -74,6 +75,7 @@ export type WhatsAppOutboundServiceErrorCode =
   | 'WHATSAPP_OUTBOUND_PHONE_NOT_FOUND'
   | 'WHATSAPP_OUTBOUND_CREDENTIAL_NOT_FOUND'
   | 'WHATSAPP_OUTBOUND_PERSISTENCE_FAILED'
+  | 'WHATSAPP_OUTBOUND_PLAN_LIMIT_REACHED'
   | 'WHATSAPP_OUTBOUND_DELIVERY_FAILED'
 
 export class WhatsAppOutboundServiceError extends Error {
@@ -325,6 +327,25 @@ export async function sendWhatsAppOutboundText(
     throw new WhatsAppOutboundServiceError('WHATSAPP_OUTBOUND_CREDENTIAL_NOT_FOUND')
   }
 
+  let yuiReservation: YuiMessageReservation | null = null
+  if (input.actorType === 'assistant') {
+    yuiReservation = await reserveYuiOutboundMessage(database, {
+      tenantId,
+      eventKey: row.internal_message_id,
+      moduleId: moduleIdValue,
+      conversationId: threadId,
+      recipient: to,
+      nowMs: now(),
+    })
+    if (yuiReservation.result && !yuiReservation.result.accepted) {
+      const reason = yuiReservation.result.reason === 'quota_exceeded'
+        ? 'YUI_MESSAGE_QUOTA_EXCEEDED'
+        : 'YUI_AUTONOMOUS_NOT_INCLUDED'
+      row = await markFailed(database, row, reason, now())
+      throw new WhatsAppOutboundServiceError('WHATSAPP_OUTBOUND_PLAN_LIMIT_REACHED')
+    }
+  }
+
   const graph = new MetaWhatsAppGraphAdapter({
     graphVersion: bindings.WHATSAPP_GRAPH_VERSION,
     maxAttempts: 1,
@@ -383,6 +404,21 @@ export async function sendWhatsAppOutboundText(
     row = (await outboundByIdempotency(database, tenantId, moduleIdValue, idempotencyKey))!
     return resultFromRow(row)
   } catch (error) {
+    if (yuiReservation?.metered) {
+      try {
+        await releaseYuiOutboundMessage(database, {
+          tenantId,
+          eventKey: yuiReservation.eventKey,
+          nowMs: now(),
+        })
+      } catch {
+        console.error(JSON.stringify({
+          event: 'commercial.yui_usage_release_failed',
+          tenant_id: tenantId,
+          usage_event_key: yuiReservation.eventKey,
+        }))
+      }
+    }
     const graphCode = error instanceof MetaWhatsAppGraphError
       ? error.code
       : 'WHATSAPP_OUTBOUND_DELIVERY_FAILED'
