@@ -6,9 +6,9 @@ import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
 import { handleAppointmentBillingIntentCompat } from './appointmentBillingIntentCompat'
 import { handleAppointmentFinancialReopenApi } from './appointmentFinancialReopenApi'
 import { handleAppointmentResponsibleAssignmentApi } from './appointmentResponsibleAssignmentApi'
-import { handlePetshopAppointmentsApiRequest } from './petshopAppointmentsApi'
-import { handlePetshopClientsApiRequest } from './petshopClientsApi'
 import { handleCheckoutApiRequest } from './checkoutApi'
+import { handleCommercialApiRequest } from './commercialApi'
+import { enforceCommercialRequest } from './commercialGuard'
 import { handleCompatApiRequest } from './compatApi'
 import { handleFinalReadiness } from './finalReadiness'
 import { handleFiscalApiRequest } from './fiscalApi'
@@ -18,6 +18,8 @@ import { handleAiLabMigrationRequest } from './migration/aiLabMigrationHttp'
 import { handleAuthMigrationRequest } from './migration/authMigrationHttp'
 import { handleClientsPetsMigrationRequest } from './migration/clientsPetsMigrationHttp'
 import { handleOperationalMigrationRequest } from './migration/operationalMigrationHttp'
+import { handlePetshopAppointmentsApiRequest } from './petshopAppointmentsApi'
+import { handlePetshopClientsApiRequest } from './petshopClientsApi'
 import { handlePetshopPlansApiRequest } from './petshopPlansApi'
 import { handlePetshopServicesApiRequest } from './petshopServicesApi'
 import { handleAsyncQueue } from './queueHandler'
@@ -56,6 +58,12 @@ export default {
 
     const operationalMigrationResponse = await handleOperationalMigrationRequest(request, bindings)
     if (operationalMigrationResponse) return respond(operationalMigrationResponse)
+
+    const commercialGuardResponse = await enforceCommercialRequest(request, bindings)
+    if (commercialGuardResponse) return respond(commercialGuardResponse)
+
+    const commercialResponse = await handleCommercialApiRequest(request, bindings)
+    if (commercialResponse) return respond(commercialResponse)
 
     const realtimeResponse = await handleRealtimeApiRequest(request, bindings)
     if (realtimeResponse) return realtimeResponse
