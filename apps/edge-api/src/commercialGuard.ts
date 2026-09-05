@@ -8,7 +8,10 @@ type UserMutationPayload = {
   activeTenantId?: unknown
   tenant_id?: unknown
   tenantId?: unknown
+  active?: unknown
 }
+
+type TargetMembershipRow = { tenant_id: string }
 
 function json(body: unknown, status = 403): Response {
   return Response.json(body, { status, headers: { 'cache-control': 'no-store' } })
@@ -79,36 +82,36 @@ async function activeUserCount(database: D1Database, tenantId: string): Promise<
   return Number(row?.total || 0)
 }
 
-async function targetAlreadyBelongs(
+async function targetAlreadyCountsAsActive(
   database: D1Database,
   tenantId: string,
   principalId: string,
 ): Promise<boolean> {
   if (!principalId) return false
   const row = await database.prepare(`
-    SELECT 1 FROM tenant_memberships
-    WHERE tenant_id=?1 AND principal_id=?2 AND status='active'
+    SELECT 1
+    FROM tenant_memberships m
+    JOIN identity_principals p ON p.id=m.principal_id
+    WHERE m.tenant_id=?1 AND m.principal_id=?2
+      AND m.status='active' AND p.status='active'
     LIMIT 1
   `).bind(tenantId, principalId).first()
   return Boolean(row)
 }
 
-async function enforceUserLimit(
+async function enforceSeatLimitForTenants(
   request: Request,
   bindings: Bindings,
+  tenantIds: string[],
   targetPrincipalId = '',
 ): Promise<Response | null> {
   if (!bindings.DB) return null
-  const payload = await body(request)
-  const tenantIds = tenantIdsFromPayload(payload)
-  if (!tenantIds.length) return null
-
-  for (const tenantId of tenantIds) {
+  for (const tenantId of [...new Set(tenantIds.filter(Boolean))]) {
     if (!await authenticatedTenantMembership(request, bindings, tenantId)) return null
     if (!await commercialEnforcementEnabled(bindings.DB, tenantId)) continue
     const entitlement = await resolveCommercialEntitlement(bindings.DB, tenantId, 'users.max')
     if (!entitlement.enabled || entitlement.quota == null) continue
-    if (await targetAlreadyBelongs(bindings.DB, tenantId, targetPrincipalId)) continue
+    if (await targetAlreadyCountsAsActive(bindings.DB, tenantId, targetPrincipalId)) continue
     const current = await activeUserCount(bindings.DB, tenantId)
     if (current >= entitlement.quota) {
       return json({
@@ -121,6 +124,33 @@ async function enforceUserLimit(
     }
   }
   return null
+}
+
+async function enforceUserLimit(
+  request: Request,
+  bindings: Bindings,
+  targetPrincipalId = '',
+): Promise<Response | null> {
+  const payload = await body(request)
+  return enforceSeatLimitForTenants(request, bindings, tenantIdsFromPayload(payload), targetPrincipalId)
+}
+
+async function enforceUserReactivationLimit(
+  request: Request,
+  bindings: Bindings,
+  principalId: string,
+): Promise<Response | null> {
+  if (!bindings.DB) return null
+  const payload = await body(request)
+  if (payload.active !== true) return null
+  const rows = await bindings.DB.prepare(`
+    SELECT tenant_id
+    FROM tenant_memberships
+    WHERE principal_id=?1 AND status='active'
+    ORDER BY tenant_id
+  `).bind(principalId).all<TargetMembershipRow>()
+  const tenantIds = (rows.results || []).map((row) => row.tenant_id)
+  return enforceSeatLimitForTenants(request, bindings, tenantIds, principalId)
 }
 
 async function tenantFromRequest(request: Request): Promise<string> {
@@ -158,6 +188,11 @@ export async function enforceCommercialRequest(
 
   if (pathname === '/api/admin/users' && request.method === 'POST') {
     return enforceUserLimit(request, bindings)
+  }
+
+  const statusMatch = /^\/api\/admin\/users\/([^/]+)\/status$/.exec(pathname)
+  if (statusMatch && request.method === 'PATCH') {
+    return enforceUserReactivationLimit(request, bindings, safeId(decodeURIComponent(statusMatch[1])))
   }
 
   const managedUser = /^\/api\/admin\/users\/([^/]+)$/.exec(pathname)
