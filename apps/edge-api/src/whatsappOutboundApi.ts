@@ -78,15 +78,17 @@ function errorResponse(error: unknown): Response {
   }
   const status = error.code === 'WHATSAPP_OUTBOUND_INVALID_INPUT'
     ? 400
-    : error.code === 'WHATSAPP_OUTBOUND_PHONE_SELECTION_REQUIRED'
+    : error.code === 'WHATSAPP_OUTBOUND_PLAN_LIMIT_REACHED'
       ? 409
-      : error.code === 'WHATSAPP_OUTBOUND_PHONE_NOT_FOUND'
-        || error.code === 'WHATSAPP_OUTBOUND_NOT_CONFIGURED'
-        || error.code === 'WHATSAPP_OUTBOUND_CREDENTIAL_NOT_FOUND'
+      : error.code === 'WHATSAPP_OUTBOUND_PHONE_SELECTION_REQUIRED'
         ? 409
-        : error.code === 'WHATSAPP_OUTBOUND_DELIVERY_FAILED'
-          ? (error.retryable ? 503 : 502)
-          : 503
+        : error.code === 'WHATSAPP_OUTBOUND_PHONE_NOT_FOUND'
+          || error.code === 'WHATSAPP_OUTBOUND_NOT_CONFIGURED'
+          || error.code === 'WHATSAPP_OUTBOUND_CREDENTIAL_NOT_FOUND'
+          ? 409
+          : error.code === 'WHATSAPP_OUTBOUND_DELIVERY_FAILED'
+            ? (error.retryable ? 503 : 502)
+            : 503
   return json({ code: error.code, retryable: error.retryable }, status)
 }
 
