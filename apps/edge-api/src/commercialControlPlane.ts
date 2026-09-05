@@ -34,7 +34,7 @@ export type UsageSnapshot = Readonly<{
 export type UsageConsumptionResult = Readonly<{
   accepted: boolean
   duplicate: boolean
-  reason?: 'feature_disabled' | 'quota_exceeded'
+  reason?: 'feature_disabled' | 'quota_exceeded' | 'billing_period_inactive'
   usage: UsageSnapshot
 }>
 
@@ -88,6 +88,14 @@ function subscriptionAllowsEntitlements(plan: CommercialPlanSnapshot, nowMs: num
     return true
   }
   return plan.subscriptionStatus === 'canceled' && plan.periodEndMs > nowMs
+}
+
+function meteredBillingPeriodIsActive(plan: CommercialPlanSnapshot, nowMs: number): boolean {
+  if (plan.fallback) return true
+  return Number.isSafeInteger(plan.periodStartMs)
+    && Number.isSafeInteger(plan.periodEndMs)
+    && plan.periodStartMs <= nowMs
+    && nowMs < plan.periodEndMs
 }
 
 export async function resolveCommercialPlan(
@@ -262,10 +270,18 @@ export async function consumeUsage(
   const quantity = input.quantity ?? 1
   if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new Error('INVALID_USAGE_QUANTITY')
 
+  const plan = await resolveCommercialPlan(database, input.tenantId, nowMs)
   const entitlement = await resolveCommercialEntitlement(database, input.tenantId, input.usageKey, nowMs)
   const before = await readUsage(database, input.tenantId, input.usageKey, nowMs)
   if (!entitlement.enabled) {
     return { accepted: false, duplicate: false, reason: 'feature_disabled', usage: before }
+  }
+
+  // Never roll a paid usage quota implicitly. Billing must advance the subscription
+  // period first. Otherwise a stale period could make new events fall outside the SUM
+  // window and accidentally create unlimited usage after period_end.
+  if (!meteredBillingPeriodIsActive(plan, nowMs)) {
+    return { accepted: false, duplicate: false, reason: 'billing_period_inactive', usage: before }
   }
 
   const existing = await database.prepare(`
@@ -275,7 +291,6 @@ export async function consumeUsage(
   `).bind(input.tenantId, input.usageKey, input.eventKey).first<{ id: string }>()
   if (existing) return { accepted: true, duplicate: true, usage: before }
 
-  const plan = await resolveCommercialPlan(database, input.tenantId, nowMs)
   const id = crypto.randomUUID()
   const metadataJson = JSON.stringify(input.metadata || {})
   const quota = entitlement.quota
