@@ -95,7 +95,7 @@ async function dropVersion26() {
 async function assertLatestSchema() {
   const version = await db.prepare("SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'")
     .first<{ value: string }>()
-  expect(version?.value).toBe('30')
+  expect(version?.value).toBe('33')
 
   const tables = await db.prepare(`
     SELECT name FROM sqlite_schema
@@ -105,11 +105,27 @@ async function assertLatestSchema() {
       'whatsapp_ingress_receipts',
       'whatsapp_access_credentials',
       'whatsapp_outbound_messages',
-      'whatsapp_delivery_receipts'
+      'whatsapp_delivery_receipts',
+      'saas_plans',
+      'saas_plan_versions',
+      'saas_plan_entitlements',
+      'tenant_subscriptions',
+      'usage_events',
+      'usage_counters',
+      'billing_events',
+      'tenant_cost_snapshots'
     )
     ORDER BY name
   `).all<{ name: string }>()
   expect(tables.results.map((row) => row.name)).toEqual([
+    'billing_events',
+    'saas_plan_entitlements',
+    'saas_plan_versions',
+    'saas_plans',
+    'tenant_cost_snapshots',
+    'tenant_subscriptions',
+    'usage_counters',
+    'usage_events',
     'whatsapp_access_credentials',
     'whatsapp_delivery_receipts',
     'whatsapp_ingress_receipts',
@@ -152,7 +168,8 @@ async function assertLatestSchema() {
       'subscription_usage_projection_after_allocation_delete',
       'package_allocation_from_late_service_consumption',
       'cash_register_single_open_insert_guard',
-      'cash_register_single_open_reopen_guard'
+      'cash_register_single_open_reopen_guard',
+      'tenants_default_saas_subscription'
     )
   `).all<{ name: string }>()
   expect(new Set(triggers.results.map((row) => row.name))).toEqual(new Set([
@@ -164,6 +181,7 @@ async function assertLatestSchema() {
     'package_allocation_from_late_service_consumption',
     'cash_register_single_open_insert_guard',
     'cash_register_single_open_reopen_guard',
+    'tenants_default_saas_subscription',
   ]))
 
   const indexes = await db.prepare(`
@@ -173,7 +191,9 @@ async function assertLatestSchema() {
       'whatsapp_outbound_internal_message_unique',
       'whatsapp_outbound_provider_message_unique',
       'whatsapp_outbound_phone_status_idx',
-      'whatsapp_delivery_receipts_message_idx'
+      'whatsapp_delivery_receipts_message_idx',
+      'usage_events_tenant_period_idx',
+      'billing_events_tenant_time_idx'
     )
   `).all<{ name: string }>()
   expect(new Set(indexes.results.map((row) => row.name))).toEqual(new Set([
@@ -182,11 +202,20 @@ async function assertLatestSchema() {
     'whatsapp_outbound_provider_message_unique',
     'whatsapp_outbound_phone_status_idx',
     'whatsapp_delivery_receipts_message_idx',
+    'usage_events_tenant_period_idx',
+    'billing_events_tenant_time_idx',
   ]))
+
+  const businessQuota = await db.prepare(`
+    SELECT quota_value
+    FROM saas_plan_entitlements
+    WHERE plan_version_id='business@2026-09' AND entitlement_key='yui.ai_outbound_messages'
+  `).first<{ quota_value: number }>()
+  expect(businessQuota?.quota_value).toBe(1000)
 }
 
 describe('D1 recent migration upgrade matrix', () => {
-  it('upgrades v29, v28, v27, v26 and v25 snapshots to v30 using the repository migrations', async () => {
+  it('upgrades v29, v28, v27, v26 and v25 snapshots through commercial schema v33', async () => {
     await dropVersion30()
     await setSchemaSnapshot(29)
     await applyD1Migrations(db, migrationsFrom(29))
