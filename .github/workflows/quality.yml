@@ -153,3 +153,6 @@ jobs:
           E2E_COMMON_PASSWORD: ${{ secrets.E2E_COMMON_PASSWORD }}
           E2E_MANAGER_EMAIL: ${{ secrets.E2E_MANAGER_EMAIL }}
           E2E_MANAGER_PASSWORD: ${{ secrets.E2E_MANAGER_PASSWORD }}
+      - name: Local agenda drag regression
+        if: ${{ !cancelled() && steps.e2e-readiness.outcome == 'success' }}
+        run: npx playwright test --config playwright.local.config.js
