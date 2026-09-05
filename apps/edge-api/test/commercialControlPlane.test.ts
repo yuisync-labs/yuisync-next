@@ -30,6 +30,19 @@ async function setPlan(tenantId: string, planVersionId: string, now = Date.now()
   `).bind(tenantId, planVersionId, start, end, now).run()
 }
 
+async function setSubscriptionStatus(
+  tenantId: string,
+  status: 'active' | 'trialing' | 'past_due' | 'canceled' | 'suspended',
+  periodEndMs: number,
+  now = Date.now(),
+) {
+  await testEnv.DB.prepare(`
+    UPDATE tenant_subscriptions
+    SET status=?2,current_period_start_ms=?3,current_period_end_ms=?4,updated_at_ms=?3
+    WHERE tenant_id=?1
+  `).bind(tenantId, status, now - 60_000, periodEndMs).run()
+}
+
 describe('commercial control plane', () => {
   it('seeds the three commercial prices and Business with 1000 Yui messages', async () => {
     const rows = await testEnv.DB.prepare(`
@@ -145,5 +158,49 @@ describe('commercial control plane', () => {
       recipient: '5511888888888',
     })
     expect(reservation).toMatchObject({ metered: false, result: null })
+  })
+
+  it('does not turn suspended subscribers into compatibility-mode tenants', async () => {
+    const tenantId = 'tenant-commercial-suspended'
+    const now = Date.now()
+    await seedTenant(tenantId)
+    await setPlan(tenantId, 'business@2026-09', now)
+    await setSubscriptionStatus(tenantId, 'suspended', now + 86_400_000, now)
+
+    const plan = await resolveCommercialPlan(testEnv.DB, tenantId, now)
+    expect(plan).toMatchObject({ fallback: false, subscriptionStatus: 'suspended', planVersionId: 'business@2026-09' })
+    const result = await consumeUsage(testEnv.DB, {
+      tenantId,
+      usageKey: YUI_AI_OUTBOUND_USAGE_KEY,
+      eventKey: 'message-suspended-1',
+      source: 'test',
+      nowMs: now,
+    })
+    expect(result).toMatchObject({ accepted: false, reason: 'feature_disabled' })
+  })
+
+  it('keeps canceled access until paid period end and disables it afterwards', async () => {
+    const tenantId = 'tenant-commercial-canceled'
+    const now = Date.now()
+    await seedTenant(tenantId)
+    await setPlan(tenantId, 'business@2026-09', now)
+    await setSubscriptionStatus(tenantId, 'canceled', now + 60_000, now)
+
+    const beforeEnd = await resolveCommercialEntitlement(testEnv.DB, tenantId, YUI_AI_OUTBOUND_USAGE_KEY, now)
+    expect(beforeEnd.enabled).toBe(true)
+
+    const afterEnd = await resolveCommercialEntitlement(testEnv.DB, tenantId, YUI_AI_OUTBOUND_USAGE_KEY, now + 120_000)
+    expect(afterEnd.enabled).toBe(false)
+  })
+
+  it('keeps past-due subscriptions in grace while billing policy handles recovery', async () => {
+    const tenantId = 'tenant-commercial-past-due'
+    const now = Date.now()
+    await seedTenant(tenantId)
+    await setPlan(tenantId, 'business@2026-09', now)
+    await setSubscriptionStatus(tenantId, 'past_due', now + 86_400_000, now)
+
+    const entitlement = await resolveCommercialEntitlement(testEnv.DB, tenantId, YUI_AI_OUTBOUND_USAGE_KEY, now)
+    expect(entitlement.enabled).toBe(true)
   })
 })
