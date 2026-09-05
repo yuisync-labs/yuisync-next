@@ -82,11 +82,22 @@ function positiveInteger(value: number | null | undefined): number | null {
   return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : null
 }
 
+function subscriptionAllowsEntitlements(plan: CommercialPlanSnapshot, nowMs: number): boolean {
+  if (plan.fallback) return true
+  if (plan.subscriptionStatus === 'active' || plan.subscriptionStatus === 'trialing' || plan.subscriptionStatus === 'past_due') {
+    return true
+  }
+  return plan.subscriptionStatus === 'canceled' && plan.periodEndMs > nowMs
+}
+
 export async function resolveCommercialPlan(
   database: D1Database,
   tenantId: string,
   nowMs = Date.now(),
 ): Promise<CommercialPlanSnapshot> {
+  // Presence of a subscription row is authoritative even when it is suspended or
+  // canceled. Compatibility fallback is reserved exclusively for tenants that
+  // predate the commercial control plane and have no subscription row at all.
   const row = await database.prepare(`
     SELECT s.tenant_id,
            p.id AS plan_id,
@@ -101,12 +112,8 @@ export async function resolveCommercialPlan(
     JOIN saas_plan_versions v ON v.id=s.plan_version_id
     JOIN saas_plans p ON p.id=v.plan_id
     WHERE s.tenant_id=?1
-      AND (
-        s.status IN ('active','trialing','past_due')
-        OR (s.status='canceled' AND s.current_period_end_ms>?2)
-      )
     LIMIT 1
-  `).bind(tenantId, nowMs).first<PlanRow>()
+  `).bind(tenantId).first<PlanRow>()
 
   if (row) {
     return {
@@ -180,6 +187,19 @@ export async function resolveCommercialEntitlement(
   const baseEnabled = base?.enabled === 1
   const baseQuota = positiveInteger(base?.quota_value)
   const baseConfig = parseConfig(base?.config_json || null)
+
+  // Subscription status is a higher-level gate than plan entitlements and tenant
+  // overrides. A suspended/expired subscription cannot re-enable paid capabilities
+  // through an override. Past-due remains in grace until billing policy says otherwise.
+  if (!subscriptionAllowsEntitlements(plan, nowMs)) {
+    return {
+      key: entitlementKey,
+      enabled: false,
+      quota: baseQuota,
+      config: baseConfig,
+      overridden: false,
+    }
+  }
 
   if (!override) {
     return {
