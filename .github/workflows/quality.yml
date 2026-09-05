@@ -90,12 +90,11 @@ jobs:
         name: Check tenant isolation credentials
         run: >-
           node scripts/check-ci-secrets.mjs tenant-isolation
-          SUPABASE_URL SUPABASE_ANON_KEY
+          E2E_BASE_URL
           TENANT_A_EMAIL TENANT_A_PASSWORD TENANT_A_ID
           TENANT_B_EMAIL TENANT_B_PASSWORD TENANT_B_ID
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
           TENANT_A_EMAIL: ${{ secrets.TENANT_A_EMAIL }}
           TENANT_A_PASSWORD: ${{ secrets.TENANT_A_PASSWORD }}
           TENANT_A_ID: ${{ secrets.TENANT_A_ID }}
@@ -103,11 +102,9 @@ jobs:
           TENANT_B_PASSWORD: ${{ secrets.TENANT_B_PASSWORD }}
           TENANT_B_ID: ${{ secrets.TENANT_B_ID }}
       - name: Tenant isolation
-        if: steps.tenant-readiness.outputs.configured == 'true'
         run: npm run test:tenant
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
           TENANT_A_EMAIL: ${{ secrets.TENANT_A_EMAIL }}
           TENANT_A_PASSWORD: ${{ secrets.TENANT_A_PASSWORD }}
           TENANT_A_ID: ${{ secrets.TENANT_A_ID }}
@@ -145,10 +142,8 @@ jobs:
           E2E_MANAGER_EMAIL: ${{ secrets.E2E_MANAGER_EMAIL }}
           E2E_MANAGER_PASSWORD: ${{ secrets.E2E_MANAGER_PASSWORD }}
       - name: Install Playwright Chromium
-        if: steps.e2e-readiness.outputs.configured == 'true'
         run: npx playwright install --with-deps chromium
       - name: Desktop E2E
-        if: steps.e2e-readiness.outputs.configured == 'true'
         run: npm run test:e2e -- --project=desktop
         env:
           E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
@@ -158,3 +153,6 @@ jobs:
           E2E_COMMON_PASSWORD: ${{ secrets.E2E_COMMON_PASSWORD }}
           E2E_MANAGER_EMAIL: ${{ secrets.E2E_MANAGER_EMAIL }}
           E2E_MANAGER_PASSWORD: ${{ secrets.E2E_MANAGER_PASSWORD }}
+      - name: Local agenda drag regression
+        if: ${{ !cancelled() && steps.e2e-readiness.outcome == 'success' }}
+        run: npx playwright test --config playwright.local.config.js

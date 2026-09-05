@@ -235,15 +235,17 @@ async function readSettings(db, scope) {
   return [{...obj(jsonValue(ext?.data_json,{})),...core,created_at:iso(core.created_at_ms),updated_at:iso(core.updated_at_ms)}]
 }
 
-async function selectRows(db, table, config, body, scope) {
+export async function selectRows(db, table, config, body, scope) {
   if (table==='settings') { const rows=await readSettings(db,scope); return {rows,count:rows.length} }
   const w=whereClause(filters(body.filters),scope,config.global===true)
   const order=orderClause(orders(body.orders)), p=page(body)
   const result=await db.prepare(`SELECT * FROM ${config.read} WHERE ${w.sql}${order} LIMIT ? OFFSET ?`).bind(...w.values,p.limit,p.offset).all()
-  const count=await db.prepare(`SELECT COUNT(*) AS count FROM ${config.read} WHERE ${w.sql}`).bind(...w.values).first()
+  const count=body.count==='exact'
+    ? await db.prepare(`SELECT COUNT(*) AS count FROM ${config.read} WHERE ${w.sql}`).bind(...w.values).first()
+    : null
   const rows=result.results.map((row)=>normalize(table,row))
   await enrich(db,table,String(body.columns||'*'),rows,scope)
-  return {rows,count:Number(count?.count||0)}
+  return {rows,count:count ? Number(count.count||0) : null}
 }
 async function enrich(db,table,columns,rows,scope) {
   if(!rows.length)return

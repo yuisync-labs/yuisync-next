@@ -237,7 +237,10 @@ function moduleAccess(modulePermissionsJson: string | null, moduleId: string): b
   try {
     const permissions = JSON.parse(modulePermissionsJson || '{}') as Record<string, unknown>
     const permission = permissions[moduleId] ?? permissions['*']
-    return permission === true || typeof permission === 'string' || Boolean(permission && typeof permission === 'object')
+    const role = typeof permission === 'string' ? permission
+      : permission && typeof permission === 'object' && !Array.isArray(permission)
+        ? (permission as Record<string, unknown>).role : null
+    return permission === true || (moduleId === 'petshop' && (role === 'admin_pet' || role === 'funcionario_pet'))
   } catch {
     return false
   }

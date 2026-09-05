@@ -146,6 +146,7 @@ describe('PDV checkout D1 integration', () => {
         body: JSON.stringify({
           table: 'sales',
           action: 'select',
+          count: 'exact',
           columns: 'id, client_id, created_at, clients ( id, name, phone, details ), sale_items ( id, quantity, unit_price, subtotal, upsell, products ( id, name, category ) )',
           filters: [
             { op: 'gte', column: 'created_at', value: new Date(now - 60_000).toISOString() },

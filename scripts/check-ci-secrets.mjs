@@ -16,3 +16,5 @@ const line = configured
   : `⚠️ ${capability}: testes externos não executados. Secrets ausentes: ${missing.join(', ')}.`
 if (summary) await appendFile(summary, `${line}\n`)
 console.log(line)
+// Missing external tests cannot certify a release.
+if (!configured) process.exitCode = 1
