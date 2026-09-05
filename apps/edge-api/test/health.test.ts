@@ -17,6 +17,7 @@ const authDb = {
     all: async () => ({
       results: [
         { name: 'account' },
+        { name: 'rateLimit' },
         { name: 'session' },
         { name: 'user' },
         { name: 'verification' },

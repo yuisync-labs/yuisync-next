@@ -1,6 +1,7 @@
 import { betterAuth } from 'better-auth'
 import { getMigrations } from 'better-auth/db/migration'
 import { compare, hash } from 'bcryptjs'
+import { recoveryEmailConfigured, sendPasswordRecoveryEmail, type RecoveryEmailBindings } from './passwordRecoveryEmail'
 
 import {
   getAuthDatabaseReadiness,
@@ -12,7 +13,7 @@ const BCRYPT_ROUNDS = 12
 const BCRYPT_MAX_BYTES = 72
 const AUTH_DIAGNOSTIC_HEADER = 'x-yuisync-auth-diagnostic'
 
-export type BetterAuthRuntimeBindings = AuthDatabaseBindings & {
+export type BetterAuthRuntimeBindings = AuthDatabaseBindings & RecoveryEmailBindings & {
   EDGE_AUTH_TRUSTED_ORIGINS?: string
   APP_ENV?: string
 }
@@ -139,6 +140,18 @@ export function createBetterAuthRuntime(
     baseURL: requestOrigin,
     basePath: '/api/auth',
     trustedOrigins: trustedOrigins(bindings, requestOrigin),
+    rateLimit: {
+      enabled: true,
+      storage: 'database',
+      window: 60,
+      max: 100,
+      customRules: {
+        '/request-password-reset': { window: 900, max: 3 },
+        '/reset-password': { window: 900, max: 5 },
+        '/change-password': { window: 900, max: 5 },
+        '/sign-in/email': { window: 60, max: 5 },
+      },
+    },
     logger: isStaging(bindings) ? {
       level: 'error',
       disableColors: true,
@@ -153,7 +166,19 @@ export function createBetterAuthRuntime(
     emailAndPassword: {
       enabled: true,
       disableSignUp: true,
+      minPasswordLength: 12,
       maxPasswordLength: BCRYPT_MAX_BYTES,
+      resetPasswordTokenExpiresIn: 900,
+      revokeSessionsOnPasswordReset: true,
+        sendResetPassword: async ({ user, url }) => {
+          try {
+            await sendPasswordRecoveryEmail(bindings, user.email, url)
+          } catch {
+            // Keep the public response identical for existing and unknown accounts,
+            // including provider outages. Never log the address or reset token.
+            console.error(JSON.stringify({ event: 'auth.recovery_delivery_failed' }))
+          }
+        },
       password: {
         hash: async (password) => {
           assertBcryptPassword(password)
@@ -166,6 +191,7 @@ export function createBetterAuthRuntime(
       },
     },
     advanced: {
+      ipAddress: { ipAddressHeaders: ['cf-connecting-ip'] },
       database: {
         generateId: 'uuid',
       },
@@ -205,6 +231,9 @@ export async function handleBetterAuthRequest(
   }
 
   const diagnostics: AuthDiagnosticSink = {}
+  if (url.pathname === '/api/auth/request-password-reset' && !recoveryEmailConfigured(bindings)) {
+    return Response.json({ code: 'RECOVERY_UNAVAILABLE', message: 'Recuperação de senha indisponível. Entre em contato com o suporte.' }, { status: 503, headers: { 'cache-control': 'no-store' } })
+  }
   const auth = createBetterAuthRuntime(bindings, url.origin, diagnostics)
   let response: Response
   try {

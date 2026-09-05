@@ -78,13 +78,13 @@ test('customer-facing labels hide catalog classification details', () => {
   )
 })
 
-test('operational staff is independent from authenticated profiles and expandable to four', () => {
+test('operational staff preserves every configured professional beyond four', () => {
   const staff = normalizeOperationalStaff([
     ...DEFAULT_PETSHOP_OPERATIONAL_STAFF,
     { key: 'esteticista-3', name: 'Ana', active: true },
     { key: 'esteticista-4', name: 'Bia', active: false },
-    { key: 'esteticista-5', name: 'Excedente', active: true },
+    { key: 'esteticista-5', name: 'Carla', active: true },
   ])
-  assert.equal(staff.length, 4)
-  assert.deepEqual(staff.map((person) => person.key), ['esteticista-1', 'esteticista-2', 'esteticista-3', 'esteticista-4'])
+  assert.equal(staff.length, 5)
+  assert.deepEqual(staff.map((person) => person.key), ['esteticista-1', 'esteticista-2', 'esteticista-3', 'esteticista-4', 'esteticista-5'])
 })

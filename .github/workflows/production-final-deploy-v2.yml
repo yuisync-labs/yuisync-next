@@ -62,29 +62,9 @@ jobs:
             })
           }
 
-          const workflowOnlyDiff = (candidate) => {
-            if (!/^[0-9a-f]{40}$/.test(candidate) || candidate === release) return null
-            try {
-              execFileSync('git', ['merge-base', '--is-ancestor', candidate, release], { stdio: 'ignore' })
-            } catch {
-              return null
-            }
-            const changed = execFileSync('git', ['diff', '--name-only', `${candidate}..${release}`], { encoding: 'utf8' })
-              .trim().split('\n').map((value) => value.trim()).filter(Boolean)
-            if (!changed.length || !changed.every((path) => path.startsWith('.github/workflows/'))) return null
-            return changed
-          }
-
           const resolveProof = (workflow, kind) => {
-            const runs = listSuccessfulRuns(workflow)
-            const exact = runs.find((run) => run.sha === release && run.conclusion === 'success')
-            if (exact) return { kind, mode: 'exact', sha: release, run_id: exact.id }
-            for (const run of runs) {
-              if (run.conclusion !== 'success') continue
-              const changed = workflowOnlyDiff(run.sha)
-              if (changed) return { kind, mode: 'workflow-only-inherited', sha: run.sha, run_id: run.id, changed }
-            }
-            return null
+            const exact = listSuccessfulRuns(workflow).find((run) => run.sha === release && run.conclusion === 'success')
+            return exact ? { kind, mode: 'exact', sha: release, run_id: exact.id } : null
           }
 
           const qualityProof = resolveProof('quality.yml', 'quality')
@@ -233,4 +213,4 @@ jobs:
           echo '- D1 schema: v30' >> "$GITHUB_STEP_SUMMARY"
           echo '- pre-migration D1 + AUTH_DB bookmarks: archived' >> "$GITHUB_STEP_SUMMARY"
           echo '- yuisync.app /health + /ready: passed' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Quality/staging proofs: exact SHA or inherited only across workflow-only commits' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Quality/staging proofs: exact release SHA required' >> "$GITHUB_STEP_SUMMARY"

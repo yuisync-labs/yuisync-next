@@ -1,4 +1,7 @@
 import app from './app'
+import { authorizePetshopRequest } from './operationAuthorization'
+import { resolveRequestId, requestRouteFamily } from './requestContext'
+import { emitEdgeLog } from './observability'
 import { handleAdminMaintenanceRequest } from './adminMaintenance'
 import { handleAiLabApiRequest } from './aiLabApi'
 import { handleAppApiRequest } from './appApi'
@@ -31,9 +34,10 @@ import { handleWhatsappTemplateApiRequest } from './whatsappTemplateApi'
 
 export { CoordinationDurableObject } from './coordination/coordinationDurableObject'
 
-export default {
-  async fetch(request: Request, env: EdgeEnv, context: ExecutionContext): Promise<Response> {
+async function dispatch(request: Request, env: EdgeEnv, context: ExecutionContext): Promise<Response> {
     const bindings = env as EdgeAppEnvironment['Bindings']
+    const denied = await authorizePetshopRequest(request, bindings)
+    if (denied) return denied
     const mutationProbe: Request | null = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)
       ? request.clone() as Request
       : null
@@ -124,6 +128,36 @@ export default {
     if (appApiResponse) return respond(appApiResponse)
 
     return respond(await app.fetch(request, env, context))
+}
+
+export default {
+  async fetch(request: Request, env: EdgeEnv, context: ExecutionContext): Promise<Response> {
+    const requestId = resolveRequestId(request.headers.get('x-request-id') || undefined)
+    const started = Date.now()
+    let response: Response
+    try {
+      const requestHeaders = new Headers(request.headers)
+      requestHeaders.set('x-request-id', requestId)
+      response = await dispatch(new Request(request, { headers: requestHeaders }), env, context)
+    } catch {
+      // Never log request bodies, cookies, query strings or database error messages.
+      emitEdgeLog('error', 'edge.request.failed', { request_id: requestId })
+      response = Response.json({ code: 'INTERNAL_ERROR', request_id: requestId }, { status: 500 })
+    }
+    const effectiveRequestId = response.headers.get('x-request-id') || requestId
+    emitEdgeLog(response.status >= 500 ? 'error' : 'info', 'edge.response', {
+      request_id: effectiveRequestId, method: request.method, status: response.status,
+      route: requestRouteFamily(request.url),
+      duration_ms: Date.now() - started, environment: String(env.APP_ENV),
+    })
+    // Preserve the Workers WebSocket upgrade response and its socket.
+    if (response.status === 101) return response
+    const headers = new Headers(response.headers)
+    headers.set('x-request-id', effectiveRequestId)
+    headers.set('x-content-type-options', 'nosniff')
+    headers.set('referrer-policy', 'no-referrer')
+    if (new URL(request.url).pathname.startsWith('/api/')) headers.set('cache-control', 'no-store')
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
   },
   queue: handleAsyncQueue,
 }

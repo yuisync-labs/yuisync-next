@@ -1175,7 +1175,7 @@ export default function SettingsPage() {
                       </div>
                     )
                   })}
-                  <p className="text-xs text-muted px-1">Padrão sugerido: loja das 08:00 às 18:00, agendamentos das 08:00 às 17:00 e capacidade 2 para as duas esteticistas atuais.</p>
+                  <p className="text-xs text-muted px-1">Configure os horários e a capacidade de atendimento conforme a equipe disponível na sua empresa.</p>
                 </div>
               </div>
 
@@ -1220,7 +1220,7 @@ export default function SettingsPage() {
                   <Users2 size={16} />
                   <div>
                     <h4 className="font-bold">Equipe operacional da estética</h4>
-                    <p className="text-xs text-muted">Nomes organizacionais, sem login ou senha. Até quatro profissionais.</p>
+                    <p className="text-xs text-muted">Profissionais responsáveis pelos serviços. O acesso ao sistema é configurado separadamente.</p>
                   </div>
                 </div>
                 <div className="space-y-3">
@@ -1249,14 +1249,9 @@ export default function SettingsPage() {
                       </label>
                     </div>
                   ))}
-                  {(Array.isArray(form.petshop_operational_staff)
-                    ? form.petshop_operational_staff
-                    : normalizeOperationalStaff(form.petshop_operational_staff)
-                  ).length < 4 && (
                     <button type="button" disabled={!canEdit} className="btn btn-secondary" onClick={addOperationalStaff}>
                       <Plus size={14}/> Adicionar profissional
                     </button>
-                  )}
                   <div className="flex flex-wrap items-center gap-3 pt-2">
                     <button
                       type="button"
@@ -1297,9 +1292,7 @@ export default function SettingsPage() {
                       <label className="flex items-center gap-2 text-xs text-muted"><input type="checkbox" disabled={!canEdit} checked={person.active !== false} onChange={(event) => updateDeliveryStaff(index, { active: event.target.checked })}/>Ativo</label>
                     </div>
                   ))}
-                  {(Array.isArray(form.petshop_delivery_staff) ? form.petshop_delivery_staff : normalizeDeliveryStaff(form.petshop_delivery_staff)).length < 4 && (
                     <button type="button" disabled={!canEdit} className="btn btn-secondary" onClick={addDeliveryStaff}><Plus size={14}/> Adicionar motoboy</button>
-                  )}
                   <div className="flex flex-wrap items-center gap-3 pt-2"><button type="button" disabled={!canEdit || savingStaff} className="btn btn-primary gap-2" onClick={() => persistOperationalStaff({ announce: true })}>{savingStaff ? <RefreshCw size={14} className="animate-spin"/> : <Save size={14}/>} {savingStaff ? 'Salvando equipes...' : 'Salvar equipes'}</button></div>
                 </div>
               </div>

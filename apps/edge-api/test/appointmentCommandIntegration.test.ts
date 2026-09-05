@@ -220,7 +220,7 @@ describe('appointment command policy in workerd', () => {
           scheduled_at: '2026-08-20 15:30:00',
           grooming_machine_no: 7,
         }),
-        count: 1,
+        count: null,
       })
 
       const second = await handlePetshopAppointmentsApiRequest(new Request('https://edge.test/api/petshop/appointments', {

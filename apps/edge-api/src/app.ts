@@ -39,7 +39,7 @@ import {
   readFoundationMigrationSnapshot,
 } from './migration/foundationMigrationHttp'
 import { emitEdgeLog } from './observability'
-import { resolveRequestId } from './requestContext'
+import { resolveRequestId, requestRouteFamily } from './requestContext'
 import type { EdgeAppEnvironment } from './types'
 
 const app = new Hono<EdgeAppEnvironment>()
@@ -80,7 +80,7 @@ app.use('*', async (context, next) => {
   emitEdgeLog('info', 'edge.request.started', {
     request_id: requestId,
     method: context.req.method,
-    path: context.req.path,
+    path: requestRouteFamily(context.req.url),
     environment: context.env.APP_ENV,
   })
 
@@ -90,7 +90,7 @@ app.use('*', async (context, next) => {
     emitEdgeLog('info', 'edge.request.completed', {
       request_id: requestId,
       method: context.req.method,
-      path: context.req.path,
+      path: requestRouteFamily(context.req.url),
       status: context.res.status,
       duration_ms: Math.max(0, Date.now() - startedAt),
       environment: context.env.APP_ENV,
@@ -504,7 +504,7 @@ app.onError((error, context) => {
   emitEdgeLog('error', 'edge.request.failed', {
     request_id: context.get('requestId') || 'unavailable',
     method: context.req.method,
-    path: context.req.path,
+    path: requestRouteFamily(context.req.url),
     error_name: error.name || 'Error',
     environment: context.env.APP_ENV,
   })
