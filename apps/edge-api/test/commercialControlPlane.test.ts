@@ -203,4 +203,26 @@ describe('commercial control plane', () => {
     const entitlement = await resolveCommercialEntitlement(testEnv.DB, tenantId, YUI_AI_OUTBOUND_USAGE_KEY, now)
     expect(entitlement.enabled).toBe(true)
   })
+
+  it('fails closed for metered usage when an active billing period is stale', async () => {
+    const tenantId = 'tenant-commercial-stale-period'
+    const now = Date.now()
+    await seedTenant(tenantId)
+    await setPlan(tenantId, 'business@2026-09', now)
+    await testEnv.DB.prepare(`
+      UPDATE tenant_subscriptions
+      SET status='active',current_period_start_ms=?2,current_period_end_ms=?3,updated_at_ms=?4
+      WHERE tenant_id=?1
+    `).bind(tenantId, now - 120_000, now - 60_000, now).run()
+
+    const result = await consumeUsage(testEnv.DB, {
+      tenantId,
+      usageKey: YUI_AI_OUTBOUND_USAGE_KEY,
+      eventKey: 'message-stale-period-1',
+      source: 'test',
+      nowMs: now,
+    })
+    expect(result).toMatchObject({ accepted: false, duplicate: false, reason: 'billing_period_inactive' })
+    expect((await readUsage(testEnv.DB, tenantId, YUI_AI_OUTBOUND_USAGE_KEY, now)).consumed).toBe(0)
+  })
 })
