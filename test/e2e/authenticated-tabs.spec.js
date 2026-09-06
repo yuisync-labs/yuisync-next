@@ -127,22 +127,23 @@ async function signIn(page, email, password) {
   await settlePage(page)
 }
 
-for (const viewport of viewports) {
-  test(`admin percorre todas as abas sem console, quebra ou overflow em ${viewport.width}px`, async ({ page }) => {
-    test.skip(!process.env.E2E_EMAIL || !process.env.E2E_PASSWORD, 'Credenciais E2E nao configuradas')
-    test.slow()
+test('admin percorre todas as abas sem console, quebra ou overflow nos viewports suportados', async ({ page }) => {
+  test.skip(!process.env.E2E_EMAIL || !process.env.E2E_PASSWORD, 'Credenciais E2E nao configuradas')
+  test.setTimeout(10 * 60_000)
 
-    const consoleProblems = []
-    const api = watchApiActivity(page)
-    page.on('console', (message) => {
-      if (['warning', 'error'].includes(message.type())) consoleProblems.push(`${message.type()}: ${message.text()}`)
-    })
-    page.on('pageerror', (error) => consoleProblems.push(`pageerror: ${error.message}`))
+  const consoleProblems = []
+  const api = watchApiActivity(page)
+  page.on('console', (message) => {
+    if (['warning', 'error'].includes(message.type())) consoleProblems.push(`${message.type()}: ${message.text()}`)
+  })
+  page.on('pageerror', (error) => consoleProblems.push(`pageerror: ${error.message}`))
 
+  await page.setViewportSize(viewports[0])
+  await signIn(page, process.env.E2E_EMAIL, process.env.E2E_PASSWORD)
+  await api.waitForIdle()
+
+  for (const viewport of viewports) {
     await page.setViewportSize(viewport)
-    await signIn(page, process.env.E2E_EMAIL, process.env.E2E_PASSWORD)
-    await api.waitForIdle()
-
     for (const route of moduleRoutes) {
       await page.goto(route, { waitUntil: 'domcontentloaded' })
       await settlePage(page)
@@ -156,16 +157,18 @@ for (const viewport of viewports) {
       expect(overflow, `${route} em ${viewport.width}px`).toBe(false)
     }
 
-    expect(api.problems).toEqual([])
-    expect(consoleProblems).toEqual([])
-  })
-}
+  }
+
+  expect(api.problems).toEqual([])
+  expect(consoleProblems).toEqual([])
+})
 
 for (const role of [
   { name: 'usuario comum', email: 'E2E_COMMON_EMAIL', password: 'E2E_COMMON_PASSWORD' },
   { name: 'gestor', email: 'E2E_MANAGER_EMAIL', password: 'E2E_MANAGER_PASSWORD' },
 ]) {
   test(`${role.name} recupera sessao e abre o dashboard permitido`, async ({ page }) => {
+    test.setTimeout(2 * 60_000)
     const email = process.env[role.email]
     const password = process.env[role.password]
     test.skip(!email || !password, `Credenciais de ${role.name} nao configuradas`)

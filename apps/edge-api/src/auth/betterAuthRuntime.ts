@@ -146,6 +146,10 @@ export function createBetterAuthRuntime(
       window: 60,
       max: 100,
       customRules: {
+        // The SPA restores the current session while route modules bootstrap in
+        // parallel. Keep credential-changing endpoints strict, but do not let
+        // harmless session reads lock an authenticated browser out of the app.
+        '/get-session': { window: 60, max: 600 },
         '/request-password-reset': { window: 900, max: 3 },
         '/reset-password': { window: 900, max: 5 },
         '/change-password': { window: 900, max: 5 },

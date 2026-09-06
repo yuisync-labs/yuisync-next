@@ -1,10 +1,50 @@
 import { isVisualPreviewSession } from '../../../lib/visualPreview'
+import { runVisualPreviewQuery } from '../../../lib/visualPreviewData'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 
 async function request(path, { tenantId, moduleId = 'petshop', method = 'GET', body } = {}) {
   if (isVisualPreviewSession()) {
-    if (method === 'GET') return path ? { client: null } : { clients: [] }
+    if (method === 'GET') {
+      const url = new URL(path || '', 'https://preview.yuisync.local')
+      const id = url.pathname.replace(/^\//, '')
+      const result = runVisualPreviewQuery({
+        table: 'clients',
+        filters: id ? [{ op: 'eq', column: 'id', value: decodeURIComponent(id) }] : [],
+      })
+      const search = String(url.searchParams.get('search') || '').trim().toLocaleLowerCase('pt-BR')
+      const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') || 1000)))
+      const clients = (result.data || [])
+        .filter((item) => !search || JSON.stringify(item).toLocaleLowerCase('pt-BR').includes(search))
+        .slice(0, limit)
+        .map((item) => ({
+          id: item.id,
+          tutor_group_id: item.details?.tutor_group_id || item.id,
+          owner_name: item.name || '',
+          owner_cpf: item.document || '',
+          phone: item.phone || '',
+          email: item.email || '',
+          tutor_birth_date: item.details?.tutor_birth_date || '',
+          owner_address: item.address || '',
+          address_number: item.details?.address_number || '',
+          address_complement: item.details?.address_complement || '',
+          address_reference: item.details?.address_reference || '',
+          owner_neighborhood: item.neighborhood || '',
+          owner_city: item.city || '',
+          zip_code: item.details?.zip_code || '',
+          client_notes: item.notes || '',
+          pet_name: item.details?.pet_name || '',
+          species: item.details?.species || 'other',
+          breed: item.details?.breed || '',
+          birth_date: item.details?.birth_date || null,
+          weight_kg: item.details?.weight_kg ?? null,
+          color: item.details?.color || '',
+          notes: item.details?.pet_notes || '',
+          created_at: item.created_at,
+          registration_status: item.details?.registration_status || 'pendente',
+        }))
+      return id ? { client: clients[0] || null } : { clients }
+    }
     const error = new Error('O modo visual local não salva alterações.')
     error.code = 'VISUAL_PREVIEW_READ_ONLY'
     throw error
