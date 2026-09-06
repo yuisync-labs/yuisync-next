@@ -6,7 +6,7 @@ import { useAuthCtx } from '../../../context/AuthContext'
 import { applyTenantFilter, runWithTenantFallback } from '../../../lib/tenant'
 import { normalizeCode, normalizeServices } from '../lib/petshopTeam'
 import { fetchAllServiceCatalogPages } from '../lib/serviceCatalogPagination'
-import { loadNativeCashDashboard, localDayBounds } from '../lib/cashDashboardApi'
+import { closeNativeCashRegister, loadNativeCashDashboard, localDayBounds } from '../lib/cashDashboardApi'
 import {
   defaultServiceCommissionRate,
   serviceSpeciesTarget,
@@ -132,6 +132,19 @@ export function usePetshopAdvanced() {
     return loadNativeCashDashboard({
       tenantId: activeTenantId,
       moduleId,
+      start,
+      end,
+    })
+  }, [activeTenantId, moduleId])
+
+  const closeCashRegister = useCallback(async ({ registerId, closing_balance = 0, notes = '' }) => {
+    const { start, end } = localDayBounds()
+    return closeNativeCashRegister({
+      tenantId: activeTenantId,
+      moduleId,
+      registerId,
+      closingBalance: closing_balance,
+      notes,
       start,
       end,
     })
@@ -345,5 +358,6 @@ export function usePetshopAdvanced() {
     loadPetshopServices,
     savePetshopService,
     loadCashDashboard,
+    closeCashRegister,
   }
 }
