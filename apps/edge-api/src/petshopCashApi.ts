@@ -1,7 +1,8 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
-type Scope = { tenantId: string; moduleId: string }
+type Scope = { tenantId: string; moduleId: string; principalId: string }
+type CashWindow = { startMs: number; endMs: number }
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
 const MODULE = /^[a-z0-9][a-z0-9_-]{0,63}$/
@@ -56,21 +57,23 @@ async function resolveScope(request: Request, bindings: Bindings): Promise<{ sco
   if (!membership || !hasModuleAccess(membership.role, membership.module_permissions_json, moduleId)) {
     return { error: json({ code: 'FORBIDDEN' }, 403) }
   }
-  return { scope: { tenantId, moduleId } }
+  return { scope: { tenantId, moduleId, principalId: principal.id } }
 }
 
-function parseWindow(url: URL): { startMs?: number; endMs?: number; error?: Response } {
-  const start = url.searchParams.get('start')
-  const end = url.searchParams.get('end')
-  const startMs = start ? Date.parse(start) : NaN
-  const endMs = end ? Date.parse(end) : NaN
+function parseWindowValues(start: unknown, end: unknown): { window?: CashWindow; error?: Response } {
+  const startMs = Date.parse(String(start ?? ''))
+  const endMs = Date.parse(String(end ?? ''))
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
     return { error: json({ code: 'INVALID_CASH_WINDOW' }, 400) }
   }
   if (endMs - startMs > MAX_WINDOW_MS) {
     return { error: json({ code: 'CASH_WINDOW_TOO_LARGE' }, 400) }
   }
-  return { startMs, endMs }
+  return { window: { startMs, endMs } }
+}
+
+function parseWindow(url: URL): { window?: CashWindow; error?: Response } {
+  return parseWindowValues(url.searchParams.get('start'), url.searchParams.get('end'))
 }
 
 function legacyMethod(method: unknown): string {
@@ -80,20 +83,25 @@ function legacyMethod(method: unknown): string {
   return normalized
 }
 
-async function loadCashDashboard(request: Request, bindings: Bindings): Promise<Response> {
-  const resolved = await resolveScope(request, bindings)
-  if (resolved.error) return resolved.error
-  const { tenantId, moduleId } = resolved.scope!
-  const window = parseWindow(new URL(request.url))
-  if (window.error) return window.error
-  const startMs = window.startMs!
-  const endMs = window.endMs!
+function currencyToCents(value: unknown): number | null {
+  const amount = Number(value)
+  if (!Number.isFinite(amount)) return null
+  const cents = Math.round(amount * 100)
+  if (!Number.isSafeInteger(cents)) return null
+  return cents
+}
 
-  // The aggregate intentionally does not depend on the compatibility API page size.
-  // Semantics match the legacy dashboard: completed sales created in the window use
-  // payment splits created in the same window; if none exist, the whole sale falls
-  // back to the first payment method known for that sale.
-  const aggregate = await bindings.DB!.prepare(`
+async function aggregateCash(
+  db: D1Database,
+  tenantId: string,
+  moduleId: string,
+  window: CashWindow,
+): Promise<{ totalsByMethod: Record<string, number>; expectedCash: number }> {
+  // This aggregate intentionally bypasses compatibility pagination. Semantics match
+  // the legacy dashboard: completed sales created in the window use payment splits
+  // created in the same window; if none exist, the whole sale falls back to the
+  // first payment method known for that sale.
+  const aggregate = await db.prepare(`
     WITH eligible_sales AS (
       SELECT s.id,s.total_cents
       FROM sales s
@@ -120,46 +128,61 @@ async function loadCashDashboard(request: Request, bindings: Bindings): Promise<
       FROM eligible_sales s
       WHERE NOT EXISTS (SELECT 1 FROM window_payments wp WHERE wp.sale_id=s.id)
     )
-    SELECT method,SUM(amount_cents) AS amount_cents,COUNT(*) AS line_count
+    SELECT method,SUM(amount_cents) AS amount_cents
     FROM effective_lines
     GROUP BY method
     ORDER BY method
-  `).bind(tenantId, moduleId, startMs, endMs).all<{ method: string; amount_cents: number; line_count: number }>()
-
-  const saleCountRow = await bindings.DB!.prepare(`
-    SELECT COUNT(*) AS sale_count
-    FROM sales
-    WHERE tenant_id=?1 AND module_id=?2 AND status='completed'
-      AND created_at_ms>=?3 AND created_at_ms<=?4
-  `).bind(tenantId, moduleId, startMs, endMs).first<{ sale_count: number }>()
-
-  const registersResult = await bindings.DB!.prepare(`
-    SELECT id,opened_by,closed_by,opening_balance_cents,closing_balance_cents,
-      expected_balance_cents,difference_cents,opened_at_ms,closed_at_ms,notes
-    FROM cash_register
-    WHERE tenant_id=?1 AND module_id=?2
-    ORDER BY opened_at_ms DESC,id DESC
-    LIMIT 30
-  `).bind(tenantId, moduleId).all<any>()
-
-  // Recent sales are presentation data only. Totals above remain exact at any volume.
-  const salesResult = await bindings.DB!.prepare(`
-    SELECT s.id,s.total_cents,s.created_at_ms,
-      (SELECT p.method FROM payments p
-       WHERE p.tenant_id=s.tenant_id AND p.module_id=s.module_id AND p.sale_id=s.id
-       ORDER BY p.created_at_ms,p.id LIMIT 1) AS payment_method
-    FROM sales s
-    WHERE s.tenant_id=?1 AND s.module_id=?2 AND s.status='completed'
-      AND s.created_at_ms>=?3 AND s.created_at_ms<=?4
-    ORDER BY s.created_at_ms DESC,s.id DESC
-    LIMIT 200
-  `).bind(tenantId, moduleId, startMs, endMs).all<any>()
+  `).bind(tenantId, moduleId, window.startMs, window.endMs).all<{ method: string; amount_cents: number }>()
 
   const totalsByMethod: Record<string, number> = {}
   for (const row of aggregate.results || []) {
     const key = legacyMethod(row.method)
     totalsByMethod[key] = (totalsByMethod[key] || 0) + Number(row.amount_cents || 0) / 100
   }
+  return {
+    totalsByMethod,
+    expectedCash: Number(totalsByMethod.dinheiro || 0),
+  }
+}
+
+async function loadCashDashboard(request: Request, bindings: Bindings): Promise<Response> {
+  const resolved = await resolveScope(request, bindings)
+  if (resolved.error) return resolved.error
+  const { tenantId, moduleId } = resolved.scope!
+  const parsed = parseWindow(new URL(request.url))
+  if (parsed.error) return parsed.error
+  const window = parsed.window!
+
+  const [cash, saleCountRow, registersResult, salesResult] = await Promise.all([
+    aggregateCash(bindings.DB!, tenantId, moduleId, window),
+    bindings.DB!.prepare(`
+      SELECT COUNT(*) AS sale_count
+      FROM sales
+      WHERE tenant_id=?1 AND module_id=?2 AND status='completed'
+        AND created_at_ms>=?3 AND created_at_ms<=?4
+    `).bind(tenantId, moduleId, window.startMs, window.endMs).first<{ sale_count: number }>(),
+    bindings.DB!.prepare(`
+      SELECT id,opened_by,closed_by,opening_balance_cents,closing_balance_cents,
+        expected_balance_cents,difference_cents,opened_at_ms,closed_at_ms,notes
+      FROM cash_register
+      WHERE tenant_id=?1 AND module_id=?2
+      ORDER BY opened_at_ms DESC,id DESC
+      LIMIT 30
+    `).bind(tenantId, moduleId).all<any>(),
+    // Recent sales are presentation data only. Aggregate totals above remain exact
+    // at any volume and are not tied to this display limit.
+    bindings.DB!.prepare(`
+      SELECT s.id,s.total_cents,s.created_at_ms,
+        (SELECT p.method FROM payments p
+         WHERE p.tenant_id=s.tenant_id AND p.module_id=s.module_id AND p.sale_id=s.id
+         ORDER BY p.created_at_ms,p.id LIMIT 1) AS payment_method
+      FROM sales s
+      WHERE s.tenant_id=?1 AND s.module_id=?2 AND s.status='completed'
+        AND s.created_at_ms>=?3 AND s.created_at_ms<=?4
+      ORDER BY s.created_at_ms DESC,s.id DESC
+      LIMIT 200
+    `).bind(tenantId, moduleId, window.startMs, window.endMs).all<any>(),
+  ])
 
   const registers = (registersResult.results || []).map((row) => ({
     id: row.id,
@@ -187,14 +210,95 @@ async function loadCashDashboard(request: Request, bindings: Bindings): Promise<
     current: registers.find((register) => !register.closed_at) || null,
     sales,
     saleCount: Number(saleCountRow?.sale_count || 0),
-    totalsByMethod,
-    expectedCash: Number(totalsByMethod.dinheiro || 0),
+    totalsByMethod: cash.totalsByMethod,
+    expectedCash: cash.expectedCash,
+  })
+}
+
+async function closeCashRegister(request: Request, bindings: Bindings, registerId: string): Promise<Response> {
+  const resolved = await resolveScope(request, bindings)
+  if (resolved.error) return resolved.error
+  const { tenantId, moduleId, principalId } = resolved.scope!
+  if (!ID.test(registerId)) return json({ code: 'INVALID_REGISTER_ID' }, 400)
+
+  let body: Record<string, unknown>
+  try {
+    body = await request.json<Record<string, unknown>>()
+  } catch {
+    return json({ code: 'INVALID_JSON' }, 400)
+  }
+
+  const closingBalanceCents = currencyToCents(body.closing_balance)
+  if (closingBalanceCents == null) return json({ code: 'INVALID_CLOSING_BALANCE' }, 400)
+  const parsed = parseWindowValues(body.start, body.end)
+  if (parsed.error) return parsed.error
+  const window = parsed.window!
+
+  const current = await bindings.DB!.prepare(`
+    SELECT id,opening_balance_cents,opened_at_ms,notes
+    FROM cash_register
+    WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND closed_at_ms IS NULL
+    LIMIT 1
+  `).bind(tenantId, moduleId, registerId).first<{
+    id: string
+    opening_balance_cents: number
+    opened_at_ms: number
+    notes: string | null
+  }>()
+  if (!current?.id) return json({ code: 'CASH_REGISTER_NOT_OPEN' }, 409)
+
+  const cash = await aggregateCash(bindings.DB!, tenantId, moduleId, window)
+  const expectedBalanceCents = Number(current.opening_balance_cents || 0) + Math.round(cash.expectedCash * 100)
+  const differenceCents = closingBalanceCents - expectedBalanceCents
+  const closedAtMs = Date.now()
+  const notes = text(body.notes) || current.notes || null
+
+  const result = await bindings.DB!.prepare(`
+    UPDATE cash_register
+    SET closed_by=?4,closed_at_ms=?5,closing_balance_cents=?6,
+        expected_balance_cents=?7,difference_cents=?8,notes=?9,updated_at_ms=?5
+    WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND closed_at_ms IS NULL
+  `).bind(
+    tenantId,
+    moduleId,
+    registerId,
+    principalId,
+    closedAtMs,
+    closingBalanceCents,
+    expectedBalanceCents,
+    differenceCents,
+    notes,
+  ).run()
+
+  if (Number(result.meta?.changes || 0) !== 1) {
+    return json({ code: 'CASH_REGISTER_CLOSE_CONFLICT' }, 409)
+  }
+
+  return json({
+    id: registerId,
+    opened_at: new Date(Number(current.opened_at_ms)).toISOString(),
+    opening_balance: Number(current.opening_balance_cents || 0) / 100,
+    closed_by: principalId,
+    closed_at: new Date(closedAtMs).toISOString(),
+    closing_balance: closingBalanceCents / 100,
+    expected_balance: expectedBalanceCents / 100,
+    difference: differenceCents / 100,
+    notes,
   })
 }
 
 export async function handlePetshopCashApiRequest(request: Request, bindings: Bindings): Promise<Response | null> {
   const { pathname } = new URL(request.url)
-  if (pathname !== '/api/petshop/cash/dashboard') return null
-  if (request.method !== 'GET') return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET' })
-  return loadCashDashboard(request, bindings)
+  if (pathname === '/api/petshop/cash/dashboard') {
+    if (request.method !== 'GET') return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET' })
+    return loadCashDashboard(request, bindings)
+  }
+
+  const closeMatch = /^\/api\/petshop\/cash\/registers\/([^/]+)\/close$/.exec(pathname)
+  if (closeMatch) {
+    if (request.method !== 'POST') return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'POST' })
+    return closeCashRegister(request, bindings, decodeURIComponent(closeMatch[1]))
+  }
+
+  return null
 }
