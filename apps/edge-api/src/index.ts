@@ -26,6 +26,7 @@ import { handlePetshopPlansApiRequest } from './petshopPlansApi'
 import { handlePetshopServicesApiRequest } from './petshopServicesApi'
 import { handleAsyncQueue } from './queueHandler'
 import { handleRealtimeApiRequest, scheduleRealtimeInvalidation } from './realtimeApi'
+import { handleReleaseIdentity } from './releaseIdentity'
 import type { EdgeAppEnvironment } from './types'
 import { handleWhatsappApiRequest } from './whatsappApi'
 import { handleWhatsappDeliveryStatusRequest } from './whatsappDeliveryStatusApi'
@@ -46,6 +47,9 @@ async function dispatch(request: Request, env: EdgeEnv, context: ExecutionContex
       if (mutationProbe) scheduleRealtimeInvalidation(mutationProbe, response.clone(), bindings, context)
       return response
     }
+
+    const releaseIdentityResponse = handleReleaseIdentity(request, bindings)
+    if (releaseIdentityResponse) return respond(releaseIdentityResponse)
 
     const readinessResponse = await handleFinalReadiness(request, bindings)
     if (readinessResponse) return respond(readinessResponse)
