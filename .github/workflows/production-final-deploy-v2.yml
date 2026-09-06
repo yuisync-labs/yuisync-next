@@ -70,7 +70,7 @@ jobs:
           const qualityProof = resolveProof('quality.yml', 'quality')
           const stagingProof = resolveProof('full-staging-certification.yml', 'staging')
           if (!qualityProof) throw new Error('QUALITY_REQUIRED')
-          if (!stagingProof) throw new Error('STAGING_SMOKE_REQUIRED')
+          if (!stagingProof) throw new Error('STAGING_CERTIFICATION_REQUIRED')
 
           await appendFile(process.env.GITHUB_OUTPUT, `release_sha=${release}\n`)
           console.log(JSON.stringify({ release_sha: release, quality_proof: qualityProof, staging_proof: stagingProof }))
@@ -111,6 +111,23 @@ jobs:
           node scripts/migration/production-dns.mjs inspect
           node scripts/migration/production-cloudflare.mjs resolve
           node scripts/migration/production-domain.mjs workers-url
+
+      - name: Stamp exact release SHA into production config
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises'
+          const path = String(process.env.YUISYNC_PRODUCTION_WRANGLER_CONFIG || '')
+          if (!path) throw new Error('PRODUCTION_WRANGLER_CONFIG_REQUIRED')
+          const config = JSON.parse(await readFile(path, 'utf8'))
+          config.env ??= {}
+          config.env.production ??= {}
+          config.env.production.vars ??= {}
+          config.env.production.vars.RELEASE_SHA = process.env.RELEASE_SHA
+          await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+          NODE
 
       - name: Prove production prerequisites and migration starting point
         working-directory: apps/edge-api
@@ -173,6 +190,22 @@ jobs:
       - name: Attach custom domain configuration
         run: YUISYNC_PRODUCTION_ATTACH_DOMAIN=true node scripts/migration/production-cloudflare.mjs resolve
 
+      - name: Re-stamp SHA after production config regeneration
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises'
+          const path = String(process.env.YUISYNC_PRODUCTION_WRANGLER_CONFIG || '')
+          if (!path) throw new Error('PRODUCTION_WRANGLER_CONFIG_REQUIRED')
+          const config = JSON.parse(await readFile(path, 'utf8'))
+          config.env ??= {}
+          config.env.production ??= {}
+          config.env.production.vars ??= {}
+          config.env.production.vars.RELEASE_SHA = process.env.RELEASE_SHA
+          await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+          NODE
+
       - name: Deploy exact certified runtime
         working-directory: apps/edge-api
         shell: bash
@@ -180,24 +213,35 @@ jobs:
           set -euo pipefail
           npx wrangler deploy --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
 
-      - name: Wait for live health and readiness
+      - name: Wait for live health, readiness and exact SHA
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 12); do
+          matched=false
+          for attempt in $(seq 1 18); do
             hs="$(curl --silent --show-error --max-time 10 -o /tmp/h.json -w '%{http_code}' https://yuisync.app/health || true)"
             rs="$(curl --silent --show-error --max-time 10 -o /tmp/r.json -w '%{http_code}' https://yuisync.app/ready || true)"
-            if [ "$hs" = 200 ] && [ "$rs" = 200 ] && node --input-type=module <<'NODE'
+            vs="$(curl --silent --show-error --max-time 10 -o /tmp/v.json -w '%{http_code}' https://yuisync.app/release || true)"
+            if [ "$hs" = 200 ] && [ "$rs" = 200 ] && [ "$vs" = 200 ] && node --input-type=module <<'NODE'
           import { readFile } from 'node:fs/promises'
           const h = JSON.parse(await readFile('/tmp/h.json', 'utf8'))
           const r = JSON.parse(await readFile('/tmp/r.json', 'utf8'))
-          const ok = h?.status === 'ok' && h?.environment === 'production' && r?.status === 'ready' && r?.environment === 'production' && r?.checks?.database === 'ready' && String(r?.checks?.schema_version) === '30' && r?.checks?.auth_database === 'configured' && r?.checks?.better_auth === 'enabled'
+          const v = JSON.parse(await readFile('/tmp/v.json', 'utf8'))
+          const ok = h?.status === 'ok'
+            && h?.environment === 'production'
+            && r?.status === 'ready'
+            && r?.environment === 'production'
+            && r?.checks?.database === 'ready'
+            && String(r?.checks?.schema_version) === '30'
+            && r?.checks?.auth_database === 'configured'
+            && r?.checks?.better_auth === 'enabled'
+            && String(v?.release_sha || '').toLowerCase() === String(process.env.RELEASE_SHA || '').toLowerCase()
           if (!ok) process.exit(1)
           NODE
-            then break; fi
-            [ "$attempt" = 12 ] && exit 1
+            then matched=true; break; fi
             sleep 5
           done
+          [ "$matched" = true ] || { echo 'Exact production release SHA was not observed'; cat /tmp/v.json || true; exit 1; }
           curl --fail --silent --show-error https://yuisync.app/ > /dev/null
 
       - name: Preserve v30 state for explicit recovery decision
@@ -208,9 +252,10 @@ jobs:
       - name: Release summary
         if: success()
         run: |
-          echo '### YuiSync Next fast production promotion' >> "$GITHUB_STEP_SUMMARY"
+          echo '### YuiSync Next certified production promotion' >> "$GITHUB_STEP_SUMMARY"
           echo "- Runtime: \`$RELEASE_SHA\`" >> "$GITHUB_STEP_SUMMARY"
           echo '- D1 schema: v30' >> "$GITHUB_STEP_SUMMARY"
           echo '- pre-migration D1 + AUTH_DB bookmarks: archived' >> "$GITHUB_STEP_SUMMARY"
           echo '- yuisync.app /health + /ready: passed' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Quality/staging proofs: exact release SHA required' >> "$GITHUB_STEP_SUMMARY"
+          echo '- yuisync.app /release: exact authorized SHA passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Quality + full staging certification: exact release SHA required' >> "$GITHUB_STEP_SUMMARY"
