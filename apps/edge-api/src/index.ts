@@ -10,6 +10,7 @@ import { handleAppointmentBillingIntentCompat } from './appointmentBillingIntent
 import { handleAppointmentFinancialReopenApi } from './appointmentFinancialReopenApi'
 import { handleAppointmentResponsibleAssignmentApi } from './appointmentResponsibleAssignmentApi'
 import { handlePetshopAppointmentsApiRequest } from './petshopAppointmentsApi'
+import { handlePetshopCashApiRequest } from './petshopCashApi'
 import { handlePetshopClientsApiRequest } from './petshopClientsApi'
 import { handleCheckoutApiRequest } from './checkoutApi'
 import { handleCompatApiRequest } from './compatApi'
@@ -99,6 +100,9 @@ async function dispatch(request: Request, env: EdgeEnv, context: ExecutionContex
 
     const inventoryAdjustmentResponse = await handleInventoryAdjustmentRequest(request, bindings)
     if (inventoryAdjustmentResponse) return respond(inventoryAdjustmentResponse)
+
+    const petshopCashResponse = await handlePetshopCashApiRequest(request, bindings)
+    if (petshopCashResponse) return respond(petshopCashResponse)
 
     const petshopPlansResponse = await handlePetshopPlansApiRequest(request, bindings)
     if (petshopPlansResponse) return respond(petshopPlansResponse)
