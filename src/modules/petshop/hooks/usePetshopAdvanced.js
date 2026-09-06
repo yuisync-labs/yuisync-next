@@ -6,6 +6,7 @@ import { useAuthCtx } from '../../../context/AuthContext'
 import { applyTenantFilter, runWithTenantFallback } from '../../../lib/tenant'
 import { normalizeCode, normalizeServices } from '../lib/petshopTeam'
 import { fetchAllServiceCatalogPages } from '../lib/serviceCatalogPagination'
+import { loadNativeCashDashboard, localDayBounds } from '../lib/cashDashboardApi'
 import {
   defaultServiceCommissionRate,
   serviceSpeciesTarget,
@@ -125,6 +126,16 @@ export function usePetshopAdvanced() {
     (runner) => runWithTenantFallback(activeTenantId, runner),
     [activeTenantId],
   )
+
+  const loadCashDashboard = useCallback(async () => {
+    const { start, end } = localDayBounds()
+    return loadNativeCashDashboard({
+      tenantId: activeTenantId,
+      moduleId,
+      start,
+      end,
+    })
+  }, [activeTenantId, moduleId])
 
   const loadPetshopServices = useCallback(async () => {
     const [productsRes, servicesRes] = await Promise.all([
@@ -333,5 +344,6 @@ export function usePetshopAdvanced() {
     saveClientSubscription,
     loadPetshopServices,
     savePetshopService,
+    loadCashDashboard,
   }
 }
