@@ -24,6 +24,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
       - id: gates
         shell: bash
         run: |
@@ -41,7 +42,7 @@ jobs:
           const currentMain = execFileSync('git', ['rev-parse', 'origin/main'], { encoding: 'utf8' }).trim().toLowerCase()
           if (release !== currentMain) throw new Error(`RELEASE_NOT_CURRENT_MAIN:${release}:${currentMain}`)
           await appendFile(process.env.GITHUB_OUTPUT, `release_sha=${release}\n`)
-          console.log(JSON.stringify({ status: 'staging-promotion-authorized', release_sha: release }))
+          console.log(JSON.stringify({ status: 'staging-certification-authorized', release_sha: release }))
           NODE
 
       - name: Publish run start to authorization issue
@@ -52,13 +53,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Fast staging promotion started\n\n- Release-SHA: \`$RELEASE_SHA\`\n- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\n\nThis run is staging-only."
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Full staging certification started\n\n- Release-SHA: \`$RELEASE_SHA\`\n- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\n\nThe browser suite will run only after staging proves this exact SHA."
 
   certify:
-    name: Promote and smoke Cloudflare staging
+    name: Publish, prove SHA and certify browser staging
     needs: preflight
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     environment: cloudflare-staging
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -86,6 +87,9 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID"
 
       - run: npm ci
+
+      - name: Certify edge build before staging mutation
+        run: npm run edge:check
 
       - name: Capture pre-migration staging D1 bookmarks
         working-directory: apps/edge-api
@@ -119,30 +123,53 @@ jobs:
       - name: Build SPA for same commit
         run: npm run build
 
+      - name: Stamp exact release SHA into staging config
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises'
+          const path = 'wrangler.jsonc'
+          const config = JSON.parse(await readFile(path, 'utf8'))
+          config.env ??= {}
+          config.env.staging ??= {}
+          config.env.staging.vars ??= {}
+          config.env.staging.vars.RELEASE_SHA = process.env.RELEASE_SHA
+          await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+          NODE
+
       - name: Deploy exact release to staging
         working-directory: apps/edge-api
         run: npx wrangler deploy --env staging
 
-      - name: Wait for staging health and readiness
+      - name: Prove live staging health, readiness and exact SHA
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 12); do
+          matched=false
+          for attempt in $(seq 1 18); do
             hs="$(curl --silent --show-error --max-time 10 -o /tmp/h.json -w '%{http_code}' "$YUISYNC_STAGING_URL/health" || true)"
             rs="$(curl --silent --show-error --max-time 10 -o /tmp/r.json -w '%{http_code}' "$YUISYNC_STAGING_URL/ready" || true)"
-            if [ "$hs" = 200 ] && [ "$rs" = 200 ] && node --input-type=module <<'NODE'
+            vs="$(curl --silent --show-error --max-time 10 -o /tmp/v.json -w '%{http_code}' "$YUISYNC_STAGING_URL/release" || true)"
+            if [ "$hs" = 200 ] && [ "$rs" = 200 ] && [ "$vs" = 200 ] && node --input-type=module <<'NODE'
           import { readFile } from 'node:fs/promises'
           const h = JSON.parse(await readFile('/tmp/h.json', 'utf8'))
           const r = JSON.parse(await readFile('/tmp/r.json', 'utf8'))
-          if (!(h?.status === 'ok' && r?.status === 'ready' && String(r?.checks?.schema_version) === '30')) process.exit(1)
+          const v = JSON.parse(await readFile('/tmp/v.json', 'utf8'))
+          const ok = h?.status === 'ok'
+            && r?.status === 'ready'
+            && String(r?.checks?.schema_version) === '30'
+            && String(v?.release_sha || '').toLowerCase() === String(process.env.RELEASE_SHA || '').toLowerCase()
+          if (!ok) process.exit(1)
           NODE
-            then break; fi
-            [ "$attempt" = 12 ] && exit 1
+            then matched=true; break; fi
             sleep 5
           done
+          [ "$matched" = true ] || { echo 'Exact staging release SHA was not observed'; cat /tmp/v.json || true; exit 1; }
           curl --fail --silent --show-error "$YUISYNC_STAGING_URL/" > /dev/null
 
-      - name: Prepare ephemeral Better Auth smoke users
+      - name: Prepare ephemeral Better Auth browser users
         id: e2e-fixtures
         run: node scripts/migration/staging-e2e-fixtures.mjs setup
 
@@ -166,13 +193,27 @@ jobs:
             if (session.status() !== 200) throw new Error(`STAGING_AUTH_SESSION_FAILED:${session.status()}`)
             const body = await session.json()
             if (String(body?.user?.email || '').toLowerCase() !== email.toLowerCase()) throw new Error('STAGING_AUTH_SESSION_USER_MISMATCH')
-            console.log(JSON.stringify({ status: 'passed', better_auth_sign_in: true, session_roundtrip: true }))
           } finally {
             await api.dispose()
           }
           NODE
 
-      - name: Clean ephemeral Better Auth smoke users
+      - name: Install browser runtime
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser E2E against the proven SHA
+        env:
+          E2E_BASE_URL: ${{ env.YUISYNC_STAGING_URL }}
+        run: npm run test:e2e
+
+      - name: Re-prove SHA after browser E2E
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIVE_SHA="$(curl --fail --silent --show-error "$YUISYNC_STAGING_URL/release" | node --input-type=module -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(String(JSON.parse(s).release_sha||'').toLowerCase()))")"
+          test "$LIVE_SHA" = "${RELEASE_SHA,,}"
+
+      - name: Clean ephemeral Better Auth browser users
         if: always() && steps.e2e-fixtures.outcome == 'success'
         run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
 
@@ -180,21 +221,24 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fast-staging-release-${{ env.RELEASE_SHA }}
-          path: .artifacts/staging-certification/
+          name: full-staging-release-${{ env.RELEASE_SHA }}
+          path: |
+            .artifacts/staging-certification/
+            test-results/
           if-no-files-found: warn
           retention-days: 14
 
       - name: Promotion summary
         if: success()
         run: |
-          echo '## Fast Cloudflare staging promotion' >> "$GITHUB_STEP_SUMMARY"
-          echo "- Release SHA: $RELEASE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo '## Full Cloudflare staging certification' >> "$GITHUB_STEP_SUMMARY"
+          echo "- Release SHA: \`$RELEASE_SHA\`" >> "$GITHUB_STEP_SUMMARY"
           echo '- D1 + AUTH_DB migrations: applied' >> "$GITHUB_STEP_SUMMARY"
           echo '- Runtime schema: v30' >> "$GITHUB_STEP_SUMMARY"
-          echo '- /health + /ready: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- /health + /ready + /release exact SHA: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Better Auth sign-in + session HTTP smoke: passed' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Browser E2E and edge:check: intentionally not repeated; covered by Quality' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Browser E2E: passed against the exact published SHA' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Exact SHA rechecked after browser E2E: passed' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish auditable result to authorization issue
         if: always()
@@ -205,4 +249,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Fast staging promotion result\n\n- Release-SHA: \`$RELEASE_SHA\`\n- Result: **$JOB_STATUS**\n- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\n\nProduction remains separately gated."
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Full staging certification result\n\n- Release-SHA: \`$RELEASE_SHA\`\n- Result: **$JOB_STATUS**\n- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\n\nProduction remains separately gated."
