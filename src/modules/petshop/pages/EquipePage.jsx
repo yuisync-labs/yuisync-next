@@ -597,7 +597,7 @@ export default function EquipePage() {
               <CheckCircle size={18} className="mt-0.5 text-emerald-400" />
               <div>
                 <p className="font-semibold text-text">Somente servicos de estetica entram na comissao</p>
-                <p className="mt-1 text-sm text-muted">Tosa 10%. Banho e demais servicos 5%. Pacotes usam o valor liquido por unidade; o valor integral do MotoDog e retirado antes da divisao. Transporte e entrega nao entram na comissao da esteticista.</p>
+                <p className="mt-1 text-sm text-muted">As comissões seguem as regras configuradas no catálogo e preservam as taxas registradas na conclusão de cada serviço. Pacotes usam o valor líquido por unidade, descontado o transporte antes da divisão.</p>
               </div>
             </div>
           </div>

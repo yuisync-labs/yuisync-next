@@ -30,3 +30,10 @@ export function normalizeCompatChatSession(
 ): CompatChatSessionCanonical
 export function handleCompatApiRequest(request: Request, env: CompatRuntimeBindings): Promise<Response | null>
 export const COMPAT_TABLE_NAMES: readonly string[]
+export function selectRows(
+  db: Pick<D1Database, 'prepare'>,
+  table: string,
+  config: { read: string; global?: boolean },
+  body: Record<string, unknown>,
+  scope: CompatChatScope,
+): Promise<{ rows: Record<string, unknown>[]; count: number | null }>

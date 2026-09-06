@@ -126,6 +126,7 @@ export default function LoginPage() {
             </div>
 
             {err && <p role="alert" className="ys-login-error">{err}</p>}
+            <Link to="/recuperar-senha" className="ys-account-back">Esqueci minha senha</Link>
 
             <button type="submit" disabled={loading} className="ys-login-submit">
               <span>{loading ? 'Conectando...' : 'Entrar no YuiSync'}</span>

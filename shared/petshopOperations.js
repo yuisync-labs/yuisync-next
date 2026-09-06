@@ -45,7 +45,6 @@ export function normalizeOperationalStaff(value = DEFAULT_PETSHOP_OPERATIONAL_ST
   const rows = Array.isArray(value) ? value : DEFAULT_PETSHOP_OPERATIONAL_STAFF
   const seen = new Set()
   return rows
-    .slice(0, 4)
     .map((item, index) => {
       const fallback = DEFAULT_PETSHOP_OPERATIONAL_STAFF[index]
       const rawKey = clean(item?.key || item?.id || fallback?.key || `esteticista-${index + 1}`)
@@ -65,10 +64,9 @@ export function normalizeOperationalStaff(value = DEFAULT_PETSHOP_OPERATIONAL_ST
 }
 
 export function normalizeDeliveryStaff(value = DEFAULT_PETSHOP_DELIVERY_STAFF) {
-  const rows = Array.isArray(value) && value.length ? value : DEFAULT_PETSHOP_DELIVERY_STAFF
+  const rows = Array.isArray(value) ? value : DEFAULT_PETSHOP_DELIVERY_STAFF
   const seen = new Set()
   return rows
-    .slice(0, 4)
     .map((item, index) => {
       const fallback = DEFAULT_PETSHOP_DELIVERY_STAFF[index]
       const rawKey = clean(item?.key || item?.id || fallback?.key || `motoboy-${index + 1}`)

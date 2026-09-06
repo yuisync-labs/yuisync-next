@@ -1,4 +1,5 @@
 import { getAuthDatabaseReadiness } from './auth/authDatabaseFeature'
+import { recoveryEmailConfigured } from './auth/passwordRecoveryEmail'
 import { CoordinationDurableObject } from './coordination/coordinationDurableObject'
 import { hasCoordinationBinding, isEdgeCoordinationEnabled } from './coordination/coordinationFeature'
 import { hasD1Binding, isEdgeDatabaseEnabled } from './databaseFeature'
@@ -64,6 +65,7 @@ export type FinalReadinessBindings={
   EDGE_COORDINATION_ENABLED?:string;COORDINATOR?:DurableObjectNamespace<CoordinationDurableObject>;
   EDGE_BETTER_AUTH_ENABLED?:string;AUTH_DB?:D1Database;BETTER_AUTH_SECRET?:string;
   EDGE_OPERATIONAL_MIGRATION_ENABLED?:string;EDGE_AUTH_MIGRATION_ENABLED?:string;
+  AUTH_EMAIL_API_KEY?:string;AUTH_EMAIL_FROM?:string;
 }
 
 function sqlLiteral(value: string): string {
@@ -111,7 +113,7 @@ async function mainSchema(database:D1Database|undefined){
 }
 async function authSchema(database:D1Database|undefined){
   if(!database)return'not_configured'
-  try{const result=await database.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('user','session','account','verification') ORDER BY name").all<{name:string}>();return result.results.map((r)=>r.name).sort().join(',')==='account,session,user,verification'?'ready':'incomplete'}catch{return'unavailable'}
+  try{const result=await database.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('user','session','account','verification','rateLimit') ORDER BY name").all<{name:string}>();return result.results.map((r)=>r.name).sort().join(',')==='account,rateLimit,session,user,verification'?'ready':'incomplete'}catch{return'unavailable'}
 }
 
 export async function handleFinalReadiness(request:Request,bindings:FinalReadinessBindings):Promise<Response|null>{
@@ -133,7 +135,7 @@ export async function handleFinalReadiness(request:Request,bindings:FinalReadine
   return Response.json({
     service:bindings.SERVICE_NAME,environment:bindings.APP_ENV,release_channel:bindings.RELEASE_CHANNEL,request_id:requestId,status:ready?'ready':'not_ready',
     checks:{database:main.status,schema_version:main.version,schema_capabilities:main.capabilities,auth_database:authConfig==='configured'&&authCore==='ready'?'configured':authCore,
-      coordination,better_auth:authEnabled?'enabled':'disabled',migration_capabilities:migrationClosed?'closed':'open'},
+      coordination,better_auth:authEnabled?'enabled':'disabled',migration_capabilities:migrationClosed?'closed':'open',password_recovery:recoveryEmailConfigured(bindings)?'configured':'not_configured'},
     missing_schema_capabilities:main.missingCapabilities,
   },{status:ready?200:503,headers:{'cache-control':'no-store','x-request-id':requestId,'x-content-type-options':'nosniff','referrer-policy':'no-referrer'}})
 }

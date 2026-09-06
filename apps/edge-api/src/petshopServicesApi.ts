@@ -1,4 +1,5 @@
-import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import { type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import { authorizeOperation } from './operationAuthorization'
 
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 
@@ -30,7 +31,6 @@ type ServiceRow = {
 }
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
-const MODULE = /^[a-z0-9][a-z0-9_-]{0,63}$/
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
   return Response.json(body, {
@@ -53,46 +53,10 @@ function optionalNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : Number.NaN
 }
 
-function hasModuleAccess(role: string, rawPermissions: string, moduleId: string): boolean {
-  if (role === 'owner' || role === 'admin') return true
-  try {
-    const permissions = JSON.parse(rawPermissions || '{}') as Record<string, unknown>
-    return permissions['*'] === true
-      || permissions[moduleId] === true
-      || Boolean(permissions[moduleId] && typeof permissions[moduleId] === 'object')
-  } catch {
-    return false
-  }
-}
-
 async function resolveScope(request: Request, bindings: Bindings): Promise<{ scope?: Scope; error?: Response }> {
-  if (!bindings.DB) return { error: json({ code: 'DATABASE_NOT_CONFIGURED' }, 503) }
-
-  const tenantId = text(request.headers.get('x-tenant-id'))
-  const moduleId = text(request.headers.get('x-module-id'))?.toLowerCase() || null
-  if (!tenantId || !moduleId || !ID.test(tenantId) || !MODULE.test(moduleId)) {
-    return { error: json({ code: 'INVALID_SCOPE' }, 400) }
-  }
-
-  const session = await getBetterAuthSession(request, bindings)
-  const userId = text(session?.user?.id)
-  if (!userId) return { error: json({ code: 'UNAUTHENTICATED' }, 401) }
-
-  const principal = await bindings.DB
-    .prepare("SELECT id FROM identity_principals WHERE provider='better-auth' AND subject=?1 AND status='active' LIMIT 1")
-    .bind(userId)
-    .first<{ id: string }>()
-  if (!principal?.id) return { error: json({ code: 'FORBIDDEN' }, 403) }
-
-  const membership = await bindings.DB
-    .prepare("SELECT role,module_permissions_json FROM tenant_memberships WHERE tenant_id=?1 AND principal_id=?2 AND status='active' LIMIT 1")
-    .bind(tenantId, principal.id)
-    .first<{ role: string; module_permissions_json: string }>()
-  if (!membership || !hasModuleAccess(membership.role, membership.module_permissions_json, moduleId)) {
-    return { error: json({ code: 'FORBIDDEN' }, 403) }
-  }
-
-  return { scope: { tenantId, moduleId } }
+  const error = await authorizeOperation(request, bindings, request.method === 'GET' ? 'operational' : 'administrative')
+  if (error) return { error }
+  return { scope: { tenantId: request.headers.get('x-tenant-id')!, moduleId: 'petshop' } }
 }
 
 function servicePayload(row: ServiceRow) {

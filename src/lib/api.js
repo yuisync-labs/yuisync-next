@@ -50,11 +50,17 @@ export function getAppSettings({ tenantId, moduleId }) {
   return apiRequest(`/app/settings?${params.toString()}`, { method: 'GET' })
 }
 
-export function createAppTenant(name) {
-  return apiRequest('/app/tenants', {
+export async function createAppTenant(name) {
+  const storageKey = `@yuisync-tenant-creation:${name}`
+  const operationKey = sessionStorage.getItem(storageKey) || crypto.randomUUID()
+  sessionStorage.setItem(storageKey, operationKey)
+  const result = await apiRequest('/app/tenants', {
     method: 'POST',
+    headers: { 'idempotency-key': operationKey },
     body: JSON.stringify({ name }),
   })
+  sessionStorage.removeItem(storageKey)
+  return result
 }
 
 export function checkoutPetshop(payload) {

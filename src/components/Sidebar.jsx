@@ -199,9 +199,9 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
               {(profile?.full_name || profile?.email || '?')[0].toUpperCase()}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-semibold text-text">
+              <NavLink to="/minha-conta" title="Minha conta e senha" className="block truncate text-xs font-semibold text-text hover:underline">
                 {profile?.full_name || profile?.email || 'Usuário'}
-              </p>
+              </NavLink>
               <p className="truncate text-[10px] text-muted">
                 {isAdminGlobal ? (
                   <span className="flex items-center gap-1">
@@ -225,6 +225,9 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
               <LogOut size={14} />
             </button>
           </Card>
+          {!expandedContentVisible && (
+            <NavLink to="/minha-conta" title="Minha conta e senha" aria-label="Minha conta e senha" className="hidden rounded-lg border border-[var(--border2)] p-2 text-center text-xs text-text lg:block">Conta</NavLink>
+          )}
           {!expandedContentVisible && (
             <div className="hidden h-10 w-full grid-cols-2 overflow-hidden rounded-xl border border-[var(--border2)] text-muted lg:grid">
               <button

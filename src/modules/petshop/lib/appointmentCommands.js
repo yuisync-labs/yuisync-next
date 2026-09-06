@@ -1,4 +1,5 @@
 import { isVisualPreviewSession } from '../../../lib/visualPreview'
+import { runVisualPreviewQuery, runVisualPreviewRpc } from '../../../lib/visualPreviewData'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 
@@ -51,8 +52,58 @@ export async function assignAppointmentResponsibleCommand({
 
 async function appointmentRequest(path, { tenantId, moduleId = 'petshop', method = 'GET', body } = {}) {
   if (isVisualPreviewSession()) {
-    if (method === 'GET') return method === 'GET' && path === '' ? { appointments: [] } : { appointment: null }
-    throw commandError({ code: 'VISUAL_PREVIEW_READ_ONLY' }, 409)
+    const normalizedMethod = method.toUpperCase()
+    const url = new URL(path || '', 'https://preview.yuisync.local')
+    const appointmentId = url.pathname.replace(/^\//, '')
+
+    if (normalizedMethod === 'GET') {
+      const filters = appointmentId
+        ? [{ op: 'eq', column: 'id', value: decodeURIComponent(appointmentId) }]
+        : [
+            ['scheduled_at', 'gte', url.searchParams.get('start')],
+            ['scheduled_at', 'lte', url.searchParams.get('end')],
+            ['status', 'eq', url.searchParams.get('status')],
+            ['service_type', 'eq', url.searchParams.get('service_type')],
+            ['employee_id', 'eq', url.searchParams.get('employee_id')],
+          ].filter(([, , value]) => value).map(([column, op, value]) => ({ column, op, value }))
+      const result = runVisualPreviewQuery({ table: 'appointments', filters, orders: [{ column: 'scheduled_at', ascending: true }] })
+      return appointmentId ? { appointment: result.data?.[0] || null } : { appointments: result.data || [] }
+    }
+
+    if (normalizedMethod === 'POST' && !appointmentId) {
+      const result = runVisualPreviewRpc({
+        name: 'book_petshop_appointment_transaction',
+        args: { p_payload: { ...body, tenant_id: tenantId, module_id: moduleId } },
+      })
+      const created = runVisualPreviewQuery({
+        table: 'appointments',
+        filters: [{ op: 'eq', column: 'id', value: result.data?.appointment_id }],
+      })
+      return { appointment: created.data?.[0] || null }
+    }
+
+    if (normalizedMethod === 'PATCH' && appointmentId) {
+      runVisualPreviewRpc({
+        name: 'update_petshop_appointment_transaction',
+        args: { p_appointment_id: decodeURIComponent(appointmentId), p_payload: body || {} },
+      })
+      const updated = runVisualPreviewQuery({
+        table: 'appointments',
+        filters: [{ op: 'eq', column: 'id', value: decodeURIComponent(appointmentId) }],
+      })
+      return { appointment: updated.data?.[0] || null }
+    }
+
+    if (normalizedMethod === 'DELETE' && appointmentId) {
+      runVisualPreviewQuery({
+        table: 'appointments',
+        action: 'delete',
+        filters: [{ op: 'eq', column: 'id', value: decodeURIComponent(appointmentId) }],
+      })
+      return { deleted: true, id: decodeURIComponent(appointmentId) }
+    }
+
+    throw commandError({ code: 'VISUAL_PREVIEW_UNSUPPORTED_OPERATION' }, 409)
   }
   const response = await fetch(`${API_BASE}/petshop/appointments${path}`, {
     method,

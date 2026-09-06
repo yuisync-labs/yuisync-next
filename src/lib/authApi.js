@@ -1,5 +1,16 @@
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 
+export async function passwordAction(action, values) {
+  if (!['change-password', 'request-password-reset', 'reset-password'].includes(action)) throw new Error('Operação inválida.')
+  const { response, payload } = await request(`/auth/${action}`, { method: 'POST', body: JSON.stringify(values) })
+  if (!response.ok) {
+    if (response.status === 429) throw new Error('Muitas tentativas. Aguarde alguns minutos e tente novamente.')
+    if (payload?.code === 'RECOVERY_UNAVAILABLE') throw new Error('Recuperação indisponível. Entre em contato com o suporte.')
+    throw new Error(action === 'change-password' ? 'Não foi possível alterar a senha. Confira a senha atual.' : 'Não foi possível concluir. Confira os dados ou solicite um novo link.')
+  }
+  return payload
+}
+
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,

@@ -19,6 +19,7 @@ import { PackageRecurringScheduleEnhancer } from '../modules/petshop/components/
 import { DashboardAgendaLabelsEnhancer } from '../modules/petshop/components/DashboardAgendaLabelsEnhancer'
 
 const LoginPage = lazy(() => import('../shared/pages/LoginPage'))
+const AccountPasswordPage = lazy(() => import('../shared/pages/AccountPasswordPage'))
 const LauncherPage = lazy(() => import('../shared/pages/LauncherPage'))
 const PublicHomePage = lazy(() => import('../public/pages/PublicHomePage'))
 const PublicSalesPage = lazy(() => import('../public/pages/PublicSalesPage'))
@@ -187,6 +188,7 @@ function PublicRoutes({ authenticated = false }) {
   return (
     <>
       <Route path="/privacidade" element={<PublicLegalPage documentKey="privacidade" />} />
+      <Route path="/recuperar-senha" element={<AccountPasswordPage recovery />} />
       <Route path="/termos" element={<PublicLegalPage documentKey="termos" />} />
       <Route path="/exclusao-de-dados" element={<PublicLegalPage documentKey="exclusao" />} />
       <Route path="/site" element={<PublicHomePage isAuthenticated={authenticated || undefined} />} />
@@ -225,6 +227,7 @@ export function AppRouter() {
         <Route path="/" element={<LauncherPage />} />
         {PublicRoutes({ authenticated: true })}
         <Route path="/entrar" element={<Navigate to="/" replace />} />
+        <Route path="/minha-conta" element={<AccountPasswordPage />} />
         <Route path="/:moduleId/*" element={<AppLayout />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

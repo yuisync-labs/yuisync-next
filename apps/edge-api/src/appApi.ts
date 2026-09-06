@@ -185,8 +185,8 @@ async function settings(request: Request, bindings: AppApiBindings): Promise<Res
   if (!tenantId || !moduleId) return json({ code: 'INVALID_SCOPE' }, 400)
 
   const membership = await bindings.DB!.prepare(`
-    SELECT 1 FROM tenant_memberships
-    WHERE tenant_id=?1 AND principal_id=?2 AND status='active'
+    SELECT 1 FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id
+    WHERE m.tenant_id=?1 AND m.principal_id=?2 AND m.status='active' AND t.status='active'
   `).bind(tenantId, resolved.principal.id).first()
   if (!membership) return json({ code: 'FORBIDDEN' }, 403)
 
@@ -254,26 +254,40 @@ async function managedUsers(
   })
 }
 
-async function createTenant(request: Request, bindings: AppApiBindings): Promise<Response> {
-  const resolved = await resolvePrincipal(request, bindings)
+async function createTenant(request: Request, bindings: AppApiBindings, dependencies: AppApiDependencies): Promise<Response> {
+  const resolved = await resolvePrincipal(request, bindings, dependencies.getSession)
   if (!resolved.ok) return resolved.error
+  const access = await bindings.DB!.prepare(`SELECT 1 FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id
+    WHERE m.principal_id=?1 AND m.status='active' AND t.status='active' AND m.role IN ('owner','admin') LIMIT 1`)
+    .bind(resolved.principal.id).first()
+  if (!access) return json({ code: 'FORBIDDEN' }, 403)
+  const operationKey = request.headers.get('idempotency-key') || ''
+  if (!/^[A-Za-z0-9_-]{16,100}$/.test(operationKey)) return json({ code: 'IDEMPOTENCY_KEY_REQUIRED' }, 400)
   let body: { name?: unknown } = {}
   try { body = await request.json() as { name?: unknown } } catch { return json({ code: 'INVALID_JSON' }, 400) }
   const name = String(body.name ?? '').trim()
   if (!name || name.length > 160) return json({ code: 'INVALID_NAME' }, 400)
 
-  const id = crypto.randomUUID()
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${resolved.principal.id}:${operationKey}`))
+  const id = `tenant-${Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
   const slugBase = slugify(name) || `tenant-${id.slice(0, 8)}`
-  const slug = `${slugBase}-${id.slice(0, 8)}`
+  const slug = `${slugBase}-${id.slice(-12)}`
   const now = Date.now()
+  const existing = await bindings.DB!.prepare('SELECT name,slug FROM tenants WHERE id=?1').bind(id).first<{ name: string; slug: string }>()
+  if (existing && existing.name !== name) return json({ code: 'IDEMPOTENCY_CONFLICT' }, 409)
+  if (existing) return json({ id, name: existing.name, slug: existing.slug, role: 'owner', enabled_modules: ['petshop'], module_permissions: { petshop: { role: 'admin_pet' } } })
   await bindings.DB!.batch([
-    bindings.DB!.prepare(`INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,'active',?4,?4)`)
+    bindings.DB!.prepare(`INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,'active',?4,?4) ON CONFLICT(id) DO NOTHING`)
       .bind(id, slug, name, now),
-    bindings.DB!.prepare(`INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'active',?3,?3,'owner','{"petshop":{"role":"admin_pet"}}')`)
+    bindings.DB!.prepare(`INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'active',?3,?3,'owner','{"petshop":{"role":"admin_pet"}}') ON CONFLICT DO NOTHING`)
       .bind(id, resolved.principal.id, now),
-    bindings.DB!.prepare(`INSERT INTO tenant_module_settings(tenant_id,module_id,store_name,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,?3,?3)`)
+    bindings.DB!.prepare(`INSERT INTO tenant_module_settings(tenant_id,module_id,store_name,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,?3,?3) ON CONFLICT DO NOTHING`)
       .bind(id, name, now),
+    bindings.DB!.prepare(`INSERT INTO module_settings_extensions(tenant_id,module_id,data_json,updated_at_ms) VALUES(?1,'petshop',?2,?3) ON CONFLICT DO NOTHING`)
+      .bind(id, JSON.stringify({ veterinary_name: 'Veterinário responsável', petshop_operational_staff: [], petshop_delivery_staff: [], message_templates: { __petshop_operational_staff: [], __petshop_delivery_staff: [] } }), now),
   ])
+  const saved = await bindings.DB!.prepare('SELECT name FROM tenants WHERE id=?1').bind(id).first<{ name: string }>()
+  if (saved?.name !== name) return json({ code: 'IDEMPOTENCY_CONFLICT' }, 409)
   return json({ id, name, slug, role: 'owner', enabled_modules: ['petshop'], module_permissions: { petshop: { role: 'admin_pet' } } }, 201)
 }
 
@@ -285,7 +299,7 @@ export async function handleAppApiRequest(
   const { pathname } = new URL(request.url)
   if (pathname === '/api/app/bootstrap' && request.method === 'GET') return bootstrap(request, bindings)
   if (pathname === '/api/app/settings' && request.method === 'GET') return settings(request, bindings)
-  if (pathname === '/api/app/tenants' && request.method === 'POST') return createTenant(request, bindings)
+  if (pathname === '/api/app/tenants' && request.method === 'POST') return createTenant(request, bindings, dependencies)
   if (pathname === '/api/admin/users' && request.method === 'GET') return managedUsers(request, bindings, dependencies)
   if (pathname === '/api/admin/users') return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET' })
   if (pathname.startsWith('/api/app/')) return json({ code: 'NOT_FOUND' }, 404)

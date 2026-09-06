@@ -1,3 +1,13 @@
+.ys-account-shell { min-height: 100svh; background: #f3f3f1; color: #18181b; padding: 40px 20px; display: grid; place-items: center; }
+.ys-account-card { width: min(100%, 480px); padding: clamp(24px, 4vw, 40px); background: white; border: 1px solid #d4d4d8; border-radius: 20px; }
+.ys-account-card h1 { font-size: 28px; font-weight: 700; margin: 24px 0 12px; }
+.ys-account-card > p { color: #52525b; margin-bottom: 24px; }
+.ys-account-back { color: #3f3f46; text-decoration: underline; }
+.ys-account-field { display: grid; gap: 8px; font-size: 14px; font-weight: 500; }
+.ys-account-field + .ys-account-field { margin-top: 20px; }
+.ys-account-field input { min-width: 0; width: 100%; border: 1px solid #a1a1aa; border-radius: 8px; padding: 12px; background: #fff; color: #18181b; }
+.ys-account-field input:focus-visible, .ys-account-back:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+.ys-account-success { padding: 12px; background: #ecfdf5; color: #065f46; border: 1px solid #6ee7b7; border-radius: 8px; }
 .ys-login-shell {
   min-height: 100vh;
   min-height: 100svh;
