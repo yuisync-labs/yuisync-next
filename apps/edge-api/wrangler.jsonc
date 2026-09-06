@@ -22,7 +22,8 @@
       "/api/*",
       "/internal/*",
       "/health",
-      "/ready"
+      "/ready",
+      "/release"
     ]
   },
   "vars": {

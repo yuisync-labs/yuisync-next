@@ -10,6 +10,7 @@ import { handleAppointmentBillingIntentCompat } from './appointmentBillingIntent
 import { handleAppointmentFinancialReopenApi } from './appointmentFinancialReopenApi'
 import { handleAppointmentResponsibleAssignmentApi } from './appointmentResponsibleAssignmentApi'
 import { handlePetshopAppointmentsApiRequest } from './petshopAppointmentsApi'
+import { handlePetshopCashApiRequest } from './petshopCashApi'
 import { handlePetshopClientsApiRequest } from './petshopClientsApi'
 import { handleCheckoutApiRequest } from './checkoutApi'
 import { handleCompatApiRequest } from './compatApi'
@@ -25,6 +26,7 @@ import { handlePetshopPlansApiRequest } from './petshopPlansApi'
 import { handlePetshopServicesApiRequest } from './petshopServicesApi'
 import { handleAsyncQueue } from './queueHandler'
 import { handleRealtimeApiRequest, scheduleRealtimeInvalidation } from './realtimeApi'
+import { handleReleaseIdentity } from './releaseIdentity'
 import type { EdgeAppEnvironment } from './types'
 import { handleWhatsappApiRequest } from './whatsappApi'
 import { handleWhatsappDeliveryStatusRequest } from './whatsappDeliveryStatusApi'
@@ -45,6 +47,9 @@ async function dispatch(request: Request, env: EdgeEnv, context: ExecutionContex
       if (mutationProbe) scheduleRealtimeInvalidation(mutationProbe, response.clone(), bindings, context)
       return response
     }
+
+    const releaseIdentityResponse = handleReleaseIdentity(request, bindings)
+    if (releaseIdentityResponse) return respond(releaseIdentityResponse)
 
     const readinessResponse = await handleFinalReadiness(request, bindings)
     if (readinessResponse) return respond(readinessResponse)
@@ -99,6 +104,9 @@ async function dispatch(request: Request, env: EdgeEnv, context: ExecutionContex
 
     const inventoryAdjustmentResponse = await handleInventoryAdjustmentRequest(request, bindings)
     if (inventoryAdjustmentResponse) return respond(inventoryAdjustmentResponse)
+
+    const petshopCashResponse = await handlePetshopCashApiRequest(request, bindings)
+    if (petshopCashResponse) return respond(petshopCashResponse)
 
     const petshopPlansResponse = await handlePetshopPlansApiRequest(request, bindings)
     if (petshopPlansResponse) return respond(petshopPlansResponse)
