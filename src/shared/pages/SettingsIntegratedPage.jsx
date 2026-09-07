@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Building2, Image as ImageIcon, Printer, RefreshCw, Save, Trash2, Upload } from 'lucide-react'
+import { Card, CardContent } from '../../components/ui/Card'
 import SettingsPage from './SettingsPage'
 import { useAuthCtx } from '../../context/AuthContext'
 import { useModuleCtx } from '../../context/ModuleContext'
@@ -199,56 +200,58 @@ function CompanySettingsSection() {
         <h3 className="text-xs font-black text-muted uppercase tracking-[0.2em] flex items-center gap-2">
           <Building2 size={14}/> Empresa e comprovantes
         </h3>
-        <div className="bg-card border border-white/5 rounded-3xl p-8 shadow-sm space-y-6">
-          <div>
-            <h4 className="font-bold text-text">Identidade desta empresa</h4>
-            <p className="text-xs text-muted mt-1">Nome, contato, identificacao, logo e formato usados nos comprovantes. Os dados sao isolados por empresa.</p>
-          </div>
+        <Card className="shadow-sm">
+          <CardContent className="p-8 space-y-6">
+            <div>
+              <h4 className="font-bold text-text">Identidade desta empresa</h4>
+              <p className="text-xs text-muted mt-1">Nome, contato, identificacao, logo e formato usados nos comprovantes. Os dados sao isolados por empresa.</p>
+            </div>
 
-          {loading ? (
-            <div className="flex items-center gap-2 text-sm text-muted"><RefreshCw size={15} className="animate-spin"/> Carregando empresa...</div>
-          ) : (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <div><label className="inp-label">Nome exibido</label><input className="inp" disabled={!canEdit || saving} value={form.business_name} placeholder={activeTenant?.name || 'Estabelecimento'} onChange={(event) => updateField('business_name', event.target.value)}/></div>
-                <div><label className="inp-label">Telefone</label><input className="inp" disabled={!canEdit || saving} value={form.business_phone} placeholder="Opcional" onChange={(event) => updateField('business_phone', event.target.value)}/></div>
-                <div className="md:col-span-2"><label className="inp-label">Endereco</label><input className="inp" disabled={!canEdit || saving} value={form.business_address} placeholder="Endereco exibido no comprovante" onChange={(event) => updateField('business_address', event.target.value)}/></div>
-                <div><label className="inp-label">E-mail</label><input className="inp" type="email" disabled={!canEdit || saving} value={form.business_email} placeholder="contato@empresa.com" onChange={(event) => updateField('business_email', event.target.value)}/></div>
-                <div><label className="inp-label">CPF / CNPJ</label><input className="inp" disabled={!canEdit || saving} value={form.business_tax_id} placeholder="Opcional" onChange={(event) => updateField('business_tax_id', event.target.value)}/></div>
-                <div className="md:col-span-2"><label className="inp-label">Rodape do comprovante</label><textarea className="inp min-h-24 resize-y" disabled={!canEdit || saving} value={form.receipt_footer} placeholder="Mensagem opcional" onChange={(event) => updateField('receipt_footer', event.target.value)}/></div>
-              </div>
+            {loading ? (
+              <div className="flex items-center gap-2 text-sm text-muted"><RefreshCw size={15} className="animate-spin"/> Carregando empresa...</div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div><label className="inp-label">Nome exibido</label><input className="inp" disabled={!canEdit || saving} value={form.business_name} placeholder={activeTenant?.name || 'Estabelecimento'} onChange={(event) => updateField('business_name', event.target.value)}/></div>
+                  <div><label className="inp-label">Telefone</label><input className="inp" disabled={!canEdit || saving} value={form.business_phone} placeholder="Opcional" onChange={(event) => updateField('business_phone', event.target.value)}/></div>
+                  <div className="md:col-span-2"><label className="inp-label">Endereco</label><input className="inp" disabled={!canEdit || saving} value={form.business_address} placeholder="Endereco exibido no comprovante" onChange={(event) => updateField('business_address', event.target.value)}/></div>
+                  <div><label className="inp-label">E-mail</label><input className="inp" type="email" disabled={!canEdit || saving} value={form.business_email} placeholder="contato@empresa.com" onChange={(event) => updateField('business_email', event.target.value)}/></div>
+                  <div><label className="inp-label">CPF / CNPJ</label><input className="inp" disabled={!canEdit || saving} value={form.business_tax_id} placeholder="Opcional" onChange={(event) => updateField('business_tax_id', event.target.value)}/></div>
+                  <div className="md:col-span-2"><label className="inp-label">Rodape do comprovante</label><textarea className="inp min-h-24 resize-y" disabled={!canEdit || saving} value={form.receipt_footer} placeholder="Mensagem opcional" onChange={(event) => updateField('receipt_footer', event.target.value)}/></div>
+                </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_240px] gap-5 border-t border-white/5 pt-6">
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2"><ImageIcon size={16} className="text-emerald-400"/><div><h4 className="font-bold text-text">Logo do comprovante</h4><p className="text-xs text-muted">Sem logo configurada, o comprovante imprime apenas os dados da empresa.</p></div></div>
-                  <div className="flex flex-wrap gap-3">
-                    <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile}/>
-                    <button type="button" className="btn btn-secondary gap-2" disabled={!canEdit || processingLogo || saving} onClick={() => fileRef.current?.click()}><Upload size={14}/>{processingLogo ? 'Preparando...' : 'Enviar logo'}</button>
-                    <button type="button" className="btn btn-secondary gap-2" disabled={!canEdit || !form.logo_url || processingLogo || saving} onClick={() => updateField('logo_url', '')}><Trash2 size={14}/> Remover</button>
+                <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_240px] gap-5 border-t border-white/5 pt-6">
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2"><ImageIcon size={16} className="text-emerald-400"/><div><h4 className="font-bold text-text">Logo do comprovante</h4><p className="text-xs text-muted">Sem logo configurada, o comprovante imprime apenas os dados da empresa.</p></div></div>
+                    <div className="flex flex-wrap gap-3">
+                      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile}/>
+                      <button type="button" className="btn btn-secondary gap-2" disabled={!canEdit || processingLogo || saving} onClick={() => fileRef.current?.click()}><Upload size={14}/>{processingLogo ? 'Preparando...' : 'Enviar logo'}</button>
+                      <button type="button" className="btn btn-secondary gap-2" disabled={!canEdit || !form.logo_url || processingLogo || saving} onClick={() => updateField('logo_url', '')}><Trash2 size={14}/> Remover</button>
+                    </div>
+                    <p className="text-[11px] text-muted">PNG, JPG ou WEBP. A imagem e normalizada para impressao e salva somente neste tenant.</p>
                   </div>
-                  <p className="text-[11px] text-muted">PNG, JPG ou WEBP. A imagem e normalizada para impressao e salva somente neste tenant.</p>
+                  <div className="flex min-h-[116px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white p-4">
+                    {form.logo_url ? <img src={form.logo_url} alt="Preview da logo do comprovante" className="max-h-24 max-w-full object-contain"/> : <span className="text-center text-xs font-bold uppercase tracking-widest text-gray-500">Sem logo</span>}
+                  </div>
                 </div>
-                <div className="flex min-h-[116px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white p-4">
-                  {form.logo_url ? <img src={form.logo_url} alt="Preview da logo do comprovante" className="max-h-24 max-w-full object-contain"/> : <span className="text-center text-xs font-bold uppercase tracking-widest text-gray-500">Sem logo</span>}
+
+                <div className="border-t border-white/5 pt-6 space-y-3">
+                  <div className="flex items-center gap-2"><Printer size={16}/><div><h4 className="font-bold text-text">Formato padrao</h4><p className="text-xs text-muted">A previa permite alternar o formato sem alterar este padrao.</p></div></div>
+                  <div className="grid grid-cols-3 gap-3 max-w-xl">
+                    {[['58', '58mm'], ['80', '80mm'], ['a4', 'A4 / PDF']].map(([format, label]) => <button key={format} type="button" disabled={!canEdit || saving} onClick={() => updateField('receipt_format', format)} className={`px-4 py-4 rounded-2xl border text-sm font-bold transition-all ${form.receipt_format === format ? 'bg-emerald-400 border-transparent text-gray-950 shadow-lg' : 'bg-white/5 border-white/5 text-muted hover:bg-white/10'}`}>{label}</button>)}
+                  </div>
                 </div>
-              </div>
 
-              <div className="border-t border-white/5 pt-6 space-y-3">
-                <div className="flex items-center gap-2"><Printer size={16}/><div><h4 className="font-bold text-text">Formato padrao</h4><p className="text-xs text-muted">A previa permite alternar o formato sem alterar este padrao.</p></div></div>
-                <div className="grid grid-cols-3 gap-3 max-w-xl">
-                  {[['58', '58mm'], ['80', '80mm'], ['a4', 'A4 / PDF']].map(([format, label]) => <button key={format} type="button" disabled={!canEdit || saving} onClick={() => updateField('receipt_format', format)} className={`px-4 py-4 rounded-2xl border text-sm font-bold transition-all ${form.receipt_format === format ? 'bg-emerald-400 border-transparent text-gray-950 shadow-lg' : 'bg-white/5 border-white/5 text-muted hover:bg-white/10'}`}>{label}</button>)}
+                <div className="flex flex-wrap items-center gap-3 border-t border-white/5 pt-6">
+                  <button type="button" className="btn btn-primary gap-2" disabled={!canEdit || saving || processingLogo || dirtyFields.size === 0} onClick={() => void save()}>{saving ? <RefreshCw size={14} className="animate-spin"/> : <Save size={14}/>} {saving ? 'Salvando...' : 'Salvar identidade e comprovantes'}</button>
+                  {!canEdit && <span className="text-xs text-muted">Somente administradores autorizados podem alterar estes dados.</span>}
                 </div>
-              </div>
+              </>
+            )}
 
-              <div className="flex flex-wrap items-center gap-3 border-t border-white/5 pt-6">
-                <button type="button" className="btn btn-primary gap-2" disabled={!canEdit || saving || processingLogo || dirtyFields.size === 0} onClick={() => void save()}>{saving ? <RefreshCw size={14} className="animate-spin"/> : <Save size={14}/>} {saving ? 'Salvando...' : 'Salvar identidade e comprovantes'}</button>
-                {!canEdit && <span className="text-xs text-muted">Somente administradores autorizados podem alterar estes dados.</span>}
-              </div>
-            </>
-          )}
-
-          {message.text && <p className={`rounded-xl border px-3 py-2 text-xs font-semibold ${message.type === 'success' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-red-500/20 bg-red-500/10 text-red-300'}`}>{message.text}</p>}
-        </div>
+            {message.text && <p className={`rounded-xl border px-3 py-2 text-xs font-semibold ${message.type === 'success' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-red-500/20 bg-red-500/10 text-red-300'}`}>{message.text}</p>}
+          </CardContent>
+        </Card>
       </div>
     </section>
   )
