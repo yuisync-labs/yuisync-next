@@ -3,7 +3,7 @@
   "policy": "frontend-supabase-compat-ratchet",
   "generated_from": "src/**/*.{js,jsx,ts,tsx}",
   "totals": {
-    "from": 207,
+    "from": 206,
     "rpc": 11
   },
   "files": {
@@ -121,10 +121,6 @@
     },
     "src/shared/pages/LogsPage.jsx": {
       "from": 2,
-      "rpc": 0
-    },
-    "src/shared/pages/SettingsIntegratedPage.jsx": {
-      "from": 1,
       "rpc": 0
     },
     "src/shared/pages/SettingsPage.jsx": {

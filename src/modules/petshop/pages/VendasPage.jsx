@@ -15,6 +15,7 @@ import { fmtCurrency, todayISO } from '../../../lib/supabase'
 import { normalizeDeliveryStaff, PETSHOP_DELIVERY_STAFF_TEMPLATE_KEY } from '../../../../shared/petshopOperations'
 import { assignSaleDeliveryStaff } from '../lib/deliveryOperations'
 import { printThermalReceipt } from '../../../lib/thermalPrint'
+import { escapeReceiptHtml, openReceiptPreview } from '../../../lib/receiptPrint'
 import { ProductCategorySelect } from '../../../components/ProductCategorySelect'
 import { BASE_PRODUCT_CATEGORIES, resolveCategoryMeta } from '../../../shared/lib/productCategories'
 import './VendasPage.css'
@@ -349,64 +350,28 @@ function SuccessModal({ sale, onClose, onIssueFiscal, issuingFiscal }) {
   })()
 
   const handlePrint = () => {
-    const printWindow = window.open('', '_blank')
-    if (!printWindow) return
-    const date = new Date().toLocaleString('pt-BR')
-    const addr = [
-      storeSettings?.store_address,
-      storeSettings?.store_neighborhood,
-      storeSettings?.store_city
-    ].filter(Boolean).join(' - ')
-
-    const receiptHtml = `
-      <html>
-        <head>
-          <style>
-            @page { margin: 0; }
-            * { box-sizing: border-box; }
-            html, body { width: 80mm; height: auto !important; min-height: 0 !important; margin: 0; padding: 0; overflow: visible; }
-            body { font-family: 'Courier New', Courier, monospace; padding: 6px; color: #000; }
-            .receipt { width: 100%; height: auto; min-height: 0; break-after: avoid-page; page-break-after: avoid; }
-            @media print { html, body { height: auto !important; min-height: 0 !important; } body, .receipt { position: absolute !important; top: 0 !important; left: 0 !important; } }
-            .center { text-align: center; }
-            .hr { border-bottom: 1px dashed #000; margin: 10px 0; }
-            .header { font-weight: bold; font-size: 1.1em; margin-bottom: 5px; text-transform: uppercase; }
-            .info { font-size: 0.85em; margin-bottom: 3px; }
-            .item { display: flex; justify-content: space-between; font-size: 0.9em; margin: 3px 0; }
-            .total-row { display: flex; justify-content: space-between; font-weight: bold; margin-top: 5px; }
-            .footer { font-size: 0.8em; margin-top: 15px; color: #333; }
-          </style>
-        </head>
-        <body><main class="receipt">
-          <div class="center">
-            <div class="header">${storeSettings?.store_name?.toUpperCase() || 'PETSHOP CRM'}</div>
-            <div class="info">${addr || 'Endereço não configurado'}</div>
-            <div class="info">Tel: ${storeSettings?.store_phone || '(00) 00000-0000'}</div>
-          </div>
-          <div class="hr"></div>
-          <div class="item"><strong>ITEM</strong> <strong>QTD x VL</strong></div>
-          ${sale.cart.map(i => `
-            <div class="item">
-              <span>${(i.product?.name || i.name || 'Produto').substring(0, 18)}</span>
-              <span>${i.quantity}x ${Number(i.unit_price || 0).toFixed(2)}</span>
-            </div>
-          `).join('')}
-          <div class="hr"></div>
-          <div class="total-row"><span>SUBTOTAL:</span> <span>R$ ${(sale.total + (sale.discount || 0) - (sale.deliveryFee || 0)).toFixed(2)}</span></div>
-          ${sale.discount > 0 ? `<div class="total-row" style="color:red"><span>DESCONTO:</span> <span>-R$ ${sale.discount.toFixed(2)}</span></div>` : ''}
-          ${sale.deliveryFee > 0 ? `<div class="total-row"><span>ENTREGA:</span> <span>R$ ${sale.deliveryFee.toFixed(2)}</span></div>` : ''}
-          <div class="total-row" style="font-size: 1.2em;"><span>TOTAL:</span> <span>R$ ${sale.total.toFixed(2)}</span></div>
-          <div class="hr"></div>
-          <div class="info center">Pagamento: ${sale.payment.toUpperCase()}</div>
-          <div class="info center">Cliente: ${sale.customer || 'Balcão'}</div>
-          <div class="info center">Data: ${date}</div>
-          <div class="footer center">Obrigado pela preferência!</div>
-        </main></body>
-      </html>
+    const itemRows = (sale.cart || []).map((item) => `
+      <tr>
+        <td class="qty">${escapeReceiptHtml(item.quantity)}</td>
+        <td>${escapeReceiptHtml(item.product?.name || item.name || 'Produto')}</td>
+        <td class="money">${escapeReceiptHtml(fmtCurrency(Number(item.unit_price || 0)))}</td>
+      </tr>
+    `).join('')
+    const bodyHtml = `
+      <div class="receipt-meta">Venda #${escapeReceiptHtml(String(sale.id || '').slice(0, 8).toUpperCase())}</div>
+      <div class="receipt-table-wrap"><table class="receipt-table"><thead><tr><th class="qty">Qtd</th><th>Item</th><th class="money">Unit.</th></tr></thead><tbody>${itemRows || '<tr><td colspan="3">Sem itens.</td></tr>'}</tbody></table></div>
+      <div class="receipt-section">
+        <div class="receipt-row"><strong>Subtotal</strong><span class="money">${escapeReceiptHtml(fmtCurrency(Number(sale.subtotal || 0)))}</span></div>
+        ${Number(sale.discount || 0) > 0 ? `<div class="receipt-row"><strong>Desconto</strong><span class="money">-${escapeReceiptHtml(fmtCurrency(Number(sale.discount)))}</span></div>` : ''}
+        ${Number(sale.deliveryFee || 0) > 0 ? `<div class="receipt-row"><strong>Entrega</strong><span class="money">${escapeReceiptHtml(fmtCurrency(Number(sale.deliveryFee)))}</span></div>` : ''}
+        <div class="receipt-total"><span>Total</span><span>${escapeReceiptHtml(fmtCurrency(Number(sale.total || 0)))}</span></div>
+      </div>
+      <div class="receipt-section">
+        <div class="receipt-row"><strong>Pagamento</strong><span>${escapeReceiptHtml(sale.payment || '-')}</span></div>
+        <div class="receipt-row"><strong>Cliente</strong><span>${escapeReceiptHtml(sale.customer || 'Balcao')}</span></div>
+      </div>
     `
-    printWindow.document.write(receiptHtml)
-    printWindow.document.close()
-    printThermalReceipt(printWindow)
+    openReceiptPreview({ storeSettings, title: 'COMPROVANTE DE VENDA', bodyHtml })
   }
 
   const handleOpenFiscalConsult = () => {
@@ -851,6 +816,7 @@ export default function VendasPage() {
     })),
     customer: saleRow?.customer_name || 'Balcao',
     payment: saleRow?.payment_method || 'dinheiro',
+    subtotal: Number(saleRow?.subtotal || 0),
     discount: Number(saleRow?.discount || 0),
     total: Number(saleRow?.total_price || 0),
     deliveryFee: Number(saleRow?.delivery_fee || 0),
@@ -956,7 +922,8 @@ export default function VendasPage() {
         cart: [...cart],
         customer: customerName || 'Balcão',
         payment: paymentDescriptor,
-        discount: Number(discount) || 0,
+        subtotal: Number(createdSale?.subtotal ?? 0),
+        discount: Number(createdSale?.discount ?? discount ?? 0),
         total: Number(createdSale?.total_price ?? total),
         deliveryFee: Number(createdSale?.delivery_fee ?? deliveryFee),
         fiscal: null,

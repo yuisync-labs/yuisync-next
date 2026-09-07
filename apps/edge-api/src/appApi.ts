@@ -1,4 +1,5 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import { handleAppSettingsApiRequest } from './appSettingsApi'
 
 type AppApiBindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 
@@ -176,29 +177,6 @@ async function bootstrap(request: Request, bindings: AppApiBindings): Promise<Re
   })
 }
 
-async function settings(request: Request, bindings: AppApiBindings): Promise<Response> {
-  const resolved = await resolvePrincipal(request, bindings)
-  if (!resolved.ok) return resolved.error
-  const url = new URL(request.url)
-  const tenantId = validId(url.searchParams.get('tenant_id'))
-  const moduleId = validModule(url.searchParams.get('module_id'))
-  if (!tenantId || !moduleId) return json({ code: 'INVALID_SCOPE' }, 400)
-
-  const membership = await bindings.DB!.prepare(`
-    SELECT 1 FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id
-    WHERE m.tenant_id=?1 AND m.principal_id=?2 AND m.status='active' AND t.status='active'
-  `).bind(tenantId, resolved.principal.id).first()
-  if (!membership) return json({ code: 'FORBIDDEN' }, 403)
-
-  const row = await bindings.DB!.prepare(`
-    SELECT store_name, store_phone, store_address, store_neighborhood, store_city,
-           bot_prompt, version, updated_at_ms
-    FROM tenant_module_settings WHERE tenant_id=?1 AND module_id=?2
-  `).bind(tenantId, moduleId).first()
-  if (!row) return json({ code: 'SETTINGS_NOT_FOUND' }, 404)
-  return json({ tenant_id: tenantId, module_id: moduleId, settings: row })
-}
-
 async function managedUsers(
   request: Request,
   bindings: AppApiBindings,
@@ -298,7 +276,8 @@ export async function handleAppApiRequest(
 ): Promise<Response | null> {
   const { pathname } = new URL(request.url)
   if (pathname === '/api/app/bootstrap' && request.method === 'GET') return bootstrap(request, bindings)
-  if (pathname === '/api/app/settings' && request.method === 'GET') return settings(request, bindings)
+  const settingsResponse = await handleAppSettingsApiRequest(request, bindings, dependencies)
+  if (settingsResponse) return settingsResponse
   if (pathname === '/api/app/tenants' && request.method === 'POST') return createTenant(request, bindings, dependencies)
   if (pathname === '/api/admin/users' && request.method === 'GET') return managedUsers(request, bindings, dependencies)
   if (pathname === '/api/admin/users') return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET' })

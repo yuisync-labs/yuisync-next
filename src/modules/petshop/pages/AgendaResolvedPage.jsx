@@ -3,7 +3,7 @@ import AgendaPage from './AgendaPage'
 import { useAppointments } from '../../../shared/hooks/useAppointments'
 import { useAuthCtx } from '../../../context/AuthContext'
 import { fmtCurrency, todayISO } from '../../../lib/supabase'
-import { printThermalReceipt } from '../../../lib/thermalPrint'
+import { openReceiptPreview } from '../../../lib/receiptPrint'
 import {
   normalizeServiceDurations,
   resolvePetshopServiceDuration,
@@ -47,87 +47,6 @@ function appointmentServiceText(appointment, serviceLabel) {
     .map((value) => String(value || '').trim())
     .filter(Boolean)
   return names.length > 0 ? names.join(', ') : (serviceLabel(appointment?.service_type) || 'Servico nao informado')
-}
-
-function receiptShell({ storeSettings, title, content }) {
-  const logo = String(
-    storeSettings?.receipt_logo_data_url
-    || storeSettings?.store_logo_url
-    || storeSettings?.logo_url
-    || `${window.location.origin}/brand/quatro-patas-logo-mono.png`,
-  )
-  const header = `<img class="print-logo" src="${escapeHtml(logo)}" alt="Logo da empresa"/>`
-
-  return `
-    <html>
-      <head>
-        <meta charset="utf-8"/>
-        <title>${escapeHtml(title)}</title>
-        <style>
-          @page { margin: 0; }
-          * { box-sizing: border-box; }
-          html, body { width: 80mm; margin: 0; padding: 0; color: #000; background: #fff; }
-          body { font-family: Arial, Helvetica, sans-serif; padding: 3mm 2mm; }
-          .receipt { width: 72mm; max-width: 72mm; margin: 0 auto; }
-          .center { text-align: center; }
-          .print-logo { display:block; width:auto; max-width:56mm; max-height:22mm; margin:0 auto 2.5mm; object-fit:contain; filter:grayscale(1) contrast(2); }
-          .store { font-size: 15px; font-weight: 900; text-transform: uppercase; }
-          .store-line { margin-top: 1px; font-size: 9px; line-height: 1.25; overflow-wrap: anywhere; }
-          .title { margin: 3mm 0 2mm; border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 1.6mm 0; font-size: 13.5px; font-weight: 900; }
-          .details { border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 1.5mm 0; }
-          .line { display: grid; grid-template-columns: 18mm minmax(0, 1fr); gap: 1.5mm; padding: .8mm 0; font-size: 11px; line-height: 1.32; }
-          .line strong { font-size: 10px; text-transform: uppercase; }
-          .line span { min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
-          .appointment { padding: 1.8mm 0; border-bottom: 1px dashed #000; page-break-inside: avoid; }
-          .appointment-title { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2mm; font-size: 11px; font-weight: 900; }
-          .appointment-line { margin-top: .8mm; font-size: 10px; line-height: 1.32; overflow-wrap: anywhere; }
-          .footer { margin-top: 3mm; font-size: 8.5px; line-height: 1.3; }
-          @media print { body { position: absolute; inset: 0 auto auto 0; } }
-        </style>
-      </head>
-      <body>
-        <main class="receipt">
-          <div class="center">
-            ${header}
-            <div class="title">${escapeHtml(title)}</div>
-          </div>
-          ${content}
-          <div class="footer center">Impresso em ${escapeHtml(new Date().toLocaleString('pt-BR'))}</div>
-        </main>
-      </body>
-    </html>
-  `
-}
-
-function writeAndPrint(html) {
-  const printWindow = window.open('', '_blank')
-  if (!printWindow) return false
-  printWindow.document.write(html)
-  printWindow.document.close()
-
-  let printed = false
-  const printWhenReady = () => {
-    if (printed) return
-    printed = true
-    printThermalReceipt(printWindow)
-  }
-  const images = [...printWindow.document.images]
-  const pendingImages = images.filter((image) => !image.complete)
-  if (pendingImages.length === 0) {
-    window.setTimeout(printWhenReady, 80)
-  } else {
-    let remaining = pendingImages.length
-    const settleImage = () => {
-      remaining -= 1
-      if (remaining <= 0) window.setTimeout(printWhenReady, 80)
-    }
-    pendingImages.forEach((image) => {
-      image.addEventListener('load', settleImage, { once: true })
-      image.addEventListener('error', settleImage, { once: true })
-    })
-    window.setTimeout(printWhenReady, 1500)
-  }
-  return true
 }
 
 function findScrollableAncestor(element) {
@@ -192,7 +111,7 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
         ${line('Obs.', appointment.notes || 'Nenhuma observacao')}
       </div>
     `
-    const opened = writeAndPrint(receiptShell({ storeSettings, title, content }))
+    const opened = openReceiptPreview({ storeSettings, title, bodyHtml: content })
     setNotice(opened ? '' : 'O navegador bloqueou a janela de impressao. Libere pop-ups para o YuiSync.')
   }, [serviceLabel, statusBadge, storeSettings])
 
@@ -217,7 +136,7 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
       </div>
       ${rows || '<div class="appointment-line">Nenhum agendamento operacional nesta data.</div>'}
     `
-    const opened = writeAndPrint(receiptShell({ storeSettings, title: 'AGENDA DO DIA', content }))
+    const opened = openReceiptPreview({ storeSettings, title: 'AGENDA DO DIA', bodyHtml: content })
     setNotice(opened ? '' : 'O navegador bloqueou a janela de impressao. Libere pop-ups para o YuiSync.')
   }, [operationalAppointments, selectedDate, serviceLabel, statusBadge, storeSettings])
 
