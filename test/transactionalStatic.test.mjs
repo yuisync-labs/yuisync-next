@@ -185,25 +185,19 @@ test('cards de clientes preservam nomes legiveis e acoes separadas', async () =>
   assert.match(clientsSource, /\.range\(from, from \+ CLIENT_PAGE_SIZE - 1\)/)
 })
 
-test('ordem impressa usa a largura nativa da Print iD sem forcar altura', async () => {
+test('ordem impressa usa a camada compartilhada e preserva dados operacionais', async () => {
   const source = await read('src/modules/petshop/pages/OrdensEntregaPage.jsx')
-  assert.match(source, /printThermalReceipt\(printWindow\)/)
-  assert.match(source, /const width = '80mm'/)
-  assert.match(source, /const printableWidth = '64mm'/)
-  assert.match(source, /class="receipt"/)
-  assert.match(source, /quatro-patas-logo-mono\.png/)
-  assert.match(source, /Conferência \/ ordem de entrega/)
-  assert.match(source, /<table><thead>/)
-  assert.match(source, /Endereço de entrega/)
-  assert.match(source, /Endereço do cliente/)
+  assert.match(source, /openReceiptPreview\(\{/)
+  assert.match(source, /storeSettings,/)
+  assert.match(source, /CONFERENCIA \/ ORDEM DE ENTREGA/)
+  assert.match(source, /receipt-table/)
   assert.match(source, /completeClientAddress/)
   assert.match(source, /order\.delivery_reference/)
   assert.match(source, /client\.address/)
   assert.match(source, /client\.neighborhood/)
-  assert.match(source, /Referência/)
   assert.match(source, /const address = completeClientAddress\(order\) \|\| orderOriginAddress\(order\)/)
-  assert.match(source, /AV CONSTANTINO PINTO, 191/)
-  assert.match(source, /\(32\)98520-5279/)
+  assert.doesNotMatch(source, /quatro-patas-logo-mono\.png/)
+  assert.doesNotMatch(source, /const width = '80mm'/)
 })
 
 test('ordem PetBot persiste e exibe o ponto de referência da entrega', async () => {
@@ -214,25 +208,31 @@ test('ordem PetBot persiste e exibe o ponto de referência da entrega', async ()
   assert.match(migration, /update public\.service_delivery_orders o/)
 })
 
-test('todos os comprovantes usam a largura 80mm da Print iD', async () => {
+test('comprovantes operacionais usam a camada compartilhada com 58mm, 80mm e A4', async () => {
+  const receipt = await read('src/lib/receiptPrint.js')
+  const thermal = await read('src/lib/thermalPrint.js')
   const receiptFiles = [
-    'src/shared/pages/BillingPage.jsx',
     'src/modules/petshop/pages/AgendaPage.jsx',
+    'src/modules/petshop/pages/AgendaResolvedPage.jsx',
     'src/modules/petshop/pages/VendasPage.jsx',
+    'src/modules/petshop/pages/OrdensEntregaPage.jsx',
+    'src/modules/petshop/pages/EquipePage.jsx',
   ]
 
   for (const file of receiptFiles) {
     const source = await read(file)
-    assert.match(source, /printThermalReceipt\(printWindow\)/)
-    assert.match(source, /@page \{ margin: 0; \}/)
-    assert.match(source, /class="receipt"/)
-    assert.doesNotMatch(source, /size: 80mm auto/)
-    assert.match(source, /width: 80mm/)
+    assert.match(source, /openReceiptPreview/)
   }
 
-  const utility = await read('src/lib/thermalPrint.js')
-  assert.match(utility, /Print iD controla avanço e corte pelo próprio driver/)
-  assert.doesNotMatch(utility, /@page/)
+  assert.match(receipt, /'58': \{ label: '58 mm'/)
+  assert.match(receipt, /'80': \{ label: '80 mm'/)
+  assert.match(receipt, /a4: \{ label: 'A4 \/ PDF'/)
+  assert.match(receipt, /data-receipt-format/)
+  assert.match(receipt, /@page \{ size: A4 portrait; margin: 0; \}/)
+  assert.match(receipt, /Comprovante operacional/)
+  assert.doesNotMatch(receipt, /quatro-patas-logo-mono\.png/)
+  assert.match(thermal, /waitForPrintImages/)
+  assert.doesNotMatch(thermal, /setTimeout\([^\n]*1500/)
 })
 
 test('importacao legado preserva historico e oculta registros arquivados', async () => {
