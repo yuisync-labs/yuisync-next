@@ -6,13 +6,14 @@ import { useModuleCtx } from '../../context/ModuleContext'
 import { getAppSettings, patchAppSettings } from '../../lib/api'
 
 const EMPTY_COMPANY_FORM = {
-  store_name: '',
-  store_phone: '',
-  store_address: '',
-  store_neighborhood: '',
-  store_city: '',
-  printer_width: '80',
-  receipt_logo_data_url: '',
+  business_name: '',
+  business_address: '',
+  business_phone: '',
+  business_email: '',
+  business_tax_id: '',
+  logo_url: '',
+  receipt_format: '80',
+  receipt_footer: '',
 }
 
 function modulePermissionIsAdmin(permission) {
@@ -83,6 +84,22 @@ async function prepareReceiptLogo(file) {
   return result
 }
 
+function normalizeCompanySettings(settings = {}) {
+  const receiptFormat = ['58', '80', 'a4'].includes(settings.receipt_format)
+    ? settings.receipt_format
+    : settings.printer_width === '58' ? '58' : '80'
+  return {
+    business_name: String(settings.business_name || settings.store_name || ''),
+    business_address: String(settings.business_address || settings.store_address || ''),
+    business_phone: String(settings.business_phone || settings.store_phone || ''),
+    business_email: String(settings.business_email || ''),
+    business_tax_id: String(settings.business_tax_id || ''),
+    logo_url: String(settings.logo_url || settings.receipt_logo_data_url || ''),
+    receipt_format: receiptFormat,
+    receipt_footer: String(settings.receipt_footer || ''),
+  }
+}
+
 function CompanySettingsSection() {
   const auth = useAuthCtx()
   const { activeModuleId } = useModuleCtx()
@@ -119,17 +136,7 @@ function CompanySettingsSection() {
 
     getAppSettings({ tenantId, moduleId: activeModuleId })
       .then((response) => {
-        if (cancelled) return
-        const settings = response?.settings || {}
-        setForm({
-          store_name: String(settings.store_name || ''),
-          store_phone: String(settings.store_phone || ''),
-          store_address: String(settings.store_address || ''),
-          store_neighborhood: String(settings.store_neighborhood || ''),
-          store_city: String(settings.store_city || ''),
-          printer_width: settings.printer_width === '58' ? '58' : '80',
-          receipt_logo_data_url: String(settings.receipt_logo_data_url || ''),
-        })
+        if (!cancelled) setForm(normalizeCompanySettings(response?.settings || {}))
       })
       .catch((error) => {
         if (!cancelled) setMessage({ type: 'error', text: error?.message || 'Nao foi possivel carregar os dados da empresa.' })
@@ -154,7 +161,7 @@ function CompanySettingsSection() {
     setProcessingLogo(true)
     setMessage({ type: '', text: '' })
     try {
-      updateField('receipt_logo_data_url', await prepareReceiptLogo(file))
+      updateField('logo_url', await prepareReceiptLogo(file))
     } catch (error) {
       setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Nao foi possivel preparar a logo.' })
     } finally {
@@ -172,15 +179,7 @@ function CompanySettingsSection() {
       const response = await patchAppSettings({ tenantId, moduleId: activeModuleId, patch })
       if (tenantId !== auth.activeTenantId) return
       const saved = response?.settings || {}
-      setForm({
-        store_name: String(saved.store_name || ''),
-        store_phone: String(saved.store_phone || ''),
-        store_address: String(saved.store_address || ''),
-        store_neighborhood: String(saved.store_neighborhood || ''),
-        store_city: String(saved.store_city || ''),
-        printer_width: saved.printer_width === '58' ? '58' : '80',
-        receipt_logo_data_url: String(saved.receipt_logo_data_url || ''),
-      })
+      setForm(normalizeCompanySettings(saved))
       setDirtyFields(new Set())
       auth.updateStoreSettings?.(saved)
       await auth.refreshSettings(activeModuleId)
@@ -195,58 +194,61 @@ function CompanySettingsSection() {
   if (activeModuleId !== 'petshop') return null
 
   return (
-    <section className="space-y-4 order-1" data-qa="tenant-company-settings">
-      <h3 className="text-xs font-black text-muted uppercase tracking-[0.2em] flex items-center gap-2">
-        <Building2 size={14}/> Empresa e comprovantes
-      </h3>
-      <div className="bg-card border border-white/5 rounded-3xl p-8 shadow-sm space-y-6">
-        <div>
-          <h4 className="font-bold text-text">Identidade desta empresa</h4>
-          <p className="text-xs text-muted mt-1">Nome, contato, endereco, logo e formato usados nos comprovantes operacionais. Cada empresa mantem sua propria configuracao.</p>
-        </div>
+    <section className="page animate-fade-up max-w-5xl mx-auto pb-2" data-qa="tenant-company-settings">
+      <div className="space-y-4">
+        <h3 className="text-xs font-black text-muted uppercase tracking-[0.2em] flex items-center gap-2">
+          <Building2 size={14}/> Empresa e comprovantes
+        </h3>
+        <div className="bg-card border border-white/5 rounded-3xl p-8 shadow-sm space-y-6">
+          <div>
+            <h4 className="font-bold text-text">Identidade desta empresa</h4>
+            <p className="text-xs text-muted mt-1">Nome, contato, identificacao, logo e formato usados nos comprovantes. Os dados sao isolados por empresa.</p>
+          </div>
 
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-muted"><RefreshCw size={15} className="animate-spin"/> Carregando empresa...</div>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <div><label className="inp-label">Nome exibido</label><input className="inp" disabled={!canEdit || saving} value={form.store_name} placeholder={activeTenant?.name || 'Estabelecimento'} onChange={(event) => updateField('store_name', event.target.value)}/></div>
-              <div><label className="inp-label">Telefone</label><input className="inp" disabled={!canEdit || saving} value={form.store_phone} placeholder="Opcional" onChange={(event) => updateField('store_phone', event.target.value)}/></div>
-              <div className="md:col-span-2"><label className="inp-label">Endereco</label><input className="inp" disabled={!canEdit || saving} value={form.store_address} placeholder="Rua, avenida ou referencia" onChange={(event) => updateField('store_address', event.target.value)}/></div>
-              <div><label className="inp-label">Bairro</label><input className="inp" disabled={!canEdit || saving} value={form.store_neighborhood} placeholder="Opcional" onChange={(event) => updateField('store_neighborhood', event.target.value)}/></div>
-              <div><label className="inp-label">Cidade</label><input className="inp" disabled={!canEdit || saving} value={form.store_city} placeholder="Opcional" onChange={(event) => updateField('store_city', event.target.value)}/></div>
-            </div>
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted"><RefreshCw size={15} className="animate-spin"/> Carregando empresa...</div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div><label className="inp-label">Nome exibido</label><input className="inp" disabled={!canEdit || saving} value={form.business_name} placeholder={activeTenant?.name || 'Estabelecimento'} onChange={(event) => updateField('business_name', event.target.value)}/></div>
+                <div><label className="inp-label">Telefone</label><input className="inp" disabled={!canEdit || saving} value={form.business_phone} placeholder="Opcional" onChange={(event) => updateField('business_phone', event.target.value)}/></div>
+                <div className="md:col-span-2"><label className="inp-label">Endereco</label><input className="inp" disabled={!canEdit || saving} value={form.business_address} placeholder="Endereco exibido no comprovante" onChange={(event) => updateField('business_address', event.target.value)}/></div>
+                <div><label className="inp-label">E-mail</label><input className="inp" type="email" disabled={!canEdit || saving} value={form.business_email} placeholder="contato@empresa.com" onChange={(event) => updateField('business_email', event.target.value)}/></div>
+                <div><label className="inp-label">CPF / CNPJ</label><input className="inp" disabled={!canEdit || saving} value={form.business_tax_id} placeholder="Opcional" onChange={(event) => updateField('business_tax_id', event.target.value)}/></div>
+                <div className="md:col-span-2"><label className="inp-label">Rodape do comprovante</label><textarea className="inp min-h-24 resize-y" disabled={!canEdit || saving} value={form.receipt_footer} placeholder="Mensagem opcional" onChange={(event) => updateField('receipt_footer', event.target.value)}/></div>
+              </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_240px] gap-5 border-t border-white/5 pt-6">
-              <div className="space-y-4">
-                <div className="flex items-center gap-2"><ImageIcon size={16} className="text-emerald-400"/><div><h4 className="font-bold text-text">Logo do comprovante</h4><p className="text-xs text-muted">Sem logo configurada, o comprovante imprime apenas o nome da empresa.</p></div></div>
-                <div className="flex flex-wrap gap-3">
-                  <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile}/>
-                  <button type="button" className="btn btn-secondary gap-2" disabled={!canEdit || processingLogo || saving} onClick={() => fileRef.current?.click()}><Upload size={14}/>{processingLogo ? 'Preparando...' : 'Enviar logo'}</button>
-                  <button type="button" className="btn btn-secondary gap-2" disabled={!canEdit || !form.receipt_logo_data_url || processingLogo || saving} onClick={() => updateField('receipt_logo_data_url', '')}><Trash2 size={14}/> Remover</button>
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_240px] gap-5 border-t border-white/5 pt-6">
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2"><ImageIcon size={16} className="text-emerald-400"/><div><h4 className="font-bold text-text">Logo do comprovante</h4><p className="text-xs text-muted">Sem logo configurada, o comprovante imprime apenas os dados da empresa.</p></div></div>
+                  <div className="flex flex-wrap gap-3">
+                    <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile}/>
+                    <button type="button" className="btn btn-secondary gap-2" disabled={!canEdit || processingLogo || saving} onClick={() => fileRef.current?.click()}><Upload size={14}/>{processingLogo ? 'Preparando...' : 'Enviar logo'}</button>
+                    <button type="button" className="btn btn-secondary gap-2" disabled={!canEdit || !form.logo_url || processingLogo || saving} onClick={() => updateField('logo_url', '')}><Trash2 size={14}/> Remover</button>
+                  </div>
+                  <p className="text-[11px] text-muted">PNG, JPG ou WEBP. A imagem e normalizada para impressao e salva somente neste tenant.</p>
                 </div>
-                <p className="text-[11px] text-muted">PNG, JPG ou WEBP. A imagem e normalizada para impressao e salva somente neste tenant.</p>
+                <div className="flex min-h-[116px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white p-4">
+                  {form.logo_url ? <img src={form.logo_url} alt="Preview da logo do comprovante" className="max-h-24 max-w-full object-contain"/> : <span className="text-center text-xs font-bold uppercase tracking-widest text-gray-500">Sem logo</span>}
+                </div>
               </div>
-              <div className="flex min-h-[116px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white p-4">
-                {form.receipt_logo_data_url ? <img src={form.receipt_logo_data_url} alt="Preview da logo do comprovante" className="max-h-24 max-w-full object-contain"/> : <span className="text-center text-xs font-bold uppercase tracking-widest text-gray-500">Sem logo</span>}
+
+              <div className="border-t border-white/5 pt-6 space-y-3">
+                <div className="flex items-center gap-2"><Printer size={16}/><div><h4 className="font-bold text-text">Formato padrao</h4><p className="text-xs text-muted">A previa permite alternar o formato sem alterar este padrao.</p></div></div>
+                <div className="grid grid-cols-3 gap-3 max-w-xl">
+                  {[['58', '58mm'], ['80', '80mm'], ['a4', 'A4 / PDF']].map(([format, label]) => <button key={format} type="button" disabled={!canEdit || saving} onClick={() => updateField('receipt_format', format)} className={`px-4 py-4 rounded-2xl border text-sm font-bold transition-all ${form.receipt_format === format ? 'bg-emerald-400 border-transparent text-gray-950 shadow-lg' : 'bg-white/5 border-white/5 text-muted hover:bg-white/10'}`}>{label}</button>)}
+                </div>
               </div>
-            </div>
 
-            <div className="border-t border-white/5 pt-6 space-y-3">
-              <div className="flex items-center gap-2"><Printer size={16}/><div><h4 className="font-bold text-text">Formato padrao</h4><p className="text-xs text-muted">A previa ainda permite alternar para outro formato sem mudar este padrao.</p></div></div>
-              <div className="grid grid-cols-2 gap-3 max-w-md">
-                {['80', '58'].map((width) => <button key={width} type="button" disabled={!canEdit || saving} onClick={() => updateField('printer_width', width)} className={`px-4 py-4 rounded-2xl border text-sm font-bold transition-all ${form.printer_width === width ? 'bg-emerald-400 border-transparent text-gray-950 shadow-lg' : 'bg-white/5 border-white/5 text-muted hover:bg-white/10'}`}>{width}mm</button>)}
+              <div className="flex flex-wrap items-center gap-3 border-t border-white/5 pt-6">
+                <button type="button" className="btn btn-primary gap-2" disabled={!canEdit || saving || processingLogo || dirtyFields.size === 0} onClick={() => void save()}>{saving ? <RefreshCw size={14} className="animate-spin"/> : <Save size={14}/>} {saving ? 'Salvando...' : 'Salvar identidade e comprovantes'}</button>
+                {!canEdit && <span className="text-xs text-muted">Somente administradores autorizados podem alterar estes dados.</span>}
               </div>
-            </div>
+            </>
+          )}
 
-            <div className="flex flex-wrap items-center gap-3 border-t border-white/5 pt-6">
-              <button type="button" className="btn btn-primary gap-2" disabled={!canEdit || saving || processingLogo || dirtyFields.size === 0} onClick={() => void save()}>{saving ? <RefreshCw size={14} className="animate-spin"/> : <Save size={14}/>} {saving ? 'Salvando...' : 'Salvar dados da empresa'}</button>
-              {!canEdit && <span className="text-xs text-muted">Somente administradores autorizados podem alterar estes dados.</span>}
-            </div>
-          </>
-        )}
-
-        {message.text && <p className={`rounded-xl border px-3 py-2 text-xs font-semibold ${message.type === 'success' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-red-500/20 bg-red-500/10 text-red-300'}`}>{message.text}</p>}
+          {message.text && <p className={`rounded-xl border px-3 py-2 text-xs font-semibold ${message.type === 'success' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-red-500/20 bg-red-500/10 text-red-300'}`}>{message.text}</p>}
+        </div>
       </div>
     </section>
   )
@@ -256,9 +258,9 @@ export default function SettingsIntegratedPage() {
   const { activeModuleId } = useModuleCtx()
   const companySettingsManaged = activeModuleId === 'petshop'
   return (
-    <SettingsPage
-      companySettingsManaged={companySettingsManaged}
-      companySettingsSection={companySettingsManaged ? <CompanySettingsSection/> : null}
-    />
+    <>
+      {companySettingsManaged ? <CompanySettingsSection/> : null}
+      <SettingsPage />
+    </>
   )
 }
