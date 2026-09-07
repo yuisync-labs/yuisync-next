@@ -160,13 +160,14 @@ jobs:
           const ok = h?.status === 'ok'
             && r?.status === 'ready'
             && String(r?.checks?.schema_version) === '30'
+            && r?.checks?.password_recovery === 'configured'
             && String(v?.release_sha || '').toLowerCase() === String(process.env.RELEASE_SHA || '').toLowerCase()
           if (!ok) process.exit(1)
           NODE
             then matched=true; break; fi
             sleep 5
           done
-          [ "$matched" = true ] || { echo 'Exact staging release SHA was not observed'; cat /tmp/v.json || true; exit 1; }
+          [ "$matched" = true ] || { echo 'Exact staging release SHA was not observed with password recovery configured'; cat /tmp/r.json || true; cat /tmp/v.json || true; exit 1; }
           curl --fail --silent --show-error "$YUISYNC_STAGING_URL/" > /dev/null
 
       - name: Prepare ephemeral Better Auth browser users
@@ -236,6 +237,7 @@ jobs:
           echo '- D1 + AUTH_DB migrations: applied' >> "$GITHUB_STEP_SUMMARY"
           echo '- Runtime schema: v30' >> "$GITHUB_STEP_SUMMARY"
           echo '- /health + /ready + /release exact SHA: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Password recovery provider + sender: configured' >> "$GITHUB_STEP_SUMMARY"
           echo '- Better Auth sign-in + session HTTP smoke: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Browser E2E: passed against the exact published SHA' >> "$GITHUB_STEP_SUMMARY"
           echo '- Exact SHA rechecked after browser E2E: passed' >> "$GITHUB_STEP_SUMMARY"
