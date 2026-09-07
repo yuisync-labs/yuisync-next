@@ -27,22 +27,35 @@ type CanonicalSettingsRow = {
 type ExtensionRow = { data_json: string; updated_at_ms: number }
 type ModulePermission = true | string | Record<string, unknown>
 
+type SettingsPatch = {
+  business_name?: string
+  business_address?: string
+  business_phone?: string
+  business_email?: string
+  business_tax_id?: string
+  logo_url?: string | null
+  receipt_format?: '58' | '80' | 'a4'
+  receipt_footer?: string
+}
+
 const ALLOWED_PATCH_FIELDS = new Set([
-  'store_name',
-  'store_phone',
-  'store_address',
-  'store_neighborhood',
-  'store_city',
-  'printer_width',
-  'receipt_logo_data_url',
+  'business_name',
+  'business_address',
+  'business_phone',
+  'business_email',
+  'business_tax_id',
+  'logo_url',
+  'receipt_format',
+  'receipt_footer',
 ])
 
-const FIELD_LIMITS: Record<string, number> = {
-  store_name: 160,
-  store_phone: 80,
-  store_address: 240,
-  store_neighborhood: 120,
-  store_city: 120,
+const FIELD_LIMITS: Record<Exclude<keyof SettingsPatch, 'logo_url' | 'receipt_format'>, number> = {
+  business_name: 160,
+  business_address: 240,
+  business_phone: 80,
+  business_email: 254,
+  business_tax_id: 64,
+  receipt_footer: 600,
 }
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
@@ -152,6 +165,37 @@ function parseExtensions(row: ExtensionRow | null): Record<string, unknown> {
   }
 }
 
+function extensionString(extensions: Record<string, unknown>, key: string): string {
+  return typeof extensions[key] === 'string' ? String(extensions[key]) : ''
+}
+
+function normalizeReceiptFormat(value: unknown): '58' | '80' | 'a4' {
+  return value === '58' || value === 'a4' ? value : '80'
+}
+
+function settingsProjection(canonical: CanonicalSettingsRow, extensions: Record<string, unknown>) {
+  const logoUrl = extensionString(extensions, 'logo_url') || extensionString(extensions, 'receipt_logo_data_url')
+  const receiptFormat = normalizeReceiptFormat(extensions.receipt_format ?? extensions.printer_width)
+  return {
+    ...extensions,
+    ...canonical,
+    business_name: canonical.store_name || '',
+    business_address: canonical.store_address || '',
+    business_phone: canonical.store_phone || '',
+    business_email: extensionString(extensions, 'business_email'),
+    business_tax_id: extensionString(extensions, 'business_tax_id'),
+    logo_url: logoUrl,
+    receipt_format: receiptFormat,
+    receipt_footer: extensionString(extensions, 'receipt_footer'),
+    // Compatibilidade temporaria para leitores ainda nao migrados.
+    store_name: canonical.store_name || '',
+    store_address: canonical.store_address || '',
+    store_phone: canonical.store_phone || '',
+    receipt_logo_data_url: logoUrl,
+    printer_width: receiptFormat === '58' ? '58' : '80',
+  }
+}
+
 async function readSettings(database: D1Database, tenantId: string, moduleId: string) {
   const [canonical, extension] = await Promise.all([
     database.prepare(`
@@ -169,62 +213,54 @@ async function readSettings(database: D1Database, tenantId: string, moduleId: st
     `).bind(tenantId, moduleId).first<ExtensionRow>(),
   ])
   if (!canonical) return null
-
-  const extensions = parseExtensions(extension)
-  const printerWidth = extensions.printer_width === '58' ? '58' : '80'
-  const receiptLogo = typeof extensions.receipt_logo_data_url === 'string'
-    ? extensions.receipt_logo_data_url
-    : ''
-
-  return {
-    ...extensions,
-    ...canonical,
-    printer_width: printerWidth,
-    receipt_logo_data_url: receiptLogo,
-  }
+  return settingsProjection(canonical, parseExtensions(extension))
 }
 
 function validateLogo(value: unknown): string | null | Response {
   if (value == null || value === '') return null
-  if (typeof value !== 'string' || value.length > 210_000) {
-    return json({ code: 'INVALID_RECEIPT_LOGO' }, 400)
-  }
-  if (!/^data:image\/(?:png|jpeg);base64,[a-z0-9+/=\s]+$/i.test(value)) {
-    return json({ code: 'INVALID_RECEIPT_LOGO' }, 400)
-  }
-  return value
+  if (typeof value !== 'string') return json({ code: 'INVALID_LOGO_URL' }, 400)
+  const normalized = value.trim()
+  if (!normalized || normalized.length > 210_000) return json({ code: 'INVALID_LOGO_URL' }, 400)
+  const isDataImage = /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=\s]+$/i.test(normalized)
+  const isHttps = /^https:\/\/[^\s]+$/i.test(normalized)
+  const isRootRelative = /^\/(?!\/)[^\s]*$/.test(normalized)
+  if (!isDataImage && !isHttps && !isRootRelative) return json({ code: 'INVALID_LOGO_URL' }, 400)
+  if (!isDataImage && normalized.length > 2048) return json({ code: 'INVALID_LOGO_URL' }, 400)
+  return normalized
 }
 
-function validatePatch(body: unknown): { patch: Record<string, string | null> } | { response: Response } {
+function validatePatch(body: unknown): { patch: SettingsPatch } | { response: Response } {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return { response: json({ code: 'INVALID_JSON' }, 400) }
   }
   const entries = Object.entries(body as Record<string, unknown>)
   if (entries.length === 0) return { response: json({ code: 'EMPTY_PATCH' }, 400) }
-
   for (const [key] of entries) {
     if (!ALLOWED_PATCH_FIELDS.has(key)) {
       return { response: json({ code: 'UNSUPPORTED_SETTING_FIELD', field: key }, 400) }
     }
   }
 
-  const patch: Record<string, string | null> = {}
+  const patch: SettingsPatch = {}
   for (const [key, raw] of entries) {
-    if (key === 'printer_width') {
-      if (raw !== '58' && raw !== '80') return { response: json({ code: 'INVALID_PRINTER_WIDTH' }, 400) }
-      patch[key] = raw
+    if (key === 'receipt_format') {
+      if (raw !== '58' && raw !== '80' && raw !== 'a4') {
+        return { response: json({ code: 'INVALID_RECEIPT_FORMAT' }, 400) }
+      }
+      patch.receipt_format = raw
       continue
     }
-    if (key === 'receipt_logo_data_url') {
+    if (key === 'logo_url') {
       const validated = validateLogo(raw)
       if (validated instanceof Response) return { response: validated }
-      patch[key] = validated
+      patch.logo_url = validated
       continue
     }
     if (typeof raw !== 'string') return { response: json({ code: 'INVALID_SETTING_VALUE', field: key }, 400) }
     const value = raw.trim()
-    if (value.length > FIELD_LIMITS[key]) return { response: json({ code: 'SETTING_TOO_LONG', field: key }, 400) }
-    patch[key] = value
+    const max = FIELD_LIMITS[key as keyof typeof FIELD_LIMITS]
+    if (value.length > max) return { response: json({ code: 'SETTING_TOO_LONG', field: key }, 400) }
+    ;(patch as Record<string, string>)[key] = value
   }
   return { patch }
 }
@@ -272,20 +308,43 @@ async function patchSettings(request: Request, bindings: AppSettingsBindings, de
   const now = Date.now()
 
   const nextCanonical = {
-    store_name: patch.store_name ?? canonical.store_name,
-    store_phone: patch.store_phone ?? canonical.store_phone,
-    store_address: patch.store_address ?? canonical.store_address,
-    store_neighborhood: patch.store_neighborhood ?? canonical.store_neighborhood,
-    store_city: patch.store_city ?? canonical.store_city,
-  }
-  if ('printer_width' in patch) extensions.printer_width = patch.printer_width
-  if ('receipt_logo_data_url' in patch) {
-    if (patch.receipt_logo_data_url) extensions.receipt_logo_data_url = patch.receipt_logo_data_url
-    else delete extensions.receipt_logo_data_url
+    store_name: patch.business_name ?? canonical.store_name,
+    store_phone: patch.business_phone ?? canonical.store_phone,
+    store_address: patch.business_address ?? canonical.store_address,
+    store_neighborhood: canonical.store_neighborhood,
+    store_city: canonical.store_city,
   }
 
-  const statements = [
-    database.prepare(`
+  const extensionFields: Array<keyof SettingsPatch> = [
+    'business_email', 'business_tax_id', 'logo_url', 'receipt_format', 'receipt_footer',
+  ]
+  let extensionsChanged = false
+  for (const key of extensionFields) {
+    if (!(key in patch)) continue
+    extensionsChanged = true
+    const value = patch[key]
+    if (key === 'logo_url') {
+      if (value) {
+        extensions.logo_url = value
+        extensions.receipt_logo_data_url = value
+      } else {
+        delete extensions.logo_url
+        delete extensions.receipt_logo_data_url
+      }
+      continue
+    }
+    if (key === 'receipt_format') {
+      extensions.receipt_format = value
+      extensions.printer_width = value === '58' ? '58' : '80'
+      continue
+    }
+    extensions[key] = value ?? ''
+  }
+
+  const canonicalChanged = 'business_name' in patch || 'business_phone' in patch || 'business_address' in patch
+  const statements: D1PreparedStatement[] = []
+  if (canonicalChanged) {
+    statements.push(database.prepare(`
       UPDATE tenant_module_settings
       SET store_name=?3, store_phone=?4, store_address=?5, store_neighborhood=?6, store_city=?7,
           version=version+1, updated_at_ms=?8
@@ -299,18 +358,17 @@ async function patchSettings(request: Request, bindings: AppSettingsBindings, de
       nextCanonical.store_neighborhood,
       nextCanonical.store_city,
       now,
-    ),
-  ]
-
-  if ('printer_width' in patch || 'receipt_logo_data_url' in patch) {
+    ))
+  }
+  if (extensionsChanged) {
     statements.push(database.prepare(`
       INSERT INTO module_settings_extensions(tenant_id,module_id,data_json,updated_at_ms)
       VALUES(?1,?2,?3,?4)
       ON CONFLICT(tenant_id,module_id) DO UPDATE SET data_json=excluded.data_json, updated_at_ms=excluded.updated_at_ms
     `).bind(scope.tenantId, scope.moduleId, JSON.stringify(extensions), now))
   }
+  if (statements.length) await database.batch(statements)
 
-  await database.batch(statements)
   const saved = await readSettings(database, scope.tenantId, scope.moduleId)
   return json({ tenant_id: scope.tenantId, module_id: scope.moduleId, settings: saved })
 }
