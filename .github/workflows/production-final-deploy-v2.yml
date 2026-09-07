@@ -129,6 +129,13 @@ jobs:
           await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
           NODE
 
+      - name: Ensure production password recovery sender secret
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' 'no-reply@yuisync.app' | npx wrangler secret put AUTH_EMAIL_FROM --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG"
+
       - name: Prove production prerequisites and migration starting point
         working-directory: apps/edge-api
         shell: bash
@@ -145,6 +152,7 @@ jobs:
           const auth = flat(process.env.AUTH).map((r) => String(r.name)).sort().join(',')
           if (!secrets.some((r) => r?.name === 'BETTER_AUTH_SECRET')) throw new Error('BETTER_AUTH_SECRET_REQUIRED')
           if (!secrets.some((r) => r?.name === 'AUTH_EMAIL_API_KEY')) throw new Error('AUTH_EMAIL_API_KEY_REQUIRED')
+          if (!secrets.some((r) => r?.name === 'AUTH_EMAIL_FROM')) throw new Error('AUTH_EMAIL_FROM_REQUIRED')
           if (!Number.isInteger(version) || version < 25 || version > 30) throw new Error(`SCHEMA_VERSION_UNSUPPORTED:${version}`)
           if (auth !== 'account,session,user,verification') throw new Error(`AUTH_SCHEMA_INVALID:${auth}`)
           NODE
