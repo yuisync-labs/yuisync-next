@@ -139,6 +139,21 @@ jobs:
           await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
           NODE
 
+      - name: Ensure staging password recovery secrets
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' 'no-reply@yuisync.app' | npx wrangler secret put AUTH_EMAIL_FROM --env staging
+          SECRETS="$(npx wrangler secret list --env staging --format json)"
+          export SECRETS
+          node --input-type=module <<'NODE'
+          const secrets = JSON.parse(process.env.SECRETS || '[]')
+          const names = new Set(secrets.map((row) => String(row?.name || '')))
+          if (!names.has('AUTH_EMAIL_API_KEY')) throw new Error('STAGING_AUTH_EMAIL_API_KEY_REQUIRED')
+          if (!names.has('AUTH_EMAIL_FROM')) throw new Error('STAGING_AUTH_EMAIL_FROM_REQUIRED')
+          NODE
+
       - name: Deploy exact release to staging
         working-directory: apps/edge-api
         run: npx wrangler deploy --env staging
