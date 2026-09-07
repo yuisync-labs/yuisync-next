@@ -23,4 +23,17 @@ describe('shared receipt contract', () => {
     expect(b).toMatchObject({ name: 'Tenant B', logoUrl: '/b.png', defaultFormat: 'a4' })
     expect(a.logoUrl).not.toBe(b.logoUrl)
   })
+
+  it('renders the selected preview format without inventing a static tenant logo', () => {
+    const html = buildReceiptDocument({
+      storeSettings: { business_name: 'Tenant sem logo', receipt_format: 'a4' },
+      title: 'Comprovante',
+      bodyHtml: '<div>Conteudo operacional</div>',
+    })
+    expect(html).toContain('data-receipt-format="a4"')
+    expect(html).toContain('58 mm')
+    expect(html).toContain('80 mm')
+    expect(html).toContain('A4 / PDF')
+    expect(html).not.toContain('quatro-patas-logo-mono.png')
+  })
 })
