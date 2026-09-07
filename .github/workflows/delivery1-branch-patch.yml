@@ -29,6 +29,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Align guarded patch with Agenda source
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply-delivery1-receipt-patch.mjs')
+          text = path.read_text()
+          old = """  text = replaceCount(text,
+              'writeAndPrint(receiptShell({ storeSettings, title, content }))',
+              'openReceiptPreview({ storeSettings, title, bodyHtml: content })',
+              2,
+              'AgendaResolved preview calls')"""
+          new = """  text = replaceOnce(text,
+              'writeAndPrint(receiptShell({ storeSettings, title, content }))',
+              'openReceiptPreview({ storeSettings, title, bodyHtml: content })',
+              'AgendaResolved single preview call')
+            text = replaceOnce(text,
+              \"writeAndPrint(receiptShell({ storeSettings, title: 'AGENDA DO DIA', content }))\",
+              \"openReceiptPreview({ storeSettings, title: 'AGENDA DO DIA', bodyHtml: content })\",
+              'AgendaResolved day preview call')"""
+          if text.count(old) != 1:
+              raise SystemExit('Agenda patch alignment source not found exactly once')
+          path.write_text(text.replace(old, new))
+          PY
+
       - name: Apply guarded patch
         run: node scripts/apply-delivery1-receipt-patch.mjs
 
