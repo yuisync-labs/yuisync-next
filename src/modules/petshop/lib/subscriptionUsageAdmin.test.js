@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildEditableUsage, clampSubscriptionUsage } from './subscriptionUsageAdmin'
+import {
+  benefitMovementDescription,
+  buildEditableUsage,
+  clampSubscriptionUsage,
+  normalizeBenefitLedger,
+} from './subscriptionUsageAdmin'
 
 const subscription = {
   subscription_plans: {
@@ -27,7 +32,13 @@ describe('subscription usage admin', () => {
       consumed: 1,
       reserved: 1,
       max_used: 3,
+      available: 0,
     })
+  })
+
+  it('shows available balance after persisted usage and reservations', () => {
+    const [bath] = buildEditableUsage(subscription)
+    expect(bath).toMatchObject({ total: 4, used: 3, reserved: 1, consumed: 1, manual_used: 2, available: 0 })
   })
 
   it('rejects instead of silently clamping an edit that collides with an open reservation', () => {
@@ -52,5 +63,40 @@ describe('subscription usage admin', () => {
       services_reserved: { banho: 0, motodog: 0 },
       services_consumed: { banho: 1, motodog: 0 },
     }, { banho: 4, motodog: 0 })).toEqual({ banho: 4, motodog: 0 })
+  })
+
+  it('keeps unlinked adjustments explicit instead of inventing an appointment origin', () => {
+    const [benefit] = normalizeBenefitLedger([{
+      benefit_key: 'banho',
+      label: 'Banho',
+      capacity: 4,
+      used: 2,
+      reserved: 1,
+      consumed: 1,
+      manual_or_historical: 1,
+      movements: [
+        {
+          id: 'base:banho',
+          kind: 'historical_or_manual_adjustment',
+          state: 'consumed',
+          quantity: 1,
+          appointment_id: null,
+          origin_known: false,
+        },
+        {
+          id: 'allocation-1',
+          kind: 'appointment',
+          state: 'consumed',
+          quantity: 1,
+          appointment_id: 'appointment-1',
+          origin_known: true,
+        },
+      ],
+    }])
+
+    expect(benefit.available).toBe(1)
+    expect(benefit.movements[0]).toMatchObject({ origin_known: false, appointment_id: null })
+    expect(benefitMovementDescription(benefit.movements[0])).toMatch(/sem vínculo com atendimento/)
+    expect(benefitMovementDescription(benefit.movements[1])).toBe('Consumido por atendimento concluído')
   })
 })
