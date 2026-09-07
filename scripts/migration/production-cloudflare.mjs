@@ -17,6 +17,7 @@ export const PRODUCTION = Object.freeze({
   queue: 'yuisync-events-production',
   dlq: 'yuisync-events-dlq-production',
   domain: 'yuisync.app',
+  recoveryEmailFrom: 'no-reply@yuisync.app',
 })
 
 const STAGING_IDS = new Set([
@@ -125,6 +126,7 @@ export function buildProductionWranglerConfig(baseConfig, resources, { attachDom
       APP_ENV: 'production',
       SERVICE_NAME: 'yuisync-edge-api',
       RELEASE_CHANNEL: 'production',
+      AUTH_EMAIL_FROM: PRODUCTION.recoveryEmailFrom,
       EDGE_DATABASE_ENABLED: 'true',
       EDGE_ASYNC_ENABLED: 'true',
       EDGE_COORDINATION_ENABLED: 'true',
