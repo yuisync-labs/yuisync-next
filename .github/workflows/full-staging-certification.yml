@@ -139,6 +139,21 @@ jobs:
           await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
           NODE
 
+      - name: Ensure staging password recovery secrets
+        working-directory: apps/edge-api
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' 'no-reply@yuisync.app' | npx wrangler secret put AUTH_EMAIL_FROM --env staging
+          SECRETS="$(npx wrangler secret list --env staging --format json)"
+          export SECRETS
+          node --input-type=module <<'NODE'
+          const secrets = JSON.parse(process.env.SECRETS || '[]')
+          const names = new Set(secrets.map((row) => String(row?.name || '')))
+          if (!names.has('AUTH_EMAIL_API_KEY')) throw new Error('STAGING_AUTH_EMAIL_API_KEY_REQUIRED')
+          if (!names.has('AUTH_EMAIL_FROM')) throw new Error('STAGING_AUTH_EMAIL_FROM_REQUIRED')
+          NODE
+
       - name: Deploy exact release to staging
         working-directory: apps/edge-api
         run: npx wrangler deploy --env staging
@@ -160,13 +175,14 @@ jobs:
           const ok = h?.status === 'ok'
             && r?.status === 'ready'
             && String(r?.checks?.schema_version) === '30'
+            && r?.checks?.password_recovery === 'configured'
             && String(v?.release_sha || '').toLowerCase() === String(process.env.RELEASE_SHA || '').toLowerCase()
           if (!ok) process.exit(1)
           NODE
             then matched=true; break; fi
             sleep 5
           done
-          [ "$matched" = true ] || { echo 'Exact staging release SHA was not observed'; cat /tmp/v.json || true; exit 1; }
+          [ "$matched" = true ] || { echo 'Exact staging release SHA was not observed with password recovery configured'; cat /tmp/r.json || true; cat /tmp/v.json || true; exit 1; }
           curl --fail --silent --show-error "$YUISYNC_STAGING_URL/" > /dev/null
 
       - name: Prepare ephemeral Better Auth browser users
@@ -236,6 +252,7 @@ jobs:
           echo '- D1 + AUTH_DB migrations: applied' >> "$GITHUB_STEP_SUMMARY"
           echo '- Runtime schema: v30' >> "$GITHUB_STEP_SUMMARY"
           echo '- /health + /ready + /release exact SHA: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Password recovery provider + sender: configured' >> "$GITHUB_STEP_SUMMARY"
           echo '- Better Auth sign-in + session HTTP smoke: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Browser E2E: passed against the exact published SHA' >> "$GITHUB_STEP_SUMMARY"
           echo '- Exact SHA rechecked after browser E2E: passed' >> "$GITHUB_STEP_SUMMARY"
