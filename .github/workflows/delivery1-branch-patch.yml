@@ -66,14 +66,28 @@ jobs:
         run: node scripts/apply-delivery1-receipt-patch.mjs
 
       - name: Validate focused receipt tests
-        run: npx vitest run test/agendaPrintCleanup.test.mjs test/tenantReceiptSettingsStatic.test.mjs test/receiptPrintContract.test.mjs
+        run: |
+          cat > vitest.delivery1.config.mjs <<'EOF'
+          import { defineConfig } from 'vitest/config'
+          export default defineConfig({
+            test: {
+              environment: 'node',
+              include: [
+                'test/agendaPrintCleanup.test.mjs',
+                'test/tenantReceiptSettingsStatic.test.mjs',
+                'test/receiptPrintContract.test.mjs',
+              ],
+            },
+          })
+          EOF
+          npx vitest run --config vitest.delivery1.config.mjs
 
       - name: Validate build
         run: npm run build
 
       - name: Commit migrated active flows
         run: |
-          rm .github/workflows/delivery1-branch-patch.yml scripts/apply-delivery1-receipt-patch.mjs
+          rm -f .github/workflows/delivery1-branch-patch.yml scripts/apply-delivery1-receipt-patch.mjs vitest.delivery1.config.mjs
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
