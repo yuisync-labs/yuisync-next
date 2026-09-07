@@ -6,7 +6,6 @@ const normalizeText = (value = '') => String(value || '')
 
 const transportPattern = /\b(motodog|moto\s*dog|transporte|entrega|delivery|frete|buscar|levar)\b/
 const genericBathTosaPattern = /^(banho[_\s-]*tosa|banho e tosa)$/
-const anyGroomingCommissionPattern = /\b(tosa|tosagem|tosar|trim|trimming|stripping)\w*/
 
 const itemText = (item = {}) => normalizeText([
   item.code,
@@ -45,14 +44,18 @@ const itemCategory = (item = {}, appointment = {}) => {
 
 const serviceCode = (value = {}) => String(value.code || value.service_type || value.value || '').trim()
 
-// Historical policy: a snapshot persisted on the appointment always wins.
-// Current catalog rate is used only to hydrate legacy rows that have no snapshot.
-const configuredCommissionPercent = (item = {}, category = 'other') => {
+// Historical policy: only a rule persisted with the appointment may calculate money.
+// Missing historical snapshots stay unresolved; current catalog configuration must not rewrite history.
+const recordedCommissionPercent = (item = {}) => {
   if (item.commission_rate !== null && item.commission_rate !== undefined && item.commission_rate !== '') {
     const rate = Number(item.commission_rate)
     if (Number.isFinite(rate) && rate >= 0) return rate
   }
-  return ['machine_grooming', 'scissor_grooming'].includes(category) ? 10 : 5
+  if (item.commission_basis_points !== null && item.commission_basis_points !== undefined && item.commission_basis_points !== '') {
+    const points = Number(item.commission_basis_points)
+    if (Number.isFinite(points) && points >= 0) return points / 100
+  }
+  return null
 }
 
 const enrichItemsFromCatalog = (items = [], services = []) => {
@@ -62,8 +65,7 @@ const enrichItemsFromCatalog = (items = [], services = []) => {
     if (!catalog) return item
     return {
       ...item,
-      commission_type: item.commission_type || catalog.commission_type || 'percentage',
-      commission_rate: item.commission_rate ?? catalog.commission_rate,
+      // Catalog metadata may improve labels/base visibility, but never supplies a historical commission rule.
       catalog_price: item.catalog_price ?? catalog.default_price ?? catalog.price,
     }
   })
@@ -99,10 +101,9 @@ export function hydrateLegacyCommissionAppointment(appointment = {}, services = 
       group_type: selected.group_type || 'banho_tosa',
       unit_price: appointmentPrice,
       catalog_price: selected.default_price ?? appointmentPrice,
-      commission_type: selected.commission_type || 'percentage',
-      commission_rate: selected.commission_rate,
       source_product_id: selected.source_product_id || null,
       inferred_from_legacy_price: true,
+      commission_snapshot_missing: true,
     }],
   }
 }
@@ -129,6 +130,7 @@ export function appointmentCommissionLines(appointment = {}) {
         unit_price: 0,
         catalog_price: benefit.catalog_price,
         commission_rate: benefit.commission_rate,
+        commission_basis_points: benefit.commission_basis_points,
         subscription_benefit_used: true,
         package_covered: true,
       }))
@@ -138,6 +140,8 @@ export function appointmentCommissionLines(appointment = {}) {
         service_type: appointment.service_type,
         group_type: appointment.service_group || 'banho_tosa',
         unit_price: appointment.price,
+        commission_rate: appointment.commission_rate,
+        commission_basis_points: appointment.commission_basis_points,
       }]
 
   const eligible = rawItems.filter((item) => {
@@ -184,25 +188,40 @@ export function appointmentCommissionLines(appointment = {}) {
         : eligible.length === 1
           ? Number(appointment.price || 0)
           : 0
-    const commissionPercent = configuredCommissionPercent({
+    const commissionPercent = recordedCommissionPercent({
       ...item,
       commission_rate: item.commission_rate ?? matchingBenefit?.commission_rate,
-    }, category)
-    const rate = commissionPercent / 100
+      commission_basis_points: item.commission_basis_points ?? matchingBenefit?.commission_basis_points,
+    })
+    const hasRecordedRule = commissionPercent !== null
+    const rate = hasRecordedRule ? commissionPercent / 100 : null
     const rawLabel = item.name || item.label || item.code || item.value || appointment.service_type || 'Servico estetico'
     const legacyGeneric = genericBathTosaPattern.test(normalizeText(item.service_type || item.code || appointment.service_type || ''))
     const baseLabel = legacyGeneric && category === 'bath' ? 'Banho (registro antigo)' : rawLabel
+    const baseSource = packageCovered
+      ? packageRevenue > 0 ? 'package_allocation' : 'catalog_reference'
+      : 'appointment_snapshot'
     return {
       appointment_id: appointment.id,
+      appointment_source: appointment.source || null,
+      scheduled_at: appointment.scheduled_at || null,
+      responsible_staff_key: appointment.responsible_staff_key || null,
+      responsible_staff_name: appointment.responsible_staff_name || null,
       category,
       code: item.code || item.value || item.service_type || appointment.service_type || '',
       label: packageCovered ? `${baseLabel} · PACOTE` : baseLabel,
       revenue: Math.max(0, revenue),
-      commission: Math.max(0, revenue) * rate,
+      base_source: baseSource,
+      commission: hasRecordedRule ? Math.max(0, revenue) * rate : null,
       rate,
       commission_rate: commissionPercent,
+      commission_rule_source: hasRecordedRule ? 'appointment_snapshot' : 'missing_snapshot',
+      commission_rule_label: hasRecordedRule ? `${Number(commissionPercent.toFixed(4))}%` : 'Regra histórica não registrada',
+      rule_snapshot_missing: !hasRecordedRule,
+      close_ready: Boolean(appointment.responsible_staff_key) && hasRecordedRule,
       package_covered: packageCovered,
       package_plan_name: item.package_plan_name || appointment.package_plan_name || '',
+      inferred_from_legacy_price: item.inferred_from_legacy_price === true,
     }
   })
 }
@@ -214,6 +233,28 @@ export function appointmentHasCommissionServices(appointment = {}) {
 export function commissionHistoryLabel(appointment = {}) {
   const labels = appointmentCommissionLines(appointment).map((line) => line.label).filter(Boolean)
   return [...new Set(labels)].join(' + ') || 'Servico estetico'
+}
+
+export function buildCommissionQueues(history = []) {
+  const pendingResponsible = []
+  const pendingRuleSnapshot = []
+  const ready = []
+
+  ;(history || []).forEach((appointment) => {
+    const lines = appointmentCommissionLines(appointment)
+    if (!lines.length) return
+    if (!String(appointment.responsible_staff_key || '').trim()) {
+      pendingResponsible.push(appointment)
+      return
+    }
+    if (lines.some((line) => line.rule_snapshot_missing)) {
+      pendingRuleSnapshot.push(appointment)
+      return
+    }
+    ready.push(appointment)
+  })
+
+  return { pendingResponsible, pendingRuleSnapshot, ready }
 }
 
 export function buildCommissionRows(history = [], configuredStaff = []) {
@@ -244,6 +285,7 @@ export function buildCommissionRows(history = [], configuredStaff = []) {
         other_service_commission: 0,
         package_commission: 0,
         total_commission: 0,
+        snapshot_missing_count: 0,
       })
     }
     const current = rows.get(key)
@@ -258,9 +300,13 @@ export function buildCommissionRows(history = [], configuredStaff = []) {
     if (!key) return
     const row = ensure(key, configuredNames.get(key) || appointment.responsible_staff_name || key)
     const lines = appointmentCommissionLines(appointment)
-    if (lines.some((line) => line.package_covered)) row.package_count += 1
+    if (lines.some((line) => line.package_covered && !line.rule_snapshot_missing)) row.package_count += 1
 
     lines.forEach((line) => {
+      if (line.rule_snapshot_missing || line.commission === null) {
+        row.snapshot_missing_count += 1
+        return
+      }
       row.service_count += 1
       row.service_revenue += line.revenue
       row.total_commission += line.commission
