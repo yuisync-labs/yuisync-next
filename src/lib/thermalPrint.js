@@ -1,32 +1,27 @@
 /**
  * Aguarda todas as imagens do documento antes de abrir a caixa de impressão.
- * O fechamento da janela acontece somente depois do evento `afterprint`, nunca
- * por um timeout curto que possa interromper o diálogo do navegador.
+ * Cada imagem precisa terminar com `load` ou `error`; nao existe timeout que
+ * force a impressao antes do documento estar estabilizado.
  */
-export function waitForPrintImages(printWindow, timeoutMs = 2500) {
+export function waitForPrintImages(printWindow) {
   const images = [...(printWindow?.document?.images || [])]
   const pending = images.filter((image) => !image.complete)
   if (!pending.length) return Promise.resolve()
 
-  const allSettled = Promise.all(pending.map((image) => new Promise((resolve) => {
+  return Promise.all(pending.map((image) => new Promise((resolve) => {
     const finish = () => resolve()
     image.addEventListener('load', finish, { once: true })
     image.addEventListener('error', finish, { once: true })
-  })))
-
-  return Promise.race([
-    allSettled,
-    new Promise((resolve) => setTimeout(resolve, Math.max(250, timeoutMs))),
-  ]).then(() => undefined)
+  }))).then(() => undefined)
 }
 
 export function printThermalReceipt(printWindow, options = {}) {
   if (!printWindow || printWindow.closed) return false
-  const { closeAfterPrint = true, imageTimeoutMs = 2500 } = options
+  const { closeAfterPrint = true } = options
   const nextFrame = printWindow.requestAnimationFrame || ((callback) => setTimeout(callback, 0))
 
   nextFrame(async () => {
-    await waitForPrintImages(printWindow, imageTimeoutMs)
+    await waitForPrintImages(printWindow)
     if (printWindow.closed) return
 
     if (closeAfterPrint) {
