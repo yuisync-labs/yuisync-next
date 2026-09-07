@@ -60,8 +60,55 @@ export function buildEditableUsage(subscription = {}) {
       manual_used: Math.max(0, used - consumed),
       max_used: maxUsed,
       used,
+      available: Math.max(0, total - used - reserved),
     }
   })
+}
+
+export function normalizeBenefitLedger(ledger = []) {
+  return (Array.isArray(ledger) ? ledger : []).map((item) => {
+    const capacity = Math.max(0, Math.trunc(Number(item?.capacity || 0)))
+    const used = Math.max(0, Math.trunc(Number(item?.used || 0)))
+    const reserved = Math.max(0, Math.trunc(Number(item?.reserved || 0)))
+    const consumed = Math.max(0, Math.trunc(Number(item?.consumed || 0)))
+    const manualOrHistorical = Math.max(0, Math.trunc(Number(item?.manual_or_historical || 0)))
+    return {
+      benefit_key: String(item?.benefit_key || '').trim(),
+      label: String(item?.label || item?.benefit_key || 'Benefício').trim(),
+      capacity,
+      used,
+      reserved,
+      consumed,
+      manual_or_historical: manualOrHistorical,
+      available: Math.max(0, Number.isFinite(Number(item?.available))
+        ? Math.trunc(Number(item.available))
+        : capacity - used - reserved),
+      movements: (Array.isArray(item?.movements) ? item.movements : []).map((movement) => ({
+        id: String(movement?.id || '').trim(),
+        kind: movement?.kind === 'appointment' ? 'appointment' : 'historical_or_manual_adjustment',
+        state: ['reserved', 'consumed', 'released'].includes(String(movement?.state || ''))
+          ? String(movement.state)
+          : 'consumed',
+        quantity: Math.max(1, Math.trunc(Number(movement?.quantity || 1))),
+        appointment_id: movement?.appointment_id ? String(movement.appointment_id) : null,
+        appointment_status: movement?.appointment_status ? String(movement.appointment_status) : null,
+        scheduled_at: movement?.scheduled_at || null,
+        recorded_at: movement?.recorded_at || null,
+        service_code: movement?.service_code ? String(movement.service_code) : null,
+        label: String(movement?.label || item?.label || item?.benefit_key || 'Benefício').trim(),
+        origin_known: movement?.origin_known === true && Boolean(movement?.appointment_id),
+      })),
+    }
+  }).filter((item) => item.benefit_key)
+}
+
+export function benefitMovementDescription(movement = {}) {
+  if (movement.kind !== 'appointment' || !movement.appointment_id) {
+    return 'Ajuste histórico/manual sem vínculo com atendimento'
+  }
+  if (movement.state === 'reserved') return 'Reservado por agendamento'
+  if (movement.state === 'released') return 'Reserva liberada pelo atendimento'
+  return 'Consumido por atendimento concluído'
 }
 
 export function clampSubscriptionUsage(subscription = {}, requested = {}) {
