@@ -13,8 +13,18 @@ const SUPPORTED_BUSINESS_MODULES = ['petshop']
 const OPERATIONAL_STAFF_TEMPLATE_KEY = '__petshop_operational_staff'
 
 function neutralStoreSettings(tenantName = '', moduleId = null) {
+  const businessName = String(tenantName || '').trim() || 'Estabelecimento'
   return {
-    store_name: String(tenantName || '').trim() || 'Estabelecimento',
+    business_name: businessName,
+    business_address: '',
+    business_phone: '',
+    business_email: '',
+    business_tax_id: '',
+    logo_url: '',
+    receipt_format: '80',
+    receipt_footer: '',
+    // Compatibilidade temporaria para telas ainda nao migradas.
+    store_name: businessName,
     store_address: '',
     store_neighborhood: '',
     store_city: '',
@@ -22,6 +32,37 @@ function neutralStoreSettings(tenantName = '', moduleId = null) {
     receipt_logo_data_url: '',
     printer_width: '80',
     module_id: moduleId,
+  }
+}
+
+function normalizeStoreSettings(row = {}, tenantName = '', moduleId = null) {
+  const receiptFormat = row.receipt_format === '58' || row.receipt_format === 'a4'
+    ? row.receipt_format
+    : row.receipt_format === '80' ? '80' : row.printer_width === '58' ? '58' : '80'
+  const businessName = String(row.business_name || row.store_name || tenantName || '').trim() || 'Estabelecimento'
+  const businessAddress = String(row.business_address || row.store_address || '')
+  const businessPhone = String(row.business_phone || row.store_phone || '')
+  const logoUrl = String(row.logo_url || row.receipt_logo_data_url || '')
+  return {
+    ...neutralStoreSettings(tenantName, moduleId),
+    ...row,
+    business_name: businessName,
+    business_address: businessAddress,
+    business_phone: businessPhone,
+    business_email: String(row.business_email || ''),
+    business_tax_id: String(row.business_tax_id || ''),
+    logo_url: logoUrl,
+    receipt_format: receiptFormat,
+    receipt_footer: String(row.receipt_footer || ''),
+    store_name: businessName,
+    store_address: businessAddress,
+    store_phone: businessPhone,
+    receipt_logo_data_url: logoUrl,
+    printer_width: receiptFormat === '58' ? '58' : '80',
+    module_id: moduleId,
+    petshop_operational_staff: normalizeOperationalStaff(
+      row.petshop_operational_staff ?? row.message_templates?.[OPERATIONAL_STAFF_TEMPLATE_KEY],
+    ),
   }
 }
 
@@ -69,13 +110,14 @@ export function AuthProvider({ children }) {
   const updateStoreSettings = useCallback((patch) => {
     setStoreSettings((current) => {
       const next = typeof patch === 'function' ? patch(current) : patch
-      return { ...current, ...(next || {}) }
+      return normalizeStoreSettings({ ...current, ...(next || {}) }, current.business_name, current.module_id)
     })
   }, [])
 
   const selectTenant = useCallback((tenantId, tenantName = '') => {
     activeTenantIdRef.current = tenantId || null
     setActiveTenantId(tenantId || null)
+    // Limpa a identidade imediatamente para nunca exibir a marca do tenant anterior.
     setStoreSettings(neutralStoreSettings(tenantName))
     writeStoredActiveTenant(tenantId || null)
   }, [])
@@ -158,17 +200,7 @@ export function AuthProvider({ children }) {
     try {
       const response = await getAppSettings({ tenantId: requestedTenantId, moduleId })
       if (activeTenantIdRef.current !== requestedTenantId) return
-      const row = response?.settings || {}
-      setStoreSettings({
-        ...neutralStoreSettings(activeTenant?.name, moduleId),
-        ...row,
-        module_id: moduleId,
-        printer_width: row.printer_width === '58' ? '58' : '80',
-        receipt_logo_data_url: String(row.receipt_logo_data_url || ''),
-        petshop_operational_staff: normalizeOperationalStaff(
-          row.petshop_operational_staff ?? row.message_templates?.[OPERATIONAL_STAFF_TEMPLATE_KEY],
-        ),
-      })
+      setStoreSettings(normalizeStoreSettings(response?.settings || {}, activeTenant?.name, moduleId))
     } catch (error) {
       if (activeTenantIdRef.current !== requestedTenantId) return
       if (error?.status === 404) {
