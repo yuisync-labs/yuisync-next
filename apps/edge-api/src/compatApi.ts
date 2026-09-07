@@ -29,6 +29,7 @@ type CompatQueryBody = Record<string, unknown> & {
   orders?: unknown
   conflict?: unknown
   mode?: unknown
+  payload?: unknown
 }
 
 const LEGACY_TIMESTAMP_COLUMNS: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
@@ -70,6 +71,23 @@ const LEGACY_VIEW_TIMESTAMP_COLUMNS: Readonly<Record<string, ReadonlySet<string>
   sales: new Set(['created_at', 'updated_at']),
 })
 
+const NATIVE_COMPANY_SETTING_FIELDS = new Set([
+  'business_name',
+  'business_address',
+  'business_phone',
+  'business_email',
+  'business_tax_id',
+  'logo_url',
+  'receipt_format',
+  'receipt_footer',
+  // aliases antigos que nao podem mais voltar a gravar pela compatibilidade
+  'store_name',
+  'store_address',
+  'store_phone',
+  'printer_width',
+  'receipt_logo_data_url',
+])
+
 function epochFilterValue(value: unknown): unknown {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value !== 'string' || !value.trim()) return value
@@ -88,6 +106,16 @@ function asObject(value: unknown): CompatQueryBody {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? { ...(value as CompatQueryBody) }
     : {}
+}
+
+function stripNativeCompanySettings(value: unknown): unknown {
+  const stripRow = (row: unknown) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return row
+    const next = { ...(row as Record<string, unknown>) }
+    for (const field of NATIVE_COMPANY_SETTING_FIELDS) delete next[field]
+    return next
+  }
+  return Array.isArray(value) ? value.map(stripRow) : stripRow(value)
 }
 
 function mapColumn(table: string, column: unknown): unknown {
@@ -138,6 +166,9 @@ export function normalizeBaseCompatQueryBody(value: unknown): CompatQueryBody {
   const table = typeof body.table === 'string' ? body.table : ''
   body.filters = rewriteFilters(table, body.filters)
   body.orders = rewriteOrders(table, body.orders)
+  if (table === 'settings' && body.payload !== undefined) {
+    body.payload = stripNativeCompanySettings(body.payload)
+  }
 
   if (typeof body.conflict === 'string') {
     body.conflict = body.conflict
