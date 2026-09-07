@@ -1,0 +1,49 @@
+name: Delivery1 branch patch
+
+on:
+  push:
+    branches:
+      - codex/tenant-settings-receipts
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/tenant-settings-receipts
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply guarded patch
+        run: node scripts/apply-delivery1-receipt-patch.mjs
+
+      - name: Validate focused receipt tests
+        run: npx vitest run test/agendaPrintCleanup.test.mjs test/tenantReceiptSettingsStatic.test.mjs test/receiptPrintContract.test.mjs
+
+      - name: Validate build
+        run: npm run build
+
+      - name: Commit migrated active flows
+        run: |
+          rm .github/workflows/delivery1-branch-patch.yml scripts/apply-delivery1-receipt-patch.mjs
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m "feat(receipts): migrate active print flows" || exit 0
+          git push origin HEAD:codex/tenant-settings-receipts
