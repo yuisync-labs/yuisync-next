@@ -29,18 +29,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Align guarded patch with Agenda source
+      - name: Align guarded patch with current sources
         run: |
           python - <<'PY'
           from pathlib import Path
           path = Path('scripts/apply-delivery1-receipt-patch.mjs')
           text = path.read_text()
-          old = """  text = replaceCount(text,
+
+          agenda_old = """  text = replaceCount(text,
               'writeAndPrint(receiptShell({ storeSettings, title, content }))',
               'openReceiptPreview({ storeSettings, title, bodyHtml: content })',
               2,
               'AgendaResolved preview calls')"""
-          new = """  text = replaceOnce(text,
+          agenda_new = """  text = replaceOnce(text,
               'writeAndPrint(receiptShell({ storeSettings, title, content }))',
               'openReceiptPreview({ storeSettings, title, bodyHtml: content })',
               'AgendaResolved single preview call')
@@ -48,9 +49,17 @@ jobs:
               \"writeAndPrint(receiptShell({ storeSettings, title: 'AGENDA DO DIA', content }))\",
               \"openReceiptPreview({ storeSettings, title: 'AGENDA DO DIA', bodyHtml: content })\",
               'AgendaResolved day preview call')"""
-          if text.count(old) != 1:
+          if text.count(agenda_old) != 1:
               raise SystemExit('Agenda patch alignment source not found exactly once')
-          path.write_text(text.replace(old, new))
+          text = text.replace(agenda_old, agenda_new)
+
+          commission_old = r"/  function printHistory\(\) \{[\s\S]*?\n  \}\n$/"
+          commission_new = r"/  function printHistory\(\) \{[\s\S]*?\n  \}/"
+          if text.count(commission_old) != 1:
+              raise SystemExit('Commission patch alignment source not found exactly once')
+          text = text.replace(commission_old, commission_new)
+
+          path.write_text(text)
           PY
 
       - name: Apply guarded patch
