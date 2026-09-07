@@ -17,7 +17,8 @@ export function escapeReceiptHtml(value = '') {
 
 export function normalizeReceiptFormat(value, fallback = '80') {
   if (value === '58' || value === '80' || value === 'a4') return value
-  return fallback === '58' ? '58' : '80'
+  if (fallback === '58' || fallback === '80' || fallback === 'a4') return fallback
+  return '80'
 }
 
 export function isSafeReceiptImageSource(value) {
@@ -30,18 +31,22 @@ export function isSafeReceiptImageSource(value) {
 }
 
 export function resolveReceiptIdentity(settings = {}, tenantName = '') {
-  const logoCandidate = settings.receipt_logo_data_url || settings.store_logo_url || settings.logo_url || ''
-  const address = [settings.store_address, settings.store_neighborhood, settings.store_city]
+  const logoCandidate = settings.logo_url || settings.receipt_logo_data_url || settings.store_logo_url || ''
+  const legacyAddress = [settings.store_address, settings.store_neighborhood, settings.store_city]
     .map((part) => String(part || '').trim())
     .filter(Boolean)
     .join(' - ')
+  const format = settings.receipt_format || settings.printer_width
 
   return {
-    name: String(settings.store_name || tenantName || 'Estabelecimento').trim() || 'Estabelecimento',
-    phone: String(settings.store_phone || '').trim(),
-    address,
+    name: String(settings.business_name || settings.store_name || tenantName || 'Estabelecimento').trim() || 'Estabelecimento',
+    phone: String(settings.business_phone || settings.store_phone || '').trim(),
+    address: String(settings.business_address || legacyAddress || '').trim(),
+    email: String(settings.business_email || '').trim(),
+    taxId: String(settings.business_tax_id || '').trim(),
+    footer: String(settings.receipt_footer || '').trim(),
     logoUrl: isSafeReceiptImageSource(logoCandidate) ? String(logoCandidate).trim() : '',
-    defaultFormat: normalizeReceiptFormat(settings.printer_width, '80'),
+    defaultFormat: normalizeReceiptFormat(format, '80'),
   }
 }
 
@@ -52,6 +57,8 @@ function identityHeader(identity) {
       <div class="receipt-store-name">${escapeReceiptHtml(identity.name)}</div>
       ${identity.address ? `<div class="receipt-store-line">${escapeReceiptHtml(identity.address)}</div>` : ''}
       ${identity.phone ? `<div class="receipt-store-line">${escapeReceiptHtml(identity.phone)}</div>` : ''}
+      ${identity.email ? `<div class="receipt-store-line">${escapeReceiptHtml(identity.email)}</div>` : ''}
+      ${identity.taxId ? `<div class="receipt-store-line">${escapeReceiptHtml(identity.taxId)}</div>` : ''}
     </header>
   `
 }
@@ -85,36 +92,36 @@ export function buildReceiptDocument({ storeSettings = {}, tenantName = '', titl
     .receipt-store-line { margin-top: 2px; font-size: 9px; line-height: 1.35; overflow-wrap: anywhere; }
     .receipt-title { margin: 3mm 0 2mm; border-top: 1px dashed #111; border-bottom: 1px dashed #111; padding: 1.8mm 0; font-size: 12px; line-height: 1.25; font-weight: 900; text-transform: uppercase; overflow-wrap: anywhere; }
     .receipt-operational-note { margin: 0 0 3mm; font-size: 8px; line-height: 1.3; color: #444; text-align: center; }
-    .receipt-section { margin-top: 3mm; }
-    .receipt-section-title { margin-bottom: 1.2mm; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .03em; }
-    .receipt-row { display: grid; grid-template-columns: minmax(18mm, 30%) minmax(0, 1fr); gap: 2mm; padding: .8mm 0; font-size: 10px; line-height: 1.35; border-bottom: 1px dotted #bbb; }
-    .receipt-row > strong { font-size: 8.5px; text-transform: uppercase; }
-    .receipt-row > span { min-width: 0; overflow-wrap: anywhere; }
+    .receipt-section, .details, .appointment { margin-top: 3mm; }
+    .receipt-section-title, .appointment-title { margin-bottom: 1.2mm; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .03em; }
+    .receipt-row, .line, .appointment-line { display: grid; grid-template-columns: minmax(18mm, 30%) minmax(0, 1fr); gap: 2mm; padding: .8mm 0; font-size: 10px; line-height: 1.35; border-bottom: 1px dotted #bbb; }
+    .receipt-row > strong, .line > strong, .appointment-line > strong { font-size: 8.5px; text-transform: uppercase; }
+    .receipt-row > span, .line > span, .appointment-line > span { min-width: 0; overflow-wrap: anywhere; }
     .receipt-rule { border-top: 1px dashed #111; margin: 2.5mm 0; }
     .receipt-table-wrap { width: 100%; overflow: visible; }
-    .receipt-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9px; }
-    .receipt-table th, .receipt-table td { padding: 1.4mm .8mm; border-bottom: 1px dotted #aaa; text-align: left; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }
-    .receipt-table th { font-size: 7.5px; text-transform: uppercase; border-bottom: 1px solid #111; }
+    .receipt-table, table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9px; }
+    .receipt-table th, .receipt-table td, table th, table td { padding: 1.4mm .8mm; border-bottom: 1px dotted #aaa; text-align: left; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }
+    .receipt-table th, table th { font-size: 7.5px; text-transform: uppercase; border-bottom: 1px solid #111; }
     .receipt-table .money, .money { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .receipt-table .qty { width: 9mm; text-align: center; }
     .receipt-total { display: flex; justify-content: space-between; gap: 4mm; padding-top: 1.5mm; font-size: 12px; font-weight: 900; }
     .receipt-meta { margin-bottom: 2.5mm; font-size: 9px; line-height: 1.4; color: #333; overflow-wrap: anywhere; }
-    .receipt-footer { margin-top: 4mm; text-align: center; font-size: 8px; line-height: 1.35; color: #444; }
-    html[data-receipt-format="58"] .receipt-row { grid-template-columns: 16mm minmax(0,1fr); gap: 1mm; font-size: 9px; }
-    html[data-receipt-format="58"] .receipt-table { font-size: 7.5px; }
-    html[data-receipt-format="58"] .receipt-table th, html[data-receipt-format="58"] .receipt-table td { padding: 1.1mm .45mm; }
+    .receipt-footer { margin-top: 4mm; text-align: center; font-size: 8px; line-height: 1.35; color: #444; white-space: pre-line; overflow-wrap: anywhere; }
+    html[data-receipt-format="58"] .receipt-row, html[data-receipt-format="58"] .line, html[data-receipt-format="58"] .appointment-line { grid-template-columns: 16mm minmax(0,1fr); gap: 1mm; font-size: 9px; }
+    html[data-receipt-format="58"] .receipt-table, html[data-receipt-format="58"] table { font-size: 7.5px; }
+    html[data-receipt-format="58"] .receipt-table th, html[data-receipt-format="58"] .receipt-table td, html[data-receipt-format="58"] table th, html[data-receipt-format="58"] table td { padding: 1.1mm .45mm; }
     html[data-receipt-format="58"] .receipt-table .money { white-space: normal; text-align: right; }
     html[data-receipt-format="58"] .receipt-store-name { font-size: 12px; }
     html[data-receipt-format="a4"] .receipt-store-name { font-size: 18px; }
     html[data-receipt-format="a4"] .receipt-store-line { font-size: 10px; }
     html[data-receipt-format="a4"] .receipt-title { font-size: 15px; }
-    html[data-receipt-format="a4"] .receipt-table { font-size: 10px; }
+    html[data-receipt-format="a4"] .receipt-table, html[data-receipt-format="a4"] table { font-size: 10px; }
     @media print {
       html, body { background: #fff !important; min-height: 0 !important; overflow: visible !important; }
       .preview-toolbar { display: none !important; }
       .paper { width: var(--paper-width); min-height: 0 !important; margin: 0 auto; padding: var(--paper-padding); box-shadow: none; break-after: avoid-page; }
       .receipt { min-height: 0 !important; overflow: visible !important; }
-      .receipt-table tr, .receipt-section { break-inside: avoid; page-break-inside: avoid; }
+      .receipt-table tr, .receipt-section, .appointment { break-inside: avoid; page-break-inside: avoid; }
     }
   </style>
 </head>
@@ -130,6 +137,7 @@ export function buildReceiptDocument({ storeSettings = {}, tenantName = '', titl
       <div class="receipt-title center">${escapeReceiptHtml(title || 'Comprovante operacional')}</div>
       <div class="receipt-operational-note">Comprovante operacional — sem validade fiscal.</div>
       ${bodyHtml}
+      ${identity.footer ? `<div class="receipt-footer">${escapeReceiptHtml(identity.footer)}</div>` : ''}
       <div class="receipt-footer">Gerado em ${escapeReceiptHtml(new Date().toLocaleString('pt-BR'))}</div>
     </main>
   </div>
