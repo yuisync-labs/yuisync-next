@@ -1,0 +1,113 @@
+name: Delivery1 refresh transaction contracts
+
+on:
+  push:
+    branches:
+      - codex/tenant-settings-receipts
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/tenant-settings-receipts
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Refresh obsolete fixed-width receipt contracts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('test/transactionalStatic.test.mjs')
+          text = path.read_text()
+
+          order_pattern = re.compile(
+              r"test\('ordem impressa usa a largura nativa da Print iD sem forcar altura',[\s\S]*?\n\}\)\n\n(?=test\('ordem PetBot)",
+          )
+          order_replacement = r'''test('ordem impressa usa a camada compartilhada e preserva dados operacionais', async () => {
+            const source = await read('src/modules/petshop/pages/OrdensEntregaPage.jsx')
+            assert.match(source, /openReceiptPreview\(\{/)
+            assert.match(source, /storeSettings,/)
+            assert.match(source, /CONFERENCIA \/ ORDEM DE ENTREGA/)
+            assert.match(source, /receipt-table/)
+            assert.match(source, /completeClientAddress/)
+            assert.match(source, /order\.delivery_reference/)
+            assert.match(source, /client\.address/)
+            assert.match(source, /client\.neighborhood/)
+            assert.match(source, /const address = completeClientAddress\(order\) \|\| orderOriginAddress\(order\)/)
+            assert.doesNotMatch(source, /quatro-patas-logo-mono\.png/)
+            assert.doesNotMatch(source, /const width = '80mm'/)
+          })
+
+'''
+          text, order_count = order_pattern.subn(order_replacement, text, count=1)
+          if order_count != 1:
+              raise SystemExit(f'order receipt contract: expected 1 match, got {order_count}')
+
+          shared_pattern = re.compile(
+              r"test\('todos os comprovantes usam a largura 80mm da Print iD',[\s\S]*?\n\}\)\n\n(?=test\('importacao legado)",
+          )
+          shared_replacement = r'''test('comprovantes operacionais usam a camada compartilhada com 58mm, 80mm e A4', async () => {
+            const receipt = await read('src/lib/receiptPrint.js')
+            const thermal = await read('src/lib/thermalPrint.js')
+            const receiptFiles = [
+              'src/modules/petshop/pages/AgendaPage.jsx',
+              'src/modules/petshop/pages/AgendaResolvedPage.jsx',
+              'src/modules/petshop/pages/VendasPage.jsx',
+              'src/modules/petshop/pages/OrdensEntregaPage.jsx',
+              'src/modules/petshop/pages/EquipePage.jsx',
+            ]
+
+            for (const file of receiptFiles) {
+              const source = await read(file)
+              assert.match(source, /openReceiptPreview/)
+            }
+
+            assert.match(receipt, /'58': \{ label: '58 mm'/)
+            assert.match(receipt, /'80': \{ label: '80 mm'/)
+            assert.match(receipt, /a4: \{ label: 'A4 \/ PDF'/)
+            assert.match(receipt, /data-receipt-format/)
+            assert.match(receipt, /@page \{ size: A4 portrait; margin: 0; \}/)
+            assert.match(receipt, /Comprovante operacional/)
+            assert.doesNotMatch(receipt, /quatro-patas-logo-mono\.png/)
+            assert.match(thermal, /waitForPrintImages/)
+            assert.doesNotMatch(thermal, /setTimeout\([^\n]*1500/)
+          })
+
+'''
+          text, shared_count = shared_pattern.subn(shared_replacement, text, count=1)
+          if shared_count != 1:
+              raise SystemExit(f'shared receipt contract: expected 1 match, got {shared_count}')
+
+          path.write_text(text)
+          PY
+
+      - name: Run transaction and contract tests
+        run: npm run test:transactions
+
+      - name: Commit refreshed contracts
+        run: |
+          rm .github/workflows/delivery1-refresh-transaction-contracts.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m "test(receipts): align transaction contracts with shared printing"
+          git push origin HEAD:codex/tenant-settings-receipts
