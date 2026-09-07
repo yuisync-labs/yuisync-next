@@ -5,6 +5,11 @@ const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 async function apiRequest(path, options = {}) {
   if (isVisualPreviewSession()) {
     if (path.startsWith('/app/settings')) {
+      if ((options.method || 'GET').toUpperCase() !== 'GET') {
+        const previewError = new Error('O modo visual local não salva alterações.')
+        previewError.code = 'VISUAL_PREVIEW_READ_ONLY'
+        throw previewError
+      }
       return {
         settings: {
           store_name: 'Ambiente de demonstração',
@@ -48,6 +53,14 @@ export function getAppBootstrap() {
 export function getAppSettings({ tenantId, moduleId }) {
   const params = new URLSearchParams({ tenant_id: tenantId, module_id: moduleId })
   return apiRequest(`/app/settings?${params.toString()}`, { method: 'GET' })
+}
+
+export function patchAppSettings({ tenantId, moduleId, patch }) {
+  const params = new URLSearchParams({ tenant_id: tenantId, module_id: moduleId })
+  return apiRequest(`/app/settings?${params.toString()}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
 }
 
 export async function createAppTenant(name) {
