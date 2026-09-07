@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 
 import { createAppTenant, getAppSettings } from '../lib/api'
@@ -11,6 +11,19 @@ export const AuthContext = createContext(null)
 const ACTIVE_TENANT_KEY = '@yui_active_tenant'
 const SUPPORTED_BUSINESS_MODULES = ['petshop']
 const OPERATIONAL_STAFF_TEMPLATE_KEY = '__petshop_operational_staff'
+
+function neutralStoreSettings(tenantName = '', moduleId = null) {
+  return {
+    store_name: String(tenantName || '').trim() || 'Estabelecimento',
+    store_address: '',
+    store_neighborhood: '',
+    store_city: '',
+    store_phone: '',
+    receipt_logo_data_url: '',
+    printer_width: '80',
+    module_id: moduleId,
+  }
+}
 
 function readStoredActiveTenant() {
   try {
@@ -45,17 +58,10 @@ function modulesForTenant(tenant) {
 export function AuthProvider({ children }) {
   const auth = useAuth()
   const location = useLocation()
-  const [storeSettings, setStoreSettings] = useState({
-    store_name: '',
-    store_address: '',
-    store_neighborhood: '',
-    store_city: '',
-    store_phone: '',
-    printer_width: '80',
-    module_id: null,
-  })
+  const [storeSettings, setStoreSettings] = useState(() => neutralStoreSettings())
   const [tenants, setTenants] = useState([])
   const [activeTenantId, setActiveTenantId] = useState(null)
+  const activeTenantIdRef = useRef(null)
   const [tenantLoading, setTenantLoading] = useState(false)
   const [tenantError, setTenantError] = useState('')
   const [tenantEnabledModules, setTenantEnabledModules] = useState(['petshop'])
@@ -67,10 +73,17 @@ export function AuthProvider({ children }) {
     })
   }, [])
 
+  const selectTenant = useCallback((tenantId, tenantName = '') => {
+    activeTenantIdRef.current = tenantId || null
+    setActiveTenantId(tenantId || null)
+    setStoreSettings(neutralStoreSettings(tenantName))
+    writeStoredActiveTenant(tenantId || null)
+  }, [])
+
   const loadTenantScope = useCallback(async () => {
     if (!auth.session?.user?.id) {
       setTenants([])
-      setActiveTenantId(null)
+      selectTenant(null)
       setTenantEnabledModules(['petshop'])
       setTenantError('')
       return
@@ -82,38 +95,37 @@ export function AuthProvider({ children }) {
       const latest = await auth.refreshAuth()
       const nextTenants = Array.isArray(latest?.tenants) ? latest.tenants : []
       setTenants(nextTenants)
-      setActiveTenantId((current) => {
-        const validIds = new Set(nextTenants.map((tenant) => tenant.id))
-        const next = current && validIds.has(current) ? current : pickActiveTenantId(nextTenants)
-        writeStoredActiveTenant(next)
-        return next
-      })
+      const current = activeTenantIdRef.current
+      const validIds = new Set(nextTenants.map((tenant) => tenant.id))
+      const next = current && validIds.has(current) ? current : pickActiveTenantId(nextTenants)
+      const tenantName = nextTenants.find((tenant) => tenant.id === next)?.name || ''
+      if (next !== activeTenantIdRef.current) selectTenant(next, tenantName)
+      else writeStoredActiveTenant(next)
     } catch (error) {
       setTenants([])
-      setActiveTenantId(null)
+      selectTenant(null)
       setTenantError(error instanceof Error ? error.message : 'Nao foi possivel carregar as instancias.')
     } finally {
       setTenantLoading(false)
     }
-  }, [auth.session?.user?.id, auth.refreshAuth])
+  }, [auth.session?.user?.id, auth.refreshAuth, selectTenant])
 
   useEffect(() => {
     const bootstrapTenants = Array.isArray(auth.bootstrap?.tenants) ? auth.bootstrap.tenants : []
     setTenants(bootstrapTenants)
-    setActiveTenantId((current) => {
-      const validIds = new Set(bootstrapTenants.map((tenant) => tenant.id))
-      const next = current && validIds.has(current) ? current : pickActiveTenantId(bootstrapTenants)
-      writeStoredActiveTenant(next)
-      return next
-    })
-  }, [auth.bootstrap])
+    const current = activeTenantIdRef.current
+    const validIds = new Set(bootstrapTenants.map((tenant) => tenant.id))
+    const next = current && validIds.has(current) ? current : pickActiveTenantId(bootstrapTenants)
+    const tenantName = bootstrapTenants.find((tenant) => tenant.id === next)?.name || ''
+    if (next !== activeTenantIdRef.current) selectTenant(next, tenantName)
+    else writeStoredActiveTenant(next)
+  }, [auth.bootstrap, selectTenant])
 
   const switchTenant = useCallback(async (tenantId) => {
-    const allowed = tenants.some((tenant) => tenant.id === tenantId)
-    if (!allowed) throw new Error('Acesso a esta instancia nao foi autorizado.')
-    setActiveTenantId(tenantId)
-    writeStoredActiveTenant(tenantId)
-  }, [tenants])
+    const tenant = tenants.find((candidate) => candidate.id === tenantId)
+    if (!tenant) throw new Error('Acesso a esta instancia nao foi autorizado.')
+    selectTenant(tenantId, tenant.name)
+  }, [tenants, selectTenant])
 
   const createTenant = useCallback(async (name) => {
     const cleanName = String(name || '').trim()
@@ -122,11 +134,10 @@ export function AuthProvider({ children }) {
     const latest = await auth.refreshAuth()
     const nextTenants = Array.isArray(latest?.tenants) ? latest.tenants : []
     setTenants(nextTenants)
-    const selected = nextTenants.find((tenant) => tenant.id === created.id)?.id || created.id
-    setActiveTenantId(selected)
-    writeStoredActiveTenant(selected)
+    const selectedTenant = nextTenants.find((tenant) => tenant.id === created.id) || created
+    selectTenant(selectedTenant.id, selectedTenant.name)
     return created
-  }, [auth.refreshAuth])
+  }, [auth.refreshAuth, selectTenant])
 
   const activeTenant = useMemo(
     () => tenants.find((tenant) => tenant.id === activeTenantId) || null,
@@ -143,38 +154,45 @@ export function AuthProvider({ children }) {
 
   const loadSettings = useCallback(async (moduleId) => {
     if (!moduleId || !activeTenantId || !auth.session?.user?.id) return
+    const requestedTenantId = activeTenantId
     try {
-      const response = await getAppSettings({ tenantId: activeTenantId, moduleId })
+      const response = await getAppSettings({ tenantId: requestedTenantId, moduleId })
+      if (activeTenantIdRef.current !== requestedTenantId) return
       const row = response?.settings || {}
       setStoreSettings({
+        ...neutralStoreSettings(activeTenant?.name, moduleId),
         ...row,
         module_id: moduleId,
-        printer_width: row.printer_width || '80',
+        printer_width: row.printer_width === '58' ? '58' : '80',
+        receipt_logo_data_url: String(row.receipt_logo_data_url || ''),
         petshop_operational_staff: normalizeOperationalStaff(
           row.petshop_operational_staff ?? row.message_templates?.[OPERATIONAL_STAFF_TEMPLATE_KEY],
         ),
       })
     } catch (error) {
+      if (activeTenantIdRef.current !== requestedTenantId) return
       if (error?.status === 404) {
-        setStoreSettings({ store_name: activeTenant?.name || 'YUI Sync', module_id: moduleId, printer_width: '80' })
+        setStoreSettings(neutralStoreSettings(activeTenant?.name, moduleId))
         return
       }
       console.error('Falha ao carregar configuracoes:', error)
-      setStoreSettings({ store_name: '', module_id: null, printer_width: '80' })
+      setStoreSettings(neutralStoreSettings(activeTenant?.name))
     }
   }, [activeTenantId, activeTenant?.name, auth.session?.user?.id])
 
   useEffect(() => {
     if (!auth.session?.user?.id || !activeTenantId) {
-      setStoreSettings({ store_name: '', module_id: null, printer_width: '80' })
+      activeTenantIdRef.current = activeTenantId || null
+      setStoreSettings(neutralStoreSettings())
       return
     }
+    activeTenantIdRef.current = activeTenantId
     const parts = location.pathname.split('/').filter(Boolean)
     const routeModuleId = parts[0] || null
     if (routeModuleId && tenantEnabledModules.includes(routeModuleId)) {
       loadSettings(routeModuleId)
     } else {
-      setStoreSettings({ store_name: activeTenant?.name || 'YUI Sync', module_id: null, printer_width: '80' })
+      setStoreSettings(neutralStoreSettings(activeTenant?.name))
     }
   }, [auth.session?.user?.id, activeTenantId, activeTenant?.name, location.pathname, tenantEnabledModules, loadSettings])
 
