@@ -1,18 +1,27 @@
-import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { Image as ImageIcon, Save, Trash2, Upload } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Building2, Image as ImageIcon, Printer, RefreshCw, Save, Trash2, Upload } from 'lucide-react'
 import SettingsPage from './SettingsPage'
 import { useAuthCtx } from '../../context/AuthContext'
 import { useModuleCtx } from '../../context/ModuleContext'
-import { supabase } from '../../lib/supabase'
-import { buildTenantPayload, runWithTenantFallback } from '../../lib/tenant'
+import { getAppSettings, patchAppSettings } from '../../lib/api'
 
-const normalizeText = (value = '') => String(value || '')
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .replace(/\s+/g, ' ')
-  .trim()
-  .toLowerCase()
+const EMPTY_COMPANY_FORM = {
+  store_name: '',
+  store_phone: '',
+  store_address: '',
+  store_neighborhood: '',
+  store_city: '',
+  printer_width: '80',
+  receipt_logo_data_url: '',
+}
+
+function modulePermissionIsAdmin(permission) {
+  if (typeof permission === 'string') return permission.startsWith('admin_')
+  if (permission && typeof permission === 'object') {
+    return permission.admin === true || String(permission.role || '').startsWith('admin_')
+  }
+  return false
+}
 
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -32,13 +41,11 @@ function loadImage(dataUrl) {
   })
 }
 
-async function prepareThermalLogo(file) {
-  if (!file?.type?.startsWith('image/')) {
+async function prepareReceiptLogo(file) {
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file?.type)) {
     throw new Error('Selecione uma imagem PNG, JPG ou WEBP.')
   }
-  if (file.size > 5 * 1024 * 1024) {
-    throw new Error('A imagem deve ter no maximo 5 MB.')
-  }
+  if (file.size > 5 * 1024 * 1024) throw new Error('A imagem deve ter no maximo 5 MB.')
 
   const source = await readFileAsDataUrl(file)
   const image = await loadImage(source)
@@ -56,7 +63,6 @@ async function prepareThermalLogo(file) {
   context.fillStyle = '#fff'
   context.fillRect(0, 0, width, height)
   context.drawImage(image, 0, 0, width, height)
-
   const imageData = context.getImageData(0, 0, width, height)
   const pixels = imageData.data
   for (let index = 0; index < pixels.length; index += 4) {
@@ -72,191 +78,187 @@ async function prepareThermalLogo(file) {
     pixels[index + 3] = 255
   }
   context.putImageData(imageData, 0, 0)
-
   const result = canvas.toDataURL('image/png')
-  if (result.length > 700_000) {
-    throw new Error('A logo ficou muito grande. Use uma imagem com menos detalhes.')
-  }
+  if (result.length > 200_000) throw new Error('A logo ficou muito grande. Use uma imagem com menos detalhes.')
   return result
 }
 
-function ReceiptLogoSettings() {
+function CompanySettingsSection() {
   const auth = useAuthCtx()
   const { activeModuleId } = useModuleCtx()
-  const [target, setTarget] = useState(null)
-  const [logo, setLogo] = useState('')
+  const [form, setForm] = useState(EMPTY_COMPANY_FORM)
+  const [dirtyFields, setDirtyFields] = useState(() => new Set())
+  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [processing, setProcessing] = useState(false)
+  const [processingLogo, setProcessingLogo] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
   const fileRef = useRef(null)
 
-  useEffect(() => {
-    setLogo(String(auth.storeSettings?.receipt_logo_data_url || ''))
-  }, [auth.storeSettings?.receipt_logo_data_url, auth.activeTenantId])
+  const activeTenant = useMemo(
+    () => (auth.tenants || []).find((tenant) => tenant.id === auth.activeTenantId) || null,
+    [auth.tenants, auth.activeTenantId],
+  )
+  const permission = auth.profile?.module_permissions?.[activeModuleId]
+  const canEdit = ['owner', 'admin'].includes(auth.profile?.role) || modulePermissionIsAdmin(permission)
 
   useEffect(() => {
-    if (activeModuleId !== 'petshop') {
-      setTarget(null)
+    if (activeModuleId !== 'petshop' || !auth.activeTenantId) {
+      setForm(EMPTY_COMPANY_FORM)
+      setDirtyFields(new Set())
+      setMessage({ type: '', text: '' })
+      setLoading(false)
       return undefined
     }
 
-    let frame = 0
-    const syncTarget = () => {
-      frame = 0
-      const heading = [...document.querySelectorAll('h3')].find((item) => (
-        normalizeText(item.textContent).includes('impressao termica')
-      ))
-      const card = heading?.parentElement?.querySelector('.bg-card')
-      if (!card) {
-        setTarget(null)
-        return
-      }
+    let cancelled = false
+    const tenantId = auth.activeTenantId
+    setForm(EMPTY_COMPANY_FORM)
+    setDirtyFields(new Set())
+    setMessage({ type: '', text: '' })
+    setLoading(true)
 
-      let next = card.querySelector('[data-yuisync-receipt-logo-settings]')
-      if (!next) {
-        next = document.createElement('div')
-        next.dataset.yuisyncReceiptLogoSettings = 'true'
-        next.className = 'border-t border-white/5 pt-6'
-        card.appendChild(next)
-      }
-      setTarget((current) => current === next ? current : next)
-    }
+    getAppSettings({ tenantId, moduleId: activeModuleId })
+      .then((response) => {
+        if (cancelled) return
+        const settings = response?.settings || {}
+        setForm({
+          store_name: String(settings.store_name || ''),
+          store_phone: String(settings.store_phone || ''),
+          store_address: String(settings.store_address || ''),
+          store_neighborhood: String(settings.store_neighborhood || ''),
+          store_city: String(settings.store_city || ''),
+          printer_width: settings.printer_width === '58' ? '58' : '80',
+          receipt_logo_data_url: String(settings.receipt_logo_data_url || ''),
+        })
+      })
+      .catch((error) => {
+        if (!cancelled) setMessage({ type: 'error', text: error?.message || 'Nao foi possivel carregar os dados da empresa.' })
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
 
-    const schedule = () => {
-      if (frame) cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(syncTarget)
-    }
+    return () => { cancelled = true }
+  }, [activeModuleId, auth.activeTenantId])
 
-    syncTarget()
-    const observer = new MutationObserver(schedule)
-    observer.observe(document.body, { childList: true, subtree: true })
-    return () => {
-      if (frame) cancelAnimationFrame(frame)
-      observer.disconnect()
-      document.querySelector('[data-yuisync-receipt-logo-settings]')?.remove()
-    }
-  }, [activeModuleId])
+  const updateField = (field, value) => {
+    setForm((current) => ({ ...current, [field]: value }))
+    setDirtyFields((current) => new Set(current).add(field))
+    setMessage({ type: '', text: '' })
+  }
 
   const handleFile = async (event) => {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    setProcessing(true)
+    setProcessingLogo(true)
     setMessage({ type: '', text: '' })
     try {
-      const prepared = await prepareThermalLogo(file)
-      setLogo(prepared)
-      setMessage({ type: 'success', text: 'Preview preparado. Salve para aplicar nas impressoes.' })
+      updateField('receipt_logo_data_url', await prepareReceiptLogo(file))
     } catch (error) {
       setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Nao foi possivel preparar a logo.' })
     } finally {
-      setProcessing(false)
+      setProcessingLogo(false)
     }
   }
 
-  const saveLogo = async () => {
-    if (!auth.activeTenantId) {
-      setMessage({ type: 'error', text: 'Nenhum tenant ativo foi identificado.' })
-      return
-    }
-
+  const save = async () => {
+    if (!auth.activeTenantId || activeModuleId !== 'petshop' || !canEdit || dirtyFields.size === 0) return
+    const tenantId = auth.activeTenantId
+    const patch = Object.fromEntries([...dirtyFields].map((field) => [field, form[field]]))
     setSaving(true)
     setMessage({ type: '', text: '' })
     try {
-      const response = await runWithTenantFallback(auth.activeTenantId, async (includeTenant) => {
-        const row = buildTenantPayload({
-          module_id: 'petshop',
-          receipt_logo_data_url: logo || null,
-          updated_at: new Date().toISOString(),
-        }, auth.activeTenantId, includeTenant)
-        const conflict = includeTenant ? 'tenant_id,module_id' : 'module_id'
-        return supabase
-          .from('settings')
-          .upsert(row, { onConflict: conflict })
-          .select('receipt_logo_data_url')
-          .single()
+      const response = await patchAppSettings({ tenantId, moduleId: activeModuleId, patch })
+      if (tenantId !== auth.activeTenantId) return
+      const saved = response?.settings || {}
+      setForm({
+        store_name: String(saved.store_name || ''),
+        store_phone: String(saved.store_phone || ''),
+        store_address: String(saved.store_address || ''),
+        store_neighborhood: String(saved.store_neighborhood || ''),
+        store_city: String(saved.store_city || ''),
+        printer_width: saved.printer_width === '58' ? '58' : '80',
+        receipt_logo_data_url: String(saved.receipt_logo_data_url || ''),
       })
-      if (response.error) throw response.error
-      await auth.refreshSettings('petshop')
-      setMessage({ type: 'success', text: logo ? 'Logo salva para as impressoes termicas.' : 'Logo removida das impressoes.' })
+      setDirtyFields(new Set())
+      auth.updateStoreSettings?.(saved)
+      await auth.refreshSettings(activeModuleId)
+      setMessage({ type: 'success', text: 'Dados da empresa salvos para este tenant.' })
     } catch (error) {
-      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Nao foi possivel salvar a logo.' })
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Nao foi possivel salvar os dados da empresa.' })
     } finally {
       setSaving(false)
     }
   }
 
-  if (!target) return null
+  if (activeModuleId !== 'petshop') return null
 
-  return createPortal(
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <ImageIcon size={16} className="text-emerald-400" />
+  return (
+    <section className="space-y-4 order-1" data-qa="tenant-company-settings">
+      <h3 className="text-xs font-black text-muted uppercase tracking-[0.2em] flex items-center gap-2">
+        <Building2 size={14}/> Empresa e comprovantes
+      </h3>
+      <div className="bg-card border border-white/5 rounded-3xl p-8 shadow-sm space-y-6">
         <div>
-          <h4 className="font-bold text-text">Logo da impressao</h4>
-          <p className="text-xs text-muted">Substitui o cabecalho de texto. A imagem e reduzida e convertida para preto e branco.</p>
+          <h4 className="font-bold text-text">Identidade desta empresa</h4>
+          <p className="text-xs text-muted mt-1">Nome, contato, endereco, logo e formato usados nos comprovantes operacionais. Cada empresa mantem sua propria configuracao.</p>
         </div>
+
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-muted"><RefreshCw size={15} className="animate-spin"/> Carregando empresa...</div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div><label className="inp-label">Nome exibido</label><input className="inp" disabled={!canEdit || saving} value={form.store_name} placeholder={activeTenant?.name || 'Estabelecimento'} onChange={(event) => updateField('store_name', event.target.value)}/></div>
+              <div><label className="inp-label">Telefone</label><input className="inp" disabled={!canEdit || saving} value={form.store_phone} placeholder="Opcional" onChange={(event) => updateField('store_phone', event.target.value)}/></div>
+              <div className="md:col-span-2"><label className="inp-label">Endereco</label><input className="inp" disabled={!canEdit || saving} value={form.store_address} placeholder="Rua, avenida ou referencia" onChange={(event) => updateField('store_address', event.target.value)}/></div>
+              <div><label className="inp-label">Bairro</label><input className="inp" disabled={!canEdit || saving} value={form.store_neighborhood} placeholder="Opcional" onChange={(event) => updateField('store_neighborhood', event.target.value)}/></div>
+              <div><label className="inp-label">Cidade</label><input className="inp" disabled={!canEdit || saving} value={form.store_city} placeholder="Opcional" onChange={(event) => updateField('store_city', event.target.value)}/></div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_240px] gap-5 border-t border-white/5 pt-6">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2"><ImageIcon size={16} className="text-emerald-400"/><div><h4 className="font-bold text-text">Logo do comprovante</h4><p className="text-xs text-muted">Sem logo configurada, o comprovante imprime apenas o nome da empresa.</p></div></div>
+                <div className="flex flex-wrap gap-3">
+                  <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile}/>
+                  <button type="button" className="btn btn-secondary gap-2" disabled={!canEdit || processingLogo || saving} onClick={() => fileRef.current?.click()}><Upload size={14}/>{processingLogo ? 'Preparando...' : 'Enviar logo'}</button>
+                  <button type="button" className="btn btn-secondary gap-2" disabled={!canEdit || !form.receipt_logo_data_url || processingLogo || saving} onClick={() => updateField('receipt_logo_data_url', '')}><Trash2 size={14}/> Remover</button>
+                </div>
+                <p className="text-[11px] text-muted">PNG, JPG ou WEBP. A imagem e normalizada para impressao e salva somente neste tenant.</p>
+              </div>
+              <div className="flex min-h-[116px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white p-4">
+                {form.receipt_logo_data_url ? <img src={form.receipt_logo_data_url} alt="Preview da logo do comprovante" className="max-h-24 max-w-full object-contain"/> : <span className="text-center text-xs font-bold uppercase tracking-widest text-gray-500">Sem logo</span>}
+              </div>
+            </div>
+
+            <div className="border-t border-white/5 pt-6 space-y-3">
+              <div className="flex items-center gap-2"><Printer size={16}/><div><h4 className="font-bold text-text">Formato padrao</h4><p className="text-xs text-muted">A previa ainda permite alternar para outro formato sem mudar este padrao.</p></div></div>
+              <div className="grid grid-cols-2 gap-3 max-w-md">
+                {['80', '58'].map((width) => <button key={width} type="button" disabled={!canEdit || saving} onClick={() => updateField('printer_width', width)} className={`px-4 py-4 rounded-2xl border text-sm font-bold transition-all ${form.printer_width === width ? 'bg-emerald-400 border-transparent text-gray-950 shadow-lg' : 'bg-white/5 border-white/5 text-muted hover:bg-white/10'}`}>{width}mm</button>)}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 border-t border-white/5 pt-6">
+              <button type="button" className="btn btn-primary gap-2" disabled={!canEdit || saving || processingLogo || dirtyFields.size === 0} onClick={() => void save()}>{saving ? <RefreshCw size={14} className="animate-spin"/> : <Save size={14}/>} {saving ? 'Salvando...' : 'Salvar dados da empresa'}</button>
+              {!canEdit && <span className="text-xs text-muted">Somente administradores autorizados podem alterar estes dados.</span>}
+            </div>
+          </>
+        )}
+
+        {message.text && <p className={`rounded-xl border px-3 py-2 text-xs font-semibold ${message.type === 'success' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-red-500/20 bg-red-500/10 text-red-300'}`}>{message.text}</p>}
       </div>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
-        <div className="flex flex-wrap content-start gap-3">
-          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFile} />
-          <button
-            type="button"
-            className="btn btn-secondary gap-2"
-            disabled={processing || saving}
-            onClick={() => fileRef.current?.click()}
-          >
-            <Upload size={14}/>
-            {processing ? 'Preparando...' : 'Enviar arquivo'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary gap-2"
-            disabled={!logo || processing || saving}
-            onClick={() => {
-              setLogo('')
-              setMessage({ type: '', text: '' })
-            }}
-          >
-            <Trash2 size={14}/> Remover
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary gap-2"
-            disabled={processing || saving}
-            onClick={saveLogo}
-          >
-            <Save size={14}/>
-            {saving ? 'Salvando...' : 'Salvar logo'}
-          </button>
-          <p className="w-full text-[11px] text-muted">Use preferencialmente PNG com fundo branco ou transparente. Limite: 5 MB.</p>
-        </div>
-
-        <div className="flex min-h-[112px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white p-4">
-          {logo ? (
-            <img src={logo} alt="Preview da logo termica" className="max-h-24 max-w-full object-contain" />
-          ) : (
-            <div className="text-center text-xs font-bold uppercase tracking-widest text-gray-500">Sem logo configurada</div>
-          )}
-        </div>
-      </div>
-
-      {message.text && (
-        <p className={`rounded-xl border px-3 py-2 text-xs font-semibold ${message.type === 'success' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-red-500/20 bg-red-500/10 text-red-300'}`}>
-          {message.text}
-        </p>
-      )}
-    </div>,
-    target,
+    </section>
   )
 }
 
 export default function SettingsIntegratedPage() {
+  const { activeModuleId } = useModuleCtx()
+  const companySettingsManaged = activeModuleId === 'petshop'
   return (
-    <>
-      <SettingsPage />
-      <ReceiptLogoSettings />
-    </>
+    <SettingsPage
+      companySettingsManaged={companySettingsManaged}
+      companySettingsSection={companySettingsManaged ? <CompanySettingsSection/> : null}
+    />
   )
 }
