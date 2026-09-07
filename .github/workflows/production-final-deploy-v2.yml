@@ -144,6 +144,7 @@ jobs:
           const version = Number(flat(process.env.VERSION)[0]?.value ?? NaN)
           const auth = flat(process.env.AUTH).map((r) => String(r.name)).sort().join(',')
           if (!secrets.some((r) => r?.name === 'BETTER_AUTH_SECRET')) throw new Error('BETTER_AUTH_SECRET_REQUIRED')
+          if (!secrets.some((r) => r?.name === 'AUTH_EMAIL_API_KEY')) throw new Error('AUTH_EMAIL_API_KEY_REQUIRED')
           if (!Number.isInteger(version) || version < 25 || version > 30) throw new Error(`SCHEMA_VERSION_UNSUPPORTED:${version}`)
           if (auth !== 'account,session,user,verification') throw new Error(`AUTH_SCHEMA_INVALID:${auth}`)
           NODE
@@ -235,13 +236,14 @@ jobs:
             && String(r?.checks?.schema_version) === '30'
             && r?.checks?.auth_database === 'configured'
             && r?.checks?.better_auth === 'enabled'
+            && r?.checks?.password_recovery === 'configured'
             && String(v?.release_sha || '').toLowerCase() === String(process.env.RELEASE_SHA || '').toLowerCase()
           if (!ok) process.exit(1)
           NODE
             then matched=true; break; fi
             sleep 5
           done
-          [ "$matched" = true ] || { echo 'Exact production release SHA was not observed'; cat /tmp/v.json || true; exit 1; }
+          [ "$matched" = true ] || { echo 'Exact production release SHA with configured password recovery was not observed'; cat /tmp/r.json || true; cat /tmp/v.json || true; exit 1; }
           curl --fail --silent --show-error https://yuisync.app/ > /dev/null
 
       - name: Preserve v30 state for explicit recovery decision
@@ -257,5 +259,6 @@ jobs:
           echo '- D1 schema: v30' >> "$GITHUB_STEP_SUMMARY"
           echo '- pre-migration D1 + AUTH_DB bookmarks: archived' >> "$GITHUB_STEP_SUMMARY"
           echo '- yuisync.app /health + /ready: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- password recovery provider + sender: configured' >> "$GITHUB_STEP_SUMMARY"
           echo '- yuisync.app /release: exact authorized SHA passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Quality + full staging certification: exact release SHA required' >> "$GITHUB_STEP_SUMMARY"
