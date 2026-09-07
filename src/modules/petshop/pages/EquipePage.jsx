@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { usePetshopAdvanced } from '../hooks/usePetshopAdvanced'
 import { fmtCurrency } from '../../../lib/supabase'
+import { openReceiptPreview } from '../../../lib/receiptPrint'
 import { useAuthCtx } from '../../../context/AuthContext'
 import { useModuleCtx } from '../../../context/ModuleContext'
 import { MetricCard } from '../../../components/ui'
@@ -63,29 +64,8 @@ const escapeHtml = (value = '') => String(value ?? '')
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#039;')
 
-function openPrintDocument(title, body) {
-  const printWindow = window.open('', '_blank', 'width=1080,height=780')
-  if (!printWindow) return
-  printWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>
-    @page { size: A4 landscape; margin: 10mm; }
-    * { box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; color: #111; margin: 0; font-size: 10px; }
-    h1 { font-size: 18px; margin: 0 0 5px; }
-    .meta { margin-bottom: 12px; color: #444; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid #aaa; padding: 6px; text-align: left; vertical-align: top; }
-    th { background: #eee; font-size: 9px; text-transform: uppercase; }
-    .money { text-align: right; white-space: nowrap; }
-    .total { font-weight: 800; }
-  </style></head><body>${body}</body></html>`)
-  printWindow.document.close()
-  setTimeout(() => {
-    printWindow.focus()
-    printWindow.print()
-  }, 180)
-}
-
 function CommissionHistoryModal({ row, items, range, onClose }) {
+  const { storeSettings } = useAuthCtx()
   const responsibleName = row?.collaborator_name || row?.staff_key || 'Responsavel'
   const lineRows = items.flatMap((appointment) => appointmentCommissionLines(appointment).map((line, index) => ({
     id: `${appointment.id}:${index}`,
@@ -104,14 +84,15 @@ function CommissionHistoryModal({ row, items, range, onClose }) {
       <td class="money">${escapeHtml(fmtCurrency(line.revenue))}</td>
       <td class="money">${escapeHtml(fmtCurrency(line.commission))}</td>
     </tr>`).join('')
-    openPrintDocument(`Conferencia - ${responsibleName}`, `
-      <h1>Historico de servicos - ${escapeHtml(responsibleName)}</h1>
-      <div class="meta">Periodo: ${escapeHtml(dateLabel(range.startDate))} a ${escapeHtml(dateLabel(range.endDate))}</div>
-      <table><thead><tr><th>Data</th><th>Tutor</th><th>Pet</th><th>Servico</th><th>Valor</th><th>Comissao</th></tr></thead>
+    const bodyHtml = `
+      <div class="receipt-meta">Responsavel: ${escapeHtml(responsibleName)} · Periodo: ${escapeHtml(dateLabel(range.startDate))} a ${escapeHtml(dateLabel(range.endDate))}</div>
+      <div class="receipt-table-wrap"><table class="receipt-table"><thead><tr><th>Data</th><th>Tutor</th><th>Pet</th><th>Servico</th><th class="money">Valor</th><th class="money">Comissao</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="6">Nenhum atendimento no periodo.</td></tr>'}</tbody>
-      <tfoot><tr class="total"><td colspan="4">Totais</td><td class="money">${escapeHtml(fmtCurrency(revenue))}</td><td class="money">${escapeHtml(fmtCurrency(commission))}</td></tr></tfoot></table>
-    `)
+      <tfoot><tr><td colspan="4"><strong>Totais</strong></td><td class="money"><strong>${escapeHtml(fmtCurrency(revenue))}</strong></td><td class="money"><strong>${escapeHtml(fmtCurrency(commission))}</strong></td></tr></tfoot></table></div>
+    `
+    openReceiptPreview({ storeSettings, title: `CONFERENCIA - ${responsibleName}`, bodyHtml, initialFormat: 'a4' })
   }
+
 
   return createPortal(
     <div className="modal-overlay theme-petshop-modal" onClick={(event) => event.target === event.currentTarget && onClose()}>

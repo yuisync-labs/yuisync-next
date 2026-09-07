@@ -11,7 +11,7 @@ import { useClients }         from '../../../shared/hooks/useClients'
 import { useAuthCtx }      from '../../../context/AuthContext'
 import { Card } from '../../../components/ui'
 import { fmtCurrency, todayISO } from '../../../lib/supabase'
-import { printThermalReceipt } from '../../../lib/thermalPrint'
+import { openReceiptPreview } from '../../../lib/receiptPrint'
 import { usePetshopAdvanced } from '../hooks/usePetshopAdvanced'
 import { useCatalogPlans } from '../hooks/useCatalogPlans'
 import {
@@ -270,92 +270,26 @@ function ReceiptModal({ appt, onClose, serviceLabel, staffById = new Map() }) {
   const title = appt.status === 'concluido' ? 'FICHA DE ATENDIMENTO' : 'FICHA DE AGENDAMENTO'
 
   const handlePrint = () => {
-    const printWindow = window.open('', '_blank')
-    if (!printWindow) return
-    const logoUrl = String(
-      storeSettings?.receipt_logo_data_url
-      || storeSettings?.store_logo_url
-      || storeSettings?.logo_url
-      || `${window.location.origin}/brand/quatro-patas-logo-mono.png`,
-    )
-    const row = (label, value) => `
-      <div class="row">
-        <div class="label">${escapeReceiptHtml(label)}</div>
-        <div class="value">${escapeReceiptHtml(value || 'Nao informado')}</div>
-      </div>
+    const row = (label, value) => `<div class="receipt-row"><strong>${escapeReceiptHtml(label)}</strong><span>${escapeReceiptHtml(value || 'Nao informado')}</span></div>`
+    const bodyHtml = `
+      <section class="receipt-section">
+        ${row('Tutor', pet.owner_name)}
+        ${row('Pet', pet.pet_name)}
+        ${row('Raca', pet.breed || pet.species)}
+        ${row('Data e hora', `${date} - ${interval}`)}
+        ${row('Servico', serviceLabel(appt))}
+        ${row('Resp.', responsible)}
+        ${row('Obs.', appt.notes || 'Nenhuma observacao')}
+      </section>
     `
-
-    const receiptHtml = `
-      <html>
-        <head>
-          <meta charset="utf-8"/>
-          <title>${escapeReceiptHtml(title)}</title>
-          <style>
-            @page { margin: 0; }
-            * { box-sizing: border-box; }
-            html, body { width: 80mm; margin: 0; padding: 0; color: #000; background: #fff; }
-            body { font-family: Arial, Helvetica, sans-serif; padding: 3mm 0 3mm 2mm; }
-            .receipt { width: 64mm; max-width: 64mm; }
-            .center { text-align: center; }
-            .logo { display: block; width: auto; max-width: 56mm; max-height: 22mm; margin: 0 auto 2.5mm; object-fit: contain; filter: grayscale(1) contrast(2); }
-            .title { margin: 3mm 0 2mm; border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 1.6mm 0; font-size: 13px; font-weight: 900; }
-            .row { display: grid; grid-template-columns: 18mm minmax(0, 1fr); gap: 1.5mm; padding: .8mm 0; border-bottom: 1px dotted #777; font-size: 10.5px; line-height: 1.32; }
-            .label { font-size: 9.5px; font-weight: 900; text-transform: uppercase; }
-            .value { min-width: 0; font-size: 10.5px; font-weight: 700; white-space: pre-wrap; overflow-wrap: anywhere; }
-            .footer { margin-top: 3mm; font-size: 8.5px; line-height: 1.3; }
-            @media print { body { position: absolute; inset: 0 auto auto 0; } }
-          </style>
-        </head>
-        <body>
-          <main class="receipt">
-            <div class="center">
-              <img class="logo" src="${escapeReceiptHtml(logoUrl)}" alt="Logo da empresa"/>
-              <div class="title">${escapeReceiptHtml(title)}</div>
-            </div>
-            ${row('Tutor', pet.owner_name)}
-            ${row('Pet', pet.pet_name)}
-            ${row('Raca', pet.breed || pet.species)}
-            ${row('Data e hora', `${date} - ${interval}`)}
-            ${row('Servico', serviceLabel(appt))}
-            ${row('Resp.', responsible)}
-            ${row('Obs.', appt.notes || 'Nenhuma observacao')}
-            <div class="footer center">Impresso em ${escapeReceiptHtml(new Date().toLocaleString('pt-BR'))}</div>
-          </main>
-        </body>
-      </html>
-    `
-    printWindow.document.write(receiptHtml)
-    printWindow.document.close()
-
-    let printed = false
-    const printWhenReady = () => {
-      if (printed) return
-      printed = true
-      printThermalReceipt(printWindow)
-    }
-    const images = [...printWindow.document.images]
-    const pendingImages = images.filter((image) => !image.complete)
-    if (pendingImages.length === 0) {
-      window.setTimeout(printWhenReady, 80)
-    } else {
-      let remaining = pendingImages.length
-      const settleImage = () => {
-        remaining -= 1
-        if (remaining <= 0) window.setTimeout(printWhenReady, 80)
-      }
-      pendingImages.forEach((image) => {
-        image.addEventListener('load', settleImage, { once: true })
-        image.addEventListener('error', settleImage, { once: true })
-      })
-      window.setTimeout(printWhenReady, 1500)
-    }
+    openReceiptPreview({ storeSettings, title, bodyHtml })
   }
 
   return createPortal(
     <div className="modal-overlay theme-petshop-modal" onClick={(event) => event.target === event.currentTarget && onClose()}>
       <div className="modal-box max-w-md">
         <div className="modal-header">
-          <h2 className="font-display font-bold text-xl text-text">Ficha 80 mm</h2>
+          <h2 className="font-display font-bold text-xl text-text">Ficha / comprovante</h2>
           <button type="button" aria-label="Fechar impressao" title="Fechar" onClick={onClose} className="text-muted hover:text-text"><X size={18}/></button>
         </div>
         <div className="modal-body space-y-5">

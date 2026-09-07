@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Calendar, ClipboardList, MapPin, MessageSquare, Package, Printer, RefreshCw, Scissors, Truck, UserCheck } from 'lucide-react'
 import { useAuthCtx } from '../../../context/AuthContext'
 import { fmtCurrency, todayISO } from '../../../lib/supabase'
-import { printThermalReceipt } from '../../../lib/thermalPrint'
+import { openReceiptPreview } from '../../../lib/receiptPrint'
 import { SERVICE_ORDER_FLOW, usePetshopAdvanced } from '../hooks/usePetshopAdvanced'
 import BanhoTosaPdvPanel from './BanhoTosaPdvPanel'
 import { APPOINTMENT_CHECKOUT_EVENT, ORDERS_TAB_SESSION_KEY } from './appointmentCheckoutFlow'
@@ -127,18 +127,6 @@ function escapeHtml(value) {
 }
 
 function printOrderReceipt(order, storeSettings = {}, fallbackItems = []) {
-  const printWindow = window.open('', '_blank')
-  if (!printWindow) return
-
-  const width = '80mm'
-  // A bobina é 80 mm, mas o driver pode reservar margens laterais. Mantemos
-  // o conteúdo em uma largura segura para nenhuma coluna ser cortada.
-  const printableWidth = '64mm'
-  const storeAddress = [
-    storeSettings?.store_address,
-    storeSettings?.store_neighborhood,
-    storeSettings?.store_city,
-  ].filter(Boolean).join(' - ')
   const address = completeClientAddress(order) || orderOriginAddress(order)
   const directItems = orderItems(order)
   const items = directItems.length ? directItems : fallbackItems
@@ -149,89 +137,35 @@ function printOrderReceipt(order, storeSettings = {}, fallbackItems = []) {
   const discount = Number(order.sale?.discount || 0)
   const orderLabel = String(order.id || '').slice(0, 8)
   const saleLabel = String(order.sale_id || '').slice(0, 8) || '-'
-  const logoUrl = `${window.location.origin}/brand/quatro-patas-logo-mono.png`
-
-  const html = `
-    <html>
-      <head>
-        <title>Ordem ${escapeHtml(orderLabel)}</title>
-        <style>
-          @page { margin: 0; }
-          * { box-sizing: border-box; }
-          html { width: ${width}; height: auto !important; min-height: 0 !important; }
-          body { width: ${width}; height: auto !important; min-height: 0 !important; margin: 0; padding: 5mm 6mm 4mm; color: #000; font-family: Arial, Helvetica, sans-serif; font-size: 10px; overflow: visible; }
-          .receipt { display: flow-root; width: ${printableWidth}; max-width: 100%; height: auto; min-height: 0; margin: 0 auto; break-after: avoid-page; page-break-after: avoid; }
-          @media print {
-            html, body { height: auto !important; min-height: 0 !important; overflow: visible !important; }
-            body { position: absolute !important; top: 0 !important; left: 0 !important; }
-            .receipt { position: absolute !important; top: 0 !important; left: 50% !important; transform: translateX(-50%); break-after: avoid-page; page-break-after: avoid; }
-          }
-          .center { text-align: center; }
-          .brand { display: block; width: 52mm; height: 24mm; object-fit: contain; margin: -2mm auto -4mm; }
-          .store-name { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; }
-          .store-data { font-size: 9px; line-height: 1.35; }
-          .document-title { border: 1px solid #000; font-size: 12px; font-weight: 800; text-align: center; padding: 5px 4px; margin: 8px 0 6px; text-transform: uppercase; letter-spacing: .7px; }
-          .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px; font-size: 9px; }
-          .meta b, .section-label, .table-head { font-size: 8px; text-transform: uppercase; letter-spacing: .45px; }
-          .rule { border-top: 1px dashed #000; margin: 7px 0; }
-          .section-label { font-weight: 800; margin-bottom: 3px; }
-          .customer-name { font-size: 11px; font-weight: 800; text-transform: uppercase; }
-          .wrap { white-space: normal; word-break: break-word; }
-          .customer-line { line-height: 1.35; }
-          .address-box { border: 1px solid #000; padding: 4px 5px; margin-top: 6px; }
-          .address-box .section-label { margin-bottom: 2px; }
-          .address-value { font-size: 10px; font-weight: 700; line-height: 1.35; }
-          table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 8px; }
-          th { text-align: left; font-size: 7px; text-transform: uppercase; padding: 3px 1px; border-bottom: 1px solid #000; }
-          td { vertical-align: top; padding: 4px 1px; border-bottom: 1px dotted #777; }
-          .qtd { width: 8mm; text-align: center; } .unit { width: 11mm; text-align: right; } .amount { width: 13mm; text-align: right; white-space: nowrap; }
-          .summary { margin-left: auto; width: 40mm; max-width: 100%; font-size: 10px; }
-          .summary-row { display: flex; justify-content: space-between; padding: 2px 0; }
-          .summary-total { border-top: 1px solid #000; margin-top: 3px; padding-top: 4px; font-size: 13px; font-weight: 800; }
-          .footer { text-align: center; margin-top: 10px; font-size: 9px; line-height: 1.35; }
-        </style>
-      </head>
-      <body><main class="receipt">
-        <div class="center">
-          <img class="brand" src="${logoUrl}" alt="Quatro Patas Pet & Vet" />
-          <div class="store-name">${escapeHtml(storeSettings?.store_name || 'Quatro Patas Pet & Vet')}</div>
-          <div class="store-data wrap">${escapeHtml(storeAddress || 'AV CONSTANTINO PINTO, 191')}</div>
-          <div class="store-data">${escapeHtml(storeSettings?.store_phone || '(32)98520-5279')}</div>
-        </div>
-        <div class="document-title">${escapeHtml(order.order_type === 'servico' ? 'Ordem de serviço' : 'Conferência / ordem de entrega')}</div>
-        <div class="meta"><span><b>Data</b><br>${escapeHtml(createdAt)}</span><span><b>Ordem</b><br>#${escapeHtml(orderLabel)}</span><span><b>Venda</b><br>#${escapeHtml(saleLabel)}</span><span><b>Status</b><br>${escapeHtml(order.status || '-')}</span></div>
-        <div class="rule"></div>
-        <div class="section-label">Cliente</div>
-        <div class="customer-name wrap">${escapeHtml(order.client?.owner_name || order.sale?.customer_name || 'Cliente')}</div>
-        <div class="customer-line">Telefone: ${escapeHtml(order.contact_phone || order.client?.phone || '-')}</div>
-        ${order.client?.owner_cpf ? `<div class="customer-line">CPF: ${escapeHtml(order.client.owner_cpf)}</div>` : ''}
-        ${address ? `<div class="address-box"><div class="section-label">Endereço de entrega</div><div class="address-value wrap">${escapeHtml(address)}</div></div>` : ''}
-        <div class="rule"></div>
-        <div class="section-label">Itens</div>
-        <table><thead><tr><th class="qtd">Qtd</th><th>Descrição</th><th class="unit">Unit.</th><th class="amount">Total</th></tr></thead><tbody>
-          ${items.length ? items.map((item) => item.raw ? `
-            <tr><td class="qtd">1</td><td class="wrap">${escapeHtml(item.raw)}</td><td class="unit">-</td><td class="amount">-</td></tr>
-          ` : `
-            <tr><td class="qtd">${escapeHtml(item.quantity)}</td><td class="wrap">${escapeHtml(item.name)}</td><td class="unit">${fmtCurrency(item.unitPrice)}</td><td class="amount">${fmtCurrency(item.subtotal)}</td></tr>
-          `).join('') : '<tr><td colspan="4" class="wrap">Sem itens vinculados nesta ordem.</td></tr>'}
-        </tbody></table>
-        <div class="summary">
-          ${subtotal > 0 ? `<div class="summary-row"><span>Subtotal</span><span>${fmtCurrency(subtotal)}</span></div>` : ''}
-          ${discount > 0 ? `<div class="summary-row"><span>Desconto</span><span>-${fmtCurrency(discount)}</span></div>` : ''}
-          <div class="summary-row summary-total"><span>Total</span><span>${fmtCurrency(total)}</span></div>
-        </div>
-        <div class="rule"></div>
-        <div class="customer-line"><b>Pagamento:</b> ${escapeHtml(order.sale?.payment_method || '-')}</div>
-        ${paymentStatus(order) !== 'nao_aplicavel' ? `<div class="customer-line"><b>Status do pagamento:</b> ${escapeHtml(paymentStatus(order))}</div>` : ''}
-        ${publicNotes ? `<div class="customer-line wrap"><b>Observação:</b> ${escapeHtml(publicNotes)}</div>` : ''}
-        <div class="footer">Obrigado pela preferência.<br>Este documento não possui valor fiscal.</div>
-      </main></body>
-    </html>
+  const itemRows = items.length ? items.map((item) => item.raw ? `
+    <tr><td class="qty">1</td><td>${escapeHtml(item.raw)}</td><td class="money">-</td><td class="money">-</td></tr>
+  ` : `
+    <tr><td class="qty">${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.name)}</td><td class="money">${escapeHtml(fmtCurrency(item.unitPrice))}</td><td class="money">${escapeHtml(fmtCurrency(item.subtotal))}</td></tr>
+  `).join('') : '<tr><td colspan="4">Sem itens vinculados nesta ordem.</td></tr>'
+  const bodyHtml = `
+    <div class="receipt-meta">Data: ${escapeHtml(createdAt)} · Ordem #${escapeHtml(orderLabel)} · Venda #${escapeHtml(saleLabel)} · Status: ${escapeHtml(order.status || '-')}</div>
+    <section class="receipt-section">
+      <div class="receipt-section-title">Cliente</div>
+      <div class="receipt-row"><strong>Nome</strong><span>${escapeHtml(order.client?.owner_name || order.sale?.customer_name || 'Cliente')}</span></div>
+      <div class="receipt-row"><strong>Telefone</strong><span>${escapeHtml(order.contact_phone || order.client?.phone || '-')}</span></div>
+      ${order.client?.owner_cpf ? `<div class="receipt-row"><strong>CPF</strong><span>${escapeHtml(order.client.owner_cpf)}</span></div>` : ''}
+      ${address ? `<div class="receipt-row"><strong>Endereco</strong><span>${escapeHtml(address)}</span></div>` : ''}
+    </section>
+    <section class="receipt-section"><div class="receipt-section-title">Itens</div><div class="receipt-table-wrap"><table class="receipt-table"><thead><tr><th class="qty">Qtd</th><th>Descricao</th><th class="money">Unit.</th><th class="money">Total</th></tr></thead><tbody>${itemRows}</tbody></table></div></section>
+    <section class="receipt-section">
+      ${subtotal > 0 ? `<div class="receipt-row"><strong>Subtotal</strong><span class="money">${escapeHtml(fmtCurrency(subtotal))}</span></div>` : ''}
+      ${discount > 0 ? `<div class="receipt-row"><strong>Desconto</strong><span class="money">-${escapeHtml(fmtCurrency(discount))}</span></div>` : ''}
+      <div class="receipt-total"><span>Total</span><span>${escapeHtml(fmtCurrency(total))}</span></div>
+      <div class="receipt-row"><strong>Pagamento</strong><span>${escapeHtml(order.sale?.payment_method || '-')}</span></div>
+      ${paymentStatus(order) !== 'nao_aplicavel' ? `<div class="receipt-row"><strong>Status pgto.</strong><span>${escapeHtml(paymentStatus(order))}</span></div>` : ''}
+      ${publicNotes ? `<div class="receipt-row"><strong>Observacao</strong><span>${escapeHtml(publicNotes)}</span></div>` : ''}
+    </section>
   `
-
-  printWindow.document.write(html)
-  printWindow.document.close()
-  printThermalReceipt(printWindow)
+  openReceiptPreview({
+    storeSettings,
+    title: order.order_type === 'servico' ? 'ORDEM DE SERVICO' : 'CONFERENCIA / ORDEM DE ENTREGA',
+    bodyHtml,
+  })
 }
 
 function OrderCard({ order, assignees, onAssign, onAdvance, onPrint, fallbackItems = [], setPage }) {
