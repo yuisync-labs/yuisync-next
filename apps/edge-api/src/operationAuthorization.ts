@@ -4,13 +4,13 @@ export type OperationAccess = 'operational' | 'administrative'
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 export type OperationMembership = { role: string; status: string; tenant_status: string; module_permissions_json: string | null }
 
-function permissionForModule(row: OperationMembership, moduleId: string): unknown {
-  let permissions: Record<string, unknown>
-  try { permissions = JSON.parse(row.module_permissions_json || '{}') } catch { return undefined }
-  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) return undefined
-  // Administrative aliases are module-scoped. A wildcard can grant generic
-  // operational access, but it must never project an admin role into another module.
-  return permissions[moduleId] ?? permissions['*']
+function permissionsFor(row: OperationMembership): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(row.module_permissions_json || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 function roleFromPermission(permission: unknown): string | null {
@@ -32,22 +32,24 @@ export function membershipAllows(row: OperationMembership, moduleId: string, acc
   if (row.status !== 'active' || row.tenant_status !== 'active') return false
   if (row.role === 'owner' || row.role === 'admin') return true
 
-  const explicitPermission = (() => {
-    let permissions: Record<string, unknown>
-    try { permissions = JSON.parse(row.module_permissions_json || '{}') } catch { return undefined }
-    if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) return undefined
-    return permissions[moduleId]
-  })()
-  const permission = explicitPermission ?? permissionForModule(row, moduleId)
-  const permissionRole = roleFromPermission(permission)
+  const permissions = permissionsFor(row)
+  if (!permissions) return false
+  const explicitPermission = permissions[moduleId]
+  const wildcardPermission = permissions['*']
+  const permissionRole = roleFromPermission(explicitPermission)
   const adminRole = recognizedModuleAdminRole(moduleId)
   const staffRole = recognizedModuleStaffRole(moduleId)
 
-  // A persisted module role on the membership itself is accepted only for its
-  // matching module. Flags such as { admin: true } are deliberately ignored.
+  // Administrative aliases are accepted only from the matching module entry or
+  // from the membership role itself. Generic flags and wildcard role strings do
+  // not acquire administrative meaning.
   if (row.role === adminRole || permissionRole === adminRole) return true
   if (access === 'administrative') return false
-  return row.role === staffRole || permissionRole === staffRole || permission === true
+
+  return row.role === staffRole
+    || permissionRole === staffRole
+    || explicitPermission === true
+    || wildcardPermission === true
 }
 
 export async function authorizeOperation(request: Request, bindings: Bindings, access: OperationAccess, getSession = getBetterAuthSession): Promise<Response | null> {
