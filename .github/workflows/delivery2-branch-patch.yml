@@ -70,6 +70,13 @@ jobs:
           table_new = '          <div className="tbl-wrapper overflow-x-auto">\n            <table className="tbl min-w-[1130px]">`'
           text = text[:table_pos] + table_new + text[table_pos + len(table_old):]
 
+          whitespace_old = '      {viewingBenefits && <BenefitLedgerModal subscription={viewingBenefits} activeTenantId={activeTenantId} moduleId={moduleId} onClose={() => setViewingBenefits(null)}/>} '
+          whitespace_new = whitespace_old.rstrip()
+          count = text.count(whitespace_old)
+          if count != 1:
+              raise SystemExit(f'benefit modal trailing-space source expected once, found {count}')
+          text = text.replace(whitespace_old, whitespace_new)
+
           path.write_text(text)
           PY
 
