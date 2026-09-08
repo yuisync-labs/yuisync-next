@@ -39,6 +39,8 @@ jobs:
           npm run test --workspace @yuisync/edge-api -- appointmentCommandIntegration.test.ts
       - name: Build
         run: npm run build
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
       - name: Browser appointment panel
         run: npx playwright test test/e2e/agenda-appointment-panel.spec.js
       - name: Commit validated integration
