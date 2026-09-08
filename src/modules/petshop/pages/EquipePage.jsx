@@ -22,7 +22,7 @@ import { fmtCurrency } from '../../../lib/supabase'
 import { openReceiptPreview } from '../../../lib/receiptPrint'
 import { useAuthCtx } from '../../../context/AuthContext'
 import { useModuleCtx } from '../../../context/ModuleContext'
-import { MetricCard } from '../../../components/ui'
+import { Card, MetricCard } from '../../../components/ui'
 import {
   normalizeOperationalStaff,
   PETSHOP_COMMISSION_RESET_TEMPLATE_KEY,
@@ -30,7 +30,9 @@ import {
 import {
   appointmentCommissionLines,
   appointmentHasCommissionServices,
+  buildCommissionQueues,
   buildCommissionRows,
+  commissionBaseSourceLabel,
   commissionHistoryLabel,
   hydrateLegacyCommissionAppointments,
 } from '../lib/teamCommissionSummary'
@@ -78,17 +80,20 @@ function CommissionHistoryModal({ row, items, range, onClose }) {
   function printHistory() {
     const rows = lineRows.map(({ appointment, line }) => `<tr>
       <td>${escapeHtml(dateLabel(appointment.scheduled_at))}</td>
+      <td>${escapeHtml(line.appointment_source || appointment.source || 'atendimento')}</td>
+      <td>${escapeHtml(line.responsible_staff_name || responsibleName)}</td>
       <td>${escapeHtml(appointment.client?.owner_name || '-')}</td>
       <td>${escapeHtml(appointment.client?.pet_name || '-')}</td>
       <td>${escapeHtml(line.label)}</td>
-      <td class="money">${escapeHtml(fmtCurrency(line.revenue))}</td>
+      <td class="money">${escapeHtml(fmtCurrency(line.revenue))}<br/><small>${escapeHtml(commissionBaseSourceLabel(line.base_source))}</small></td>
+      <td>${escapeHtml(line.commission_rule_label)}</td>
       <td class="money">${escapeHtml(fmtCurrency(line.commission))}</td>
     </tr>`).join('')
     const bodyHtml = `
       <div class="receipt-meta">Responsavel: ${escapeHtml(responsibleName)} · Periodo: ${escapeHtml(dateLabel(range.startDate))} a ${escapeHtml(dateLabel(range.endDate))}</div>
-      <div class="receipt-table-wrap"><table class="receipt-table"><thead><tr><th>Data</th><th>Tutor</th><th>Pet</th><th>Servico</th><th class="money">Valor</th><th class="money">Comissao</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="6">Nenhum atendimento no periodo.</td></tr>'}</tbody>
-      <tfoot><tr><td colspan="4"><strong>Totais</strong></td><td class="money"><strong>${escapeHtml(fmtCurrency(revenue))}</strong></td><td class="money"><strong>${escapeHtml(fmtCurrency(commission))}</strong></td></tr></tfoot></table></div>
+      <div class="receipt-table-wrap"><table class="receipt-table"><thead><tr><th>Data</th><th>Origem</th><th>Responsável</th><th>Tutor</th><th>Pet</th><th>Serviço</th><th class="money">Base</th><th>Regra</th><th class="money">Comissão</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="9">Nenhum atendimento no periodo.</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="6"><strong>Totais</strong></td><td class="money"><strong>${escapeHtml(fmtCurrency(revenue))}</strong></td><td></td><td class="money"><strong>${escapeHtml(fmtCurrency(commission))}</strong></td></tr></tfoot></table></div>
     `
     openReceiptPreview({ storeSettings, title: `CONFERENCIA - ${responsibleName}`, bodyHtml, initialFormat: 'a4' })
   }
@@ -106,22 +111,25 @@ function CommissionHistoryModal({ row, items, range, onClose }) {
         </div>
         <div className="modal-body space-y-4">
           <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
-            <table className="tbl min-w-[820px]">
-              <thead><tr><th>Data</th><th>Tutor</th><th>Pet</th><th>Servico</th><th>Valor</th><th>Comissao</th></tr></thead>
+            <table className="tbl min-w-[1320px]">
+              <thead><tr><th>Data</th><th>Origem</th><th>Responsável</th><th>Tutor</th><th>Pet</th><th>Serviço</th><th>Base</th><th>Regra registrada</th><th>Comissão</th></tr></thead>
               <tbody>
                 {lineRows.map(({ id, appointment, line }) => (
                   <tr key={id}>
                     <td>{dateLabel(appointment.scheduled_at)}</td>
+                    <td>{line.appointment_source || appointment.source || 'atendimento'}</td>
+                    <td>{line.responsible_staff_name || responsibleName}</td>
                     <td>{appointment.client?.owner_name || '-'}</td>
                     <td className="font-semibold text-text">{appointment.client?.pet_name || '-'}</td>
                     <td>{line.label}</td>
-                    <td>{fmtCurrency(line.revenue)}</td>
+                    <td><p>{fmtCurrency(line.revenue)}</p><p className="mt-1 text-[10px] text-muted">{commissionBaseSourceLabel(line.base_source)}</p></td>
+                    <td>{line.commission_rule_label}</td>
                     <td className="font-semibold text-emerald-400">{fmtCurrency(line.commission)}</td>
                   </tr>
                 ))}
-                {!lineRows.length && <tr><td colSpan={6} className="py-10 text-center text-muted">Nenhum servico comissionavel no periodo.</td></tr>}
+                {!lineRows.length && <tr><td colSpan={9} className="py-10 text-center text-muted">Nenhum servico comissionavel no periodo.</td></tr>}
               </tbody>
-              <tfoot><tr><td colSpan={4} className="font-bold text-text">Total conferido</td><td className="font-bold">{fmtCurrency(revenue)}</td><td className="font-bold text-emerald-400">{fmtCurrency(commission)}</td></tr></tfoot>
+              <tfoot><tr><td colSpan={6} className="font-bold text-text">Total conferido</td><td className="font-bold">{fmtCurrency(revenue)}</td><td></td><td className="font-bold text-emerald-400">{fmtCurrency(commission)}</td></tr></tfoot>
             </table>
           </div>
           <div className="flex justify-end gap-3">
@@ -201,13 +209,24 @@ export default function EquipePage() {
     () => hydratedServiceHistory.filter(afterCommissionReset),
     [hydratedServiceHistory, commissionResetAt],
   )
-  const displayRows = useMemo(
-    () => buildCommissionRows(commissionServiceHistory, configuredStaff),
-    [configuredStaff, commissionServiceHistory],
+  const commissionCandidates = useMemo(() => {
+    const byId = new Map()
+    ;[...hydratedPendingServices, ...hydratedServiceHistory]
+      .filter(afterCommissionReset)
+      .filter(appointmentHasCommissionServices)
+      .forEach((appointment) => byId.set(appointment.id, appointment))
+    return [...byId.values()]
+  }, [hydratedPendingServices, hydratedServiceHistory, commissionResetAt])
+  const commissionQueues = useMemo(
+    () => buildCommissionQueues(commissionCandidates),
+    [commissionCandidates],
   )
-  const commissionPendingServices = useMemo(
-    () => hydratedPendingServices.filter(afterCommissionReset).filter(appointmentHasCommissionServices),
-    [hydratedPendingServices, commissionResetAt],
+  const commissionPendingServices = commissionQueues.pendingResponsible
+  const commissionRulePendingServices = commissionQueues.pendingRuleSnapshot
+  const commissionReadyHistory = commissionQueues.ready
+  const displayRows = useMemo(
+    () => buildCommissionRows(commissionReadyHistory, configuredStaff),
+    [configuredStaff, commissionReadyHistory],
   )
 
   async function reload(nextRange = range) {
@@ -300,11 +319,11 @@ export default function EquipePage() {
   }, [])
 
   const selectedHistoryItems = useMemo(() => historyRow?.staff_key
-    ? commissionServiceHistory.filter((item) => (
+    ? commissionReadyHistory.filter((item) => (
       item.responsible_staff_key === historyRow.staff_key
       && appointmentHasCommissionServices(item)
     ))
-    : [], [historyRow, commissionServiceHistory])
+    : [], [historyRow, commissionReadyHistory])
 
   const totals = useMemo(() => displayRows.reduce((acc, row) => ({
     serviceCount: acc.serviceCount + Number(row.service_count || 0),
@@ -463,13 +482,13 @@ export default function EquipePage() {
       <td class="money">${escapeHtml(fmtCurrency(row.service_revenue))}</td>
       <td class="money">${escapeHtml(fmtCurrency(row.total_commission))}</td>
     </tr>`).join('')
-    openPrintDocument('Resumo geral de comissoes', `
-      <h1>Resumo geral de comissoes</h1>
-      <div class="meta">Periodo: ${escapeHtml(dateLabel(range.startDate))} a ${escapeHtml(dateLabel(range.endDate))}</div>
-      <table><thead><tr><th>Esteticista</th><th>Banhos</th><th>Tosa maquina/total</th><th>Tosa tesoura</th><th>Pacote</th><th>Outros</th><th>Receita</th><th>Total a pagar</th></tr></thead>
+    const bodyHtml = `
+      <div class="receipt-meta">Periodo: ${escapeHtml(dateLabel(range.startDate))} a ${escapeHtml(dateLabel(range.endDate))}</div>
+      <div class="receipt-table-wrap"><table class="receipt-table"><thead><tr><th>Esteticista</th><th>Banhos</th><th>Tosa maquina/total</th><th>Tosa tesoura</th><th>Pacote</th><th>Outros</th><th>Receita</th><th>Total a pagar</th></tr></thead>
       <tbody>${bodyRows || '<tr><td colspan="8">Sem producao no periodo.</td></tr>'}</tbody>
-      <tfoot><tr class="total"><td colspan="6">Totais do periodo</td><td class="money">${escapeHtml(fmtCurrency(totals.serviceRevenue))}</td><td class="money">${escapeHtml(fmtCurrency(totals.commission))}</td></tr></tfoot></table>
-    `)
+      <tfoot><tr><td colspan="6"><strong>Totais do periodo</strong></td><td class="money"><strong>${escapeHtml(fmtCurrency(totals.serviceRevenue))}</strong></td><td class="money"><strong>${escapeHtml(fmtCurrency(totals.commission))}</strong></td></tr></tfoot></table></div>
+    `
+    openReceiptPreview({ storeSettings, title: 'RESUMO GERAL DE COMISSOES', bodyHtml, initialFormat: 'a4' })
   }
 
   function printDeliverySummary() {
@@ -482,13 +501,13 @@ export default function EquipePage() {
       <td>${escapeHtml(row.source_label)}</td>
       <td class="money">${escapeHtml(fmtCurrency(row.delivery_value))}</td>
     </tr>`).join('')
-    openPrintDocument('Resumo de entregas', `
-      <h1>Resumo de entregas e MotoDog</h1>
-      <div class="meta">Periodo: ${escapeHtml(dateLabel(range.startDate))} a ${escapeHtml(dateLabel(range.endDate))}</div>
-      <table><thead><tr><th>Data</th><th>Motoboy</th><th>Cliente</th><th>Pet</th><th>Origem</th><th>Valor integral</th></tr></thead>
+    const bodyHtml = `
+      <div class="receipt-meta">Periodo: ${escapeHtml(dateLabel(range.startDate))} a ${escapeHtml(dateLabel(range.endDate))}</div>
+      <div class="receipt-table-wrap"><table class="receipt-table"><thead><tr><th>Data</th><th>Motoboy</th><th>Cliente</th><th>Pet</th><th>Origem</th><th>Valor integral</th></tr></thead>
       <tbody>${bodyRows || '<tr><td colspan="6">Sem entregas concluidas no periodo.</td></tr>'}</tbody>
-      <tfoot><tr class="total"><td colspan="5">Total das entregas</td><td class="money">${escapeHtml(fmtCurrency(total))}</td></tr></tfoot></table>
-    `)
+      <tfoot><tr><td colspan="5"><strong>Total das entregas</strong></td><td class="money"><strong>${escapeHtml(fmtCurrency(total))}</strong></td></tr></tfoot></table></div>
+    `
+    openReceiptPreview({ storeSettings, title: 'RESUMO DE ENTREGAS E MOTODOG', bodyHtml, initialFormat: 'a4' })
   }
 
   function exportCsv() {
@@ -578,7 +597,7 @@ export default function EquipePage() {
               <CheckCircle size={18} className="mt-0.5 text-emerald-400" />
               <div>
                 <p className="font-semibold text-text">Somente servicos de estetica entram na comissao</p>
-                <p className="mt-1 text-sm text-muted">As comissões seguem as regras configuradas no catálogo e preservam as taxas registradas na conclusão de cada serviço. Pacotes usam o valor líquido por unidade, descontado o transporte antes da divisão.</p>
+                <p className="mt-1 text-sm text-muted">Somente a regra gravada no atendimento entra no fechamento. Alterações atuais do catálogo não reescrevem o histórico; itens sem snapshot ficam separados para revisão. Em pacotes, a origem da base também fica visível quando precisa ser reconstruída pelo plano atual.</p>
               </div>
             </div>
           </div>
@@ -617,6 +636,32 @@ export default function EquipePage() {
                 })}
               </div>
             </div>
+          )}
+
+          {commissionRulePendingServices.length > 0 && (
+            <Card tone="warning" className="p-5">
+              <div className="flex items-start gap-3">
+                <AlertTriangle size={18} className="mt-0.5 text-amber-400"/>
+                <div>
+                  <p className="font-semibold text-text">Itens com regra histórica ausente</p>
+                  <p className="mt-1 text-sm text-muted">Eles não entram no total a pagar. O YuiSync não aplica a configuração atual retroativamente quando o atendimento não possui snapshot de comissão.</p>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {commissionRulePendingServices.slice(0, 12).map((appointment) => {
+                  const unresolvedLines = appointmentCommissionLines(appointment).filter((line) => line.rule_snapshot_missing)
+                  return unresolvedLines.map((line, index) => (
+                    <Card key={`${appointment.id}:${index}`} tone="subtle" className="p-4 text-sm">
+                      <p className="font-semibold text-text">{appointment.client?.pet_name || appointment.client?.owner_name || 'Pet'} · {line.label}</p>
+                      <p className="mt-1 text-xs text-muted">Responsável: {line.responsible_staff_name || line.responsible_staff_key || '-'}</p>
+                      <p className="mt-1 text-xs text-muted">Data: {dateLabel(appointment.scheduled_at)} · Origem: {line.appointment_source || appointment.source || 'atendimento'}</p>
+                      <p className="mt-1 text-xs text-muted">Base: {fmtCurrency(line.revenue)} · {commissionBaseSourceLabel(line.base_source)}</p>
+                      <p className="mt-2 text-xs font-semibold text-amber-300">Regra histórica não registrada · comissão não calculada</p>
+                    </Card>
+                  ))
+                })}
+              </div>
+            </Card>
           )}
 
           <div className="tbl-wrapper overflow-x-auto">

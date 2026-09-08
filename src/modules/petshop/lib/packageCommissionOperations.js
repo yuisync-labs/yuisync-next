@@ -192,14 +192,23 @@ export function buildPackageCommissionItems({ items = [], allocation } = {}) {
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )))
-  const enrichedItems = sourceItems.map((item) => ({
-    ...item,
-    package_covered: true,
-    package_plan_name: allocation.plan_name,
-    package_unit_price: allocationValueForItem(allocation, item),
-    package_service_pool: allocation.service_pool,
-    package_transport_total: allocation.transport_total,
-  }))
+  const enrichedItems = sourceItems.map((item) => {
+    const recordedPackageBase = Number(item?.package_unit_price)
+    const hasRecordedPackageBase = item?.package_unit_price !== null
+      && item?.package_unit_price !== undefined
+      && item?.package_unit_price !== ''
+      && Number.isFinite(recordedPackageBase)
+      && recordedPackageBase >= 0
+    return {
+      ...item,
+      package_covered: true,
+      package_plan_name: allocation.plan_name,
+      package_unit_price: hasRecordedPackageBase ? recordedPackageBase : allocationValueForItem(allocation, item),
+      package_base_source: hasRecordedPackageBase ? 'appointment_snapshot' : 'current_plan_allocation',
+      package_service_pool: allocation.service_pool,
+      package_transport_total: allocation.transport_total,
+    }
+  })
   const matchedEntries = sourceItems
     .map((item) => allocationEntryForItem(allocation, item))
     .filter(Boolean)
@@ -227,6 +236,7 @@ export function buildPackageCommissionItems({ items = [], allocation } = {}) {
       package_component: true,
       package_plan_name: allocation.plan_name,
       package_unit_price: entry.package_unit_value,
+      package_base_source: 'current_plan_allocation',
       package_service_pool: allocation.service_pool,
       package_transport_total: allocation.transport_total,
     }))
@@ -395,6 +405,9 @@ export async function enrichPackageCommissionAppointments({
       subscription_id: appointment.subscription_id || subscription.id,
       package_commission: true,
       package_plan_name: allocation.plan_name,
+      package_commission_base_source: enrichedItems.some((item) => item.package_base_source === 'appointment_snapshot')
+        ? 'mixed_or_snapshot'
+        : 'current_plan_allocation',
       package_service_pool: allocation.service_pool,
       package_transport_total: allocation.transport_total,
       package_commission_unit_value: enrichedItems.length === 1

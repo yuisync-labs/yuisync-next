@@ -6,6 +6,7 @@ const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 async function nativeRequest(path, { tenantId, moduleId = 'petshop', ...options } = {}) {
   if (isVisualPreviewSession()) {
     if ((options.method || 'GET').toUpperCase() === 'GET') {
+      if (path.endsWith('/benefits')) return { benefits: [] }
       return path.includes('/subscriptions') ? { subscriptions: [] } : { plans: [] }
     }
     const previewError = new Error('O modo visual local não salva alterações.')
@@ -88,6 +89,14 @@ export async function loadPackageAppointmentsCommand({ tenantId, moduleId = 'pet
     moduleId,
     method: 'GET',
   }).then((result) => result.appointments || [])
+}
+
+export async function loadSubscriptionBenefitLedgerCommand({ tenantId, moduleId = 'petshop', subscriptionId }) {
+  return nativeRequest(`/petshop/subscriptions/${encodeURIComponent(subscriptionId)}/benefits`, {
+    tenantId,
+    moduleId,
+    method: 'GET',
+  }).then((result) => result.benefits || [])
 }
 
 export function withPackageScheduleCommandPayload({ subscription, firstAppointmentAt, plan }) {

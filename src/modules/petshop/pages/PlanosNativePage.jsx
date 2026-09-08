@@ -24,11 +24,13 @@ import { useAuthCtx } from '../../../context/AuthContext'
 import { useModuleCtx } from '../../../context/ModuleContext'
 import { fmtCurrency } from '../../../lib/supabase'
 import { useClients } from '../../../shared/hooks/useClients'
+import { Card } from '../../../components/ui'
 import { groupPetsByTutor } from '../../../shared/lib/petTutorGroups'
 import { useCatalogPlans } from '../hooks/useCatalogPlans'
 import {
   cancelSubscriptionCommand,
   loadPackageAppointmentsCommand,
+  loadSubscriptionBenefitLedgerCommand,
   publishPackageScheduleHint,
   reschedulePackageAppointmentCommand,
   updateSubscriptionUsageCommand,
@@ -37,7 +39,6 @@ import {
 import { usePetshopAdvanced, BILLING_CYCLES } from '../hooks/usePetshopAdvanced'
 import {
   MOTODOG_PLAN_SERVICE,
-  buildCatalogUsageSummary,
   catalogServiceMap,
   isRealCatalogPlanService,
   normalizeCatalogPlanServices,
@@ -45,8 +46,10 @@ import {
   planServiceLabel,
 } from '../lib/catalogPlanServices'
 import {
+  benefitMovementDescription,
   buildEditableUsage,
   clampSubscriptionUsage,
+  normalizeBenefitLedger,
   normalizeSubscriptionSearch,
   subscriptionMatchesSearch,
 } from '../lib/subscriptionUsageAdmin'
@@ -731,7 +734,8 @@ function UsageEditModal({ subscription, onClose, onSave }) {
               <div key={item.service_type} className="grid grid-cols-[minmax(0,1fr)_120px] items-end gap-3 rounded-xl border border-[var(--border2)] bg-surface/70 p-4">
                 <div className="min-w-0">
                   <p className="font-semibold text-text">{item.service_name}</p>
-                  <p className="mt-1 text-xs text-muted">Limite contratado: {item.total} por ciclo</p>
+                  <p className="mt-1 text-xs text-muted">Capacidade: {item.total} · Saldo disponível: {item.available}</p>
+                  <p className="mt-1 text-[11px] text-muted">Reservado: {item.reserved} · Consumido por atendimento: {item.consumed} · Ajuste manual/histórico: {item.manual_used}</p>
                 </div>
                 <div>
                   <label className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-muted">Utilizados</label>
@@ -745,6 +749,83 @@ function UsageEditModal({ subscription, onClose, onSave }) {
             <button type="button" onClick={onClose} className="btn btn-secondary flex-1 justify-center">Cancelar</button>
             <button type="button" disabled={saving || !items.length} onClick={submit} className="btn btn-primary flex-1 justify-center"><Save size={15}/> {saving ? 'Salvando...' : 'Salvar consumo'}</button>
           </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+function BenefitLedgerModal({ subscription, activeTenantId, moduleId, onClose }) {
+  const [benefits, setBenefits] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setError('')
+    loadSubscriptionBenefitLedgerCommand({ tenantId: activeTenantId, moduleId, subscriptionId: subscription.id })
+      .then((rows) => { if (active) setBenefits(normalizeBenefitLedger(rows)) })
+      .catch((loadError) => { if (active) setError(loadError?.message || 'Não foi possível carregar a origem do saldo.') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [activeTenantId, moduleId, subscription.id])
+
+  const movementDate = (value) => {
+    if (!value) return '-'
+    const date = DateTime.fromISO(String(value)).setZone(PETSHOP_ZONE)
+    return date.isValid ? date.toFormat('dd/LL/yyyy HH:mm') : '-'
+  }
+
+  return createPortal(
+    <div className="modal-overlay theme-petshop-modal" onClick={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="modal-box max-w-5xl">
+        <div className="modal-header">
+          <div>
+            <h2 className="font-display text-xl font-bold text-text">Saldo e origem do pacote</h2>
+            <p className="mt-1 text-sm text-muted">{subscription.client?.pet_name || subscription.client?.owner_name} · {subscription.subscription_plans?.name}</p>
+          </div>
+          <button type="button" aria-label="Fechar saldo do pacote" onClick={onClose} className="text-muted hover:text-text"><X size={18}/></button>
+        </div>
+        <div className="modal-body space-y-4">
+          <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-text">
+            Pagamento ativa o ciclo; reservas ocupam capacidade; consumo só é confirmado pelos atendimentos concluídos ou por ajuste administrativo explícito. Ajustes sem vínculo permanecem identificados como tal.
+          </div>
+          {loading && <p className="py-8 text-center text-sm text-muted">Carregando rastreabilidade do saldo...</p>}
+          {error && <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</p>}
+          {!loading && !error && benefits.map((benefit) => (
+            <Card key={benefit.benefit_key} className="overflow-hidden">
+              <div className="border-b border-[var(--border2)] px-4 py-3">
+                <p className="font-semibold text-text">{benefit.label}</p>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
+                  <span>Capacidade <strong className="text-text">{benefit.capacity}</strong></span>
+                  <span>Disponível <strong className="text-emerald-400">{benefit.available}</strong></span>
+                  <span>Reservado <strong className="text-amber-400">{benefit.reserved}</strong></span>
+                  <span>Consumido <strong className="text-text">{benefit.used}</strong></span>
+                  <span>Ajustes <strong className="text-text">{benefit.manual_or_historical}</strong></span>
+                </div>
+              </div>
+              <div className="space-y-2 p-4">
+                {benefit.movements.map((movement) => (
+                  <Card key={movement.id} tone="subtle" className="p-3 text-xs">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-text">{benefitMovementDescription(movement)}{movement.quantity > 1 ? ' · ' + movement.quantity + 'x' : ''}</p>
+                        <p className="mt-1 text-muted">{movement.origin_known ? 'Atendimento: ' + movement.appointment_id : 'Origem: ajuste sem atendimento vinculado'}</p>
+                      </div>
+                      <span className="badge badge-gray">{movement.state === 'reserved' ? 'Reservado' : movement.state === 'released' ? 'Liberado' : 'Consumido'}</span>
+                    </div>
+                    {movement.origin_known && <p className="mt-2 text-muted">Agendado: {movementDate(movement.scheduled_at)} · Status: {movement.appointment_status || '-'}</p>}
+                    <p className="mt-1 text-muted">Registrado: {movementDate(movement.recorded_at)}</p>
+                  </Card>
+                ))}
+                {!benefit.movements.length && <p className="text-sm text-muted">Nenhum movimento registrado para este benefício.</p>}
+              </div>
+            </Card>
+          ))}
+          {!loading && !error && !benefits.length && <p className="py-8 text-center text-sm text-muted">Nenhum benefício encontrado neste ciclo.</p>}
+          <div className="flex justify-end"><button type="button" onClick={onClose} className="btn btn-secondary">Fechar</button></div>
         </div>
       </div>
     </div>,
@@ -808,6 +889,7 @@ export default function PlanosNativePage({ setPage }) {
   const [planModal, setPlanModal] = useState(null)
   const [subscriptionModal, setSubscriptionModal] = useState(null)
   const [editingUsage, setEditingUsage] = useState(null)
+  const [viewingBenefits, setViewingBenefits] = useState(null)
   const [managingAppointments, setManagingAppointments] = useState(null)
   const [cancelling, setCancelling] = useState(null)
 
@@ -949,7 +1031,7 @@ export default function PlanosNativePage({ setPage }) {
 
       <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-5 py-4">
         <p className="flex items-center gap-2 text-sm font-semibold text-text"><PackageCheck size={16} className="text-emerald-400"/> Fluxo financeiro do pacote</p>
-        <p className="mt-1 text-sm text-muted">Ao consumir todos os serviços do ciclo, o pacote fica concluído. A renovação solicita a nova agenda antes de abrir a cobrança e preserva o ciclo anterior no histórico.</p>
+        <p className="mt-1 text-sm text-muted">Pagamento e ativação abrem o ciclo, mas não consomem benefícios. Agendamentos reservam capacidade; somente conclusão do atendimento ou ajuste administrativo explícito altera o consumo. A renovação preserva o ciclo anterior no histórico.</p>
       </div>
 
       {error && <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</p>}
@@ -992,7 +1074,7 @@ export default function PlanosNativePage({ setPage }) {
             <thead><tr><th>Pet / Tutor</th><th>Pacote</th><th>Uso no ciclo</th><th>Renovação</th><th>Status</th><th>Ações</th></tr></thead>
             <tbody>
               {filteredSubscriptions.map((subscription) => {
-                const usage = buildCatalogUsageSummary(subscription, catalogServices)
+                const usage = buildEditableUsage(subscription)
                 const completed = subscriptionIsCompleted(subscription)
                 const meta = statusMeta(effectiveSubscriptionStatus(subscription))
                 const editable = ['active', 'paused'].includes(subscription.status)
@@ -1001,12 +1083,13 @@ export default function PlanosNativePage({ setPage }) {
                   <tr key={subscription.id} className={completed ? 'bg-sky-500/5' : subscription.status === 'active' ? 'bg-emerald-500/5' : ''}>
                     <td><p className="font-semibold text-text">{subscription.client?.pet_name || subscription.client?.owner_name}</p><p className="text-xs text-muted">{subscription.client?.owner_name}</p></td>
                     <td><p className="font-semibold text-text">{subscription.subscription_plans?.name || '-'}</p><p className="text-xs text-muted">{fmtCurrency(subscription.subscription_plans?.price || 0)}</p></td>
-                    <td><div className="flex max-w-xl flex-wrap gap-2">{usage.map((item) => <span key={`${subscription.id}-${item.service_type}`} className={`badge ${item.remaining > 0 ? 'badge-blue' : 'badge-gray'}`}>{item.label}: {item.used}/{item.total}</span>)}</div></td>
+                    <td><div className="flex max-w-2xl flex-wrap gap-2">{usage.map((item) => <span key={`${subscription.id}-${item.service_type}`} className={`badge ${item.available > 0 ? 'badge-blue' : 'badge-gray'}`}>{item.service_name}: saldo {item.available}/{item.total} · reservado {item.reserved} · consumido {item.used}</span>)}</div></td>
                     <td><div className="flex items-center gap-2"><CalendarClock size={14} className={completed ? 'text-sky-400' : 'text-amber-400'}/><span className="text-sm text-text">{completed ? 'Ciclo concluído' : subscription.next_billing_date || '-'}</span></div></td>
                     <td><span className={`badge ${meta.cls}`}>{meta.label}</span></td>
                     <td>
                       <div className="flex flex-wrap gap-2">
                         {subscription.status === 'active' && <button type="button" onClick={() => setManagingAppointments(subscription)} className="btn btn-secondary btn-sm whitespace-nowrap"><CalendarClock size={13}/> Agendamentos</button>}
+                        <button type="button" onClick={() => setViewingBenefits(subscription)} className="btn btn-secondary btn-sm whitespace-nowrap"><PackageCheck size={13}/> Saldo e origem</button>
                         <button type="button" disabled={!editable} onClick={() => setEditingUsage(subscription)} className="btn btn-secondary btn-sm whitespace-nowrap" title={editable ? 'Editar consumo do ciclo' : 'Disponível após ativação'}><PencilLine size={13}/> Editar consumo</button>
                         {completed ? (
                           <button type="button" onClick={() => renewSubscription(subscription)} className="btn btn-primary btn-sm whitespace-nowrap"><Repeat2 size={13}/> Renovar pacote</button>
@@ -1027,6 +1110,7 @@ export default function PlanosNativePage({ setPage }) {
       {planModal !== null && <PlanModal plan={planModal.id ? planModal : null} catalogServices={catalogServices} onClose={() => setPlanModal(null)} onSave={handleSavePlan}/>} 
       {subscriptionModal && <SubscriptionModal plans={plans.filter((plan) => plan.active)} clients={clients} catalogServices={catalogServices} context={subscriptionModal} onClose={() => setSubscriptionModal(null)} onSave={handleSaveSubscription} onManagePets={() => { setSubscriptionModal(null); setPage?.('pets') }}/>} 
       {managingAppointments && <PackageAppointmentsModal subscription={managingAppointments} activeTenantId={activeTenantId} moduleId={moduleId} onClose={() => setManagingAppointments(null)} onChanged={reload}/>} 
+      {viewingBenefits && <BenefitLedgerModal subscription={viewingBenefits} activeTenantId={activeTenantId} moduleId={moduleId} onClose={() => setViewingBenefits(null)}/>}
       {editingUsage && <UsageEditModal subscription={editingUsage} onClose={() => setEditingUsage(null)} onSave={saveUsage}/>} 
       {cancelling && <CancelSubscriptionModal subscription={cancelling} onClose={() => setCancelling(null)} onConfirm={cancelSubscription}/>} 
     </div>
