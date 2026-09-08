@@ -20,7 +20,7 @@ test('abre o painel do atendimento sem perder filtros e fecha por Escape', async
   await createAppointment(page)
 
   const search = page.getByLabel('Buscar pet ou tutor')
-  await search.fill('Livia')
+  await search.fill('Martins')
 
   const cardContent = page.locator('[data-yuisync-native-agenda-card="true"] .yuisync-card-content').first()
   await expect(cardContent).toBeVisible()
@@ -39,7 +39,7 @@ test('abre o painel do atendimento sem perder filtros e fecha por Escape', async
   await expect(close).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
-  await expect(search).toHaveValue('Livia')
+  await expect(search).toHaveValue('Martins')
 })
 
 test('no desktop a agenda continua renderizada enquanto o painel esta aberto', async ({ page }, testInfo) => {
@@ -49,4 +49,22 @@ test('no desktop a agenda continua renderizada enquanto o painel esta aberto', a
   await page.locator('[data-yuisync-native-agenda-card="true"] .yuisync-card-content').first().click()
   await expect(page.locator('[data-qa="agenda-appointment-panel"]')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Agendar as 08:50' })).toBeVisible()
+})
+
+test('no mobile o painel ocupa a viewport sem remover a agenda do DOM', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await createAppointment(page)
+
+  await page.locator('[data-yuisync-native-agenda-card="true"] .yuisync-card-content').first().click()
+  const panel = page.locator('[data-qa="agenda-appointment-panel"]')
+  await expect(panel).toBeVisible()
+
+  const bounds = await panel.locator('xpath=..').boundingBox()
+  expect(bounds).toBeTruthy()
+  expect(bounds.width).toBeLessThanOrEqual(390)
+  expect(bounds.x).toBeGreaterThanOrEqual(0)
+  await expect(page.getByRole('button', { name: 'Agendar as 08:50' })).toHaveCount(1)
+
+  await page.keyboard.press('Escape')
+  await expect(panel).toHaveCount(0)
 })
