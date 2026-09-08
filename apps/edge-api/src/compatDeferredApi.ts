@@ -1,5 +1,6 @@
 import { getBetterAuthSession } from './auth/betterAuthRuntime'
 import type { CompatRuntimeBindings } from './compatApiRuntime.js'
+import { isPlatformAdmin } from './platformAuthorization'
 
 type Bindings = CompatRuntimeBindings
 type Scope = {
@@ -178,26 +179,25 @@ async function resolveScope(
     .prepare("SELECT role,module_permissions_json FROM tenant_memberships WHERE tenant_id=?1 AND principal_id=?2 AND status='active' LIMIT 1")
     .bind(tenantId, principal.id)
     .first<{ role: string; module_permissions_json: string }>()
-  if (!membership) return { error: response({ code: 'FORBIDDEN' }, 403) }
-
-  const tenantAdmin = membership.role === 'owner' || membership.role === 'admin'
-  let allowed = tenantAdmin
-  try {
-    const permissions = object(JSON.parse(membership.module_permissions_json || '{}'))
-    allowed ||= permissions['*'] === true
-      || permissions[moduleId] === true
-      || Boolean(permissions[moduleId] && typeof permissions[moduleId] === 'object')
-  } catch {}
+  const globalAdmin = await isPlatformAdmin(env.DB, principal)
+  const tenantAdmin = membership?.role === 'owner' || membership?.role === 'admin'
+  let allowed = globalAdmin || tenantAdmin
+  if (membership) {
+    try {
+      const permissions = object(JSON.parse(membership.module_permissions_json || '{}'))
+      allowed ||= permissions['*'] === true
+        || permissions[moduleId] === true
+        || Boolean(permissions[moduleId] && typeof permissions[moduleId] === 'object')
+    } catch {}
+  }
   if (!allowed) return { error: response({ code: 'FORBIDDEN' }, 403) }
 
-  let globalAdmin = false
-  try {
-    const profile = await env.DB
-      .prepare("SELECT role FROM profiles WHERE active=1 AND (id=?1 OR (email IS NOT NULL AND lower(email)=lower(?2))) LIMIT 1")
-      .bind(principal.id, principal.email || '')
-      .first<{ role: string }>()
-    globalAdmin = profile?.role === 'admin'
-  } catch {}
+  if (globalAdmin) {
+    const tenant = await env.DB.prepare("SELECT status FROM tenants WHERE id=?1 LIMIT 1")
+      .bind(tenantId)
+      .first<{ status: string }>()
+    if (tenant?.status !== 'active') return { error: response({ code: 'FORBIDDEN' }, 403) }
+  }
 
   return {
     scope: {

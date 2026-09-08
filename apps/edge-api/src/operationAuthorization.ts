@@ -1,8 +1,11 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import { isPlatformAdmin } from './platformAuthorization'
 
 export type OperationAccess = 'operational' | 'administrative'
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 type Membership = { role: string; status: string; tenant_status: string; module_permissions_json: string | null }
+type Principal = { id: string; email: string | null; status: string }
+type TenantStatus = { status: string }
 
 export function membershipAllows(row: Membership, moduleId: string, access: OperationAccess): boolean {
   if (row.status !== 'active' || row.tenant_status !== 'active') return false
@@ -33,7 +36,19 @@ export async function authorizeOperation(request: Request, bindings: Bindings, a
     JOIN tenants t ON t.id=m.tenant_id
     WHERE p.provider='better-auth' AND p.subject=?1 AND p.status='active' AND m.tenant_id=?2 LIMIT 1
   `).bind(session.user.id, tenant).first<Membership>()
-  return membership && membershipAllows(membership, moduleId, access) ? null : fail('FORBIDDEN', 403)
+  if (membership && membershipAllows(membership, moduleId, access)) return null
+
+  const principal = await bindings.DB.prepare(`
+    SELECT id,email,status FROM identity_principals
+    WHERE provider='better-auth' AND subject=?1
+    LIMIT 1
+  `).bind(session.user.id).first<Principal>()
+  if (!principal || principal.status !== 'active' || !(await isPlatformAdmin(bindings.DB, principal))) {
+    return fail('FORBIDDEN', 403)
+  }
+  const targetTenant = await bindings.DB.prepare('SELECT status FROM tenants WHERE id=?1 LIMIT 1')
+    .bind(tenant).first<TenantStatus>()
+  return targetTenant?.status === 'active' ? null : fail('FORBIDDEN', 403)
 }
 
 const operationalReads = new Set(['clients', 'pets', 'products', 'petshop_services', 'settings', 'appointments', 'service_delivery_orders', 'sales', 'sale_items', 'sale_payment_splits', 'subscription_plans', 'client_subscriptions', 'cash_register', 'support_threads', 'support_messages', 'chat_sessions', 'chat_messages', 'quick_replies'])

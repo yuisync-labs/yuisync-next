@@ -93,7 +93,8 @@ function AppLayout() {
 
   if (!activeModule) return <LauncherPage />
 
-  if (tenantLoading || !activeTenantId) return <LoadingScreen />
+  const requiresTenant = activeModuleId !== 'system'
+  if (tenantLoading || (requiresTenant && !activeTenantId)) return <LoadingScreen />
 
   const isAdmin = profile?.role === 'admin'
   let allowed = profile?.allowed_modules || []

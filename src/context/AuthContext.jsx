@@ -101,6 +101,7 @@ export function AuthProvider({ children }) {
   const location = useLocation()
   const [storeSettings, setStoreSettings] = useState(() => neutralStoreSettings())
   const [tenants, setTenants] = useState([])
+  const [managedTenants, setManagedTenants] = useState([])
   const [activeTenantId, setActiveTenantId] = useState(null)
   const activeTenantIdRef = useRef(null)
   const [tenantLoading, setTenantLoading] = useState(false)
@@ -125,6 +126,7 @@ export function AuthProvider({ children }) {
   const loadTenantScope = useCallback(async () => {
     if (!auth.session?.user?.id) {
       setTenants([])
+      setManagedTenants([])
       selectTenant(null)
       setTenantEnabledModules(['petshop'])
       setTenantError('')
@@ -137,6 +139,7 @@ export function AuthProvider({ children }) {
       const latest = await auth.refreshAuth()
       const nextTenants = Array.isArray(latest?.tenants) ? latest.tenants : []
       setTenants(nextTenants)
+      setManagedTenants(Array.isArray(latest?.managed_tenants) ? latest.managed_tenants : [])
       const current = activeTenantIdRef.current
       const validIds = new Set(nextTenants.map((tenant) => tenant.id))
       const next = current && validIds.has(current) ? current : pickActiveTenantId(nextTenants)
@@ -155,6 +158,7 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const bootstrapTenants = Array.isArray(auth.bootstrap?.tenants) ? auth.bootstrap.tenants : []
     setTenants(bootstrapTenants)
+    setManagedTenants(Array.isArray(auth.bootstrap?.managed_tenants) ? auth.bootstrap.managed_tenants : [])
     const current = activeTenantIdRef.current
     const validIds = new Set(bootstrapTenants.map((tenant) => tenant.id))
     const next = current && validIds.has(current) ? current : pickActiveTenantId(bootstrapTenants)
@@ -176,8 +180,10 @@ export function AuthProvider({ children }) {
     const latest = await auth.refreshAuth()
     const nextTenants = Array.isArray(latest?.tenants) ? latest.tenants : []
     setTenants(nextTenants)
-    const selectedTenant = nextTenants.find((tenant) => tenant.id === created.id) || created
-    selectTenant(selectedTenant.id, selectedTenant.name)
+    const nextManagedTenants = Array.isArray(latest?.managed_tenants) ? latest.managed_tenants : []
+    setManagedTenants(nextManagedTenants)
+    const selectedTenant = nextTenants.find((tenant) => tenant.id === created.id)
+    if (selectedTenant) selectTenant(selectedTenant.id, selectedTenant.name)
     return created
   }, [auth.refreshAuth, selectTenant])
 
@@ -230,7 +236,21 @@ export function AuthProvider({ children }) {
 
   const effectiveProfile = useMemo(() => {
     if (!auth.profile) return null
+    const isPlatformAdmin = auth.profile.role === 'admin'
     const enabledModules = modulesForTenant(activeTenant)
+    if (isPlatformAdmin) {
+      return {
+        ...auth.profile,
+        role: 'admin',
+        active_tenant_id: activeTenantId,
+        allowed_modules: activeTenantId ? ['system', ...enabledModules] : ['system'],
+        module_permissions: activeTenantId
+          ? Object.fromEntries(
+            enabledModules.map((moduleId) => [moduleId, modulePermissionForTenant(activeTenant, moduleId)]),
+          )
+          : {},
+      }
+    }
     return {
       ...auth.profile,
       role: activeTenant?.role || 'member',
@@ -250,6 +270,7 @@ export function AuthProvider({ children }) {
     refreshSettings: loadSettings,
     lastModuleId: localStorage.getItem('@app_module'),
     tenants,
+    managedTenants,
     activeTenantId,
     tenantLoading,
     tenantMode: 'edge',
@@ -259,7 +280,7 @@ export function AuthProvider({ children }) {
     refreshTenants: loadTenantScope,
     tenantEnabledModules,
     refreshTenantModules: loadTenantEnabledModules,
-  }), [auth, effectiveProfile, storeSettings, updateStoreSettings, loadSettings, tenants, activeTenantId, tenantLoading, tenantError, switchTenant, createTenant, loadTenantScope, tenantEnabledModules, loadTenantEnabledModules])
+  }), [auth, effectiveProfile, storeSettings, updateStoreSettings, loadSettings, tenants, managedTenants, activeTenantId, tenantLoading, tenantError, switchTenant, createTenant, loadTenantScope, tenantEnabledModules, loadTenantEnabledModules])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

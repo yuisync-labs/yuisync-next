@@ -9,7 +9,7 @@ export function ModuleSwitcher({ activeModule, setActiveModuleId, profile, store
   const [openDrop, setOpenDrop] = useState(false)
   const ref = useRef(null)
   const navigate = useNavigate()
-  const { tenantEnabledModules = [] } = useAuthCtx()
+  const { activeTenantId, tenantEnabledModules = [] } = useAuthCtx()
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -27,6 +27,7 @@ export function ModuleSwitcher({ activeModule, setActiveModuleId, profile, store
 
   const modulesList = Object.values(MODULES).filter(m => {
     if (m.id === 'system') return isAdmin
+    if (!activeTenantId) return false
     if (!tenantModules.includes(m.id)) return false
     if (isAdmin) return true
     if (allowed.length === 0) return m.id === 'petshop'
@@ -62,7 +63,7 @@ export function ModuleSwitcher({ activeModule, setActiveModuleId, profile, store
       </Card>
 
       {openDrop && (
-        <Card tone="neutral" className="absolute left-0 top-full z-50 mt-2 w-full overflow-hidden py-1">
+        <Card tone="neutral" className="module-switcher-menu absolute left-0 top-full z-[80] mt-2 w-full overflow-hidden py-1 shadow-2xl">
           {modulesList.map((m) => {
             const isSelected = m.id === activeModule.id
             const ModIcon = m.icon

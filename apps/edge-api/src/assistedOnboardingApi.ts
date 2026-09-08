@@ -1,10 +1,12 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import { isPlatformAdmin } from './platformAuthorization'
 
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 type SessionResolver = typeof getBetterAuthSession
 export type AssistedOnboardingDependencies = { getSession?: SessionResolver }
 
-type PrincipalRow = { id: string; status: string }
+type PrincipalRow = { id: string; email: string | null; status: string }
+type TenantRow = { status: string; name: string; slug: string }
 type ScopeRow = {
   role: string
   status: string
@@ -141,7 +143,7 @@ async function resolveScope(
   if (!session || !subject) return { ok: false, response: json({ code: 'UNAUTHENTICATED' }, 401) }
 
   const principal = await bindings.DB.prepare(`
-    SELECT id,status FROM identity_principals
+    SELECT id,email,status FROM identity_principals
     WHERE provider='better-auth' AND subject=?1
     LIMIT 1
   `).bind(subject).first<PrincipalRow>()
@@ -149,6 +151,19 @@ async function resolveScope(
 
   const tenantId = validId(new URL(request.url).searchParams.get('tenant_id'))
   if (!tenantId) return { ok: false, response: json({ code: 'INVALID_SCOPE' }, 400) }
+  if (await isPlatformAdmin(bindings.DB, principal)) {
+    const tenant = await bindings.DB.prepare(`
+      SELECT status,name,slug FROM tenants WHERE id=?1 LIMIT 1
+    `).bind(tenantId).first<TenantRow>()
+    if (!tenant || tenant.status !== 'active') return { ok: false, response: json({ code: 'FORBIDDEN' }, 403) }
+    return {
+      ok: true,
+      principalId: principal.id,
+      tenantId,
+      tenantName: tenant.name,
+      tenantSlug: tenant.slug,
+    }
+  }
   const scope = await bindings.DB.prepare(`
     SELECT m.role,m.status,t.status AS tenant_status,t.name AS tenant_name,t.slug AS tenant_slug
     FROM tenant_memberships m

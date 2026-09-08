@@ -77,7 +77,8 @@ function Section({ icon: Icon, number, title, ready, children }) {
 }
 
 export default function AssistedOnboardingPage() {
-  const { tenants = [], refreshTenants } = useAuthCtx()
+  const { tenants: memberTenants = [], managedTenants = [], refreshTenants } = useAuthCtx()
+  const tenants = managedTenants.length ? managedTenants : memberTenants
   const draft = useMemo(loadDraft, [])
   const [targetTenantId, setTargetTenantId] = useState(draft.targetTenantId || '')
   const [operationKey, setOperationKey] = useState(draft.operationKey || crypto.randomUUID())
