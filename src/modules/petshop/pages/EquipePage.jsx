@@ -482,13 +482,13 @@ export default function EquipePage() {
       <td class="money">${escapeHtml(fmtCurrency(row.service_revenue))}</td>
       <td class="money">${escapeHtml(fmtCurrency(row.total_commission))}</td>
     </tr>`).join('')
-    openPrintDocument('Resumo geral de comissoes', `
-      <h1>Resumo geral de comissoes</h1>
-      <div class="meta">Periodo: ${escapeHtml(dateLabel(range.startDate))} a ${escapeHtml(dateLabel(range.endDate))}</div>
-      <table><thead><tr><th>Esteticista</th><th>Banhos</th><th>Tosa maquina/total</th><th>Tosa tesoura</th><th>Pacote</th><th>Outros</th><th>Receita</th><th>Total a pagar</th></tr></thead>
+    const bodyHtml = `
+      <div class="receipt-meta">Periodo: ${escapeHtml(dateLabel(range.startDate))} a ${escapeHtml(dateLabel(range.endDate))}</div>
+      <div class="receipt-table-wrap"><table class="receipt-table"><thead><tr><th>Esteticista</th><th>Banhos</th><th>Tosa maquina/total</th><th>Tosa tesoura</th><th>Pacote</th><th>Outros</th><th>Receita</th><th>Total a pagar</th></tr></thead>
       <tbody>${bodyRows || '<tr><td colspan="8">Sem producao no periodo.</td></tr>'}</tbody>
-      <tfoot><tr class="total"><td colspan="6">Totais do periodo</td><td class="money">${escapeHtml(fmtCurrency(totals.serviceRevenue))}</td><td class="money">${escapeHtml(fmtCurrency(totals.commission))}</td></tr></tfoot></table>
-    `)
+      <tfoot><tr><td colspan="6"><strong>Totais do periodo</strong></td><td class="money"><strong>${escapeHtml(fmtCurrency(totals.serviceRevenue))}</strong></td><td class="money"><strong>${escapeHtml(fmtCurrency(totals.commission))}</strong></td></tr></tfoot></table></div>
+    `
+    openReceiptPreview({ storeSettings, title: 'RESUMO GERAL DE COMISSOES', bodyHtml, initialFormat: 'a4' })
   }
 
   function printDeliverySummary() {
@@ -501,13 +501,13 @@ export default function EquipePage() {
       <td>${escapeHtml(row.source_label)}</td>
       <td class="money">${escapeHtml(fmtCurrency(row.delivery_value))}</td>
     </tr>`).join('')
-    openPrintDocument('Resumo de entregas', `
-      <h1>Resumo de entregas e MotoDog</h1>
-      <div class="meta">Periodo: ${escapeHtml(dateLabel(range.startDate))} a ${escapeHtml(dateLabel(range.endDate))}</div>
-      <table><thead><tr><th>Data</th><th>Motoboy</th><th>Cliente</th><th>Pet</th><th>Origem</th><th>Valor integral</th></tr></thead>
+    const bodyHtml = `
+      <div class="receipt-meta">Periodo: ${escapeHtml(dateLabel(range.startDate))} a ${escapeHtml(dateLabel(range.endDate))}</div>
+      <div class="receipt-table-wrap"><table class="receipt-table"><thead><tr><th>Data</th><th>Motoboy</th><th>Cliente</th><th>Pet</th><th>Origem</th><th>Valor integral</th></tr></thead>
       <tbody>${bodyRows || '<tr><td colspan="6">Sem entregas concluidas no periodo.</td></tr>'}</tbody>
-      <tfoot><tr class="total"><td colspan="5">Total das entregas</td><td class="money">${escapeHtml(fmtCurrency(total))}</td></tr></tfoot></table>
-    `)
+      <tfoot><tr><td colspan="5"><strong>Total das entregas</strong></td><td class="money"><strong>${escapeHtml(fmtCurrency(total))}</strong></td></tr></tfoot></table></div>
+    `
+    openReceiptPreview({ storeSettings, title: 'RESUMO DE ENTREGAS E MOTODOG', bodyHtml, initialFormat: 'a4' })
   }
 
   function exportCsv() {
