@@ -74,6 +74,22 @@ describe('assisted onboarding state', () => {
       expect((await response!.json<{ team: unknown[] }>()).team).toHaveLength(2)
     }
 
+    const clearedTeamResponse = await handleAppApiRequest(new Request(onboardingUrl, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ step: 'team', staff: [] }),
+    }), { DB }, { getSession })
+    expect(clearedTeamResponse?.status).toBe(200)
+    expect(await clearedTeamResponse!.json()).toMatchObject({
+      team: [],
+      steps: { team: false },
+      review_ready: false,
+    })
+
+    const restoredTeamResponse = await handleAppApiRequest(new Request(onboardingUrl, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(teamPayload),
+    }), { DB }, { getSession })
+    expect(restoredTeamResponse?.status).toBe(200)
+    expect((await restoredTeamResponse!.json<{ team: unknown[] }>()).team).toHaveLength(2)
+
     const schedulePayload = {
       step: 'schedule',
       business_hours: hours,
