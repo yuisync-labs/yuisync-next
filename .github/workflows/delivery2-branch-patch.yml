@@ -30,19 +30,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Normalize nested JSX expressions in patch source
+      - name: Normalize guarded patch source
         run: |
           python - <<'PY'
           from pathlib import Path
           path = Path('scripts/apply-delivery2-packages-commissions.mjs')
           text = path.read_text()
-          replacements = {
-              "movement.quantity > 1 ? ` · ${movement.quantity}x` : ''": "movement.quantity > 1 ? ' · ' + movement.quantity + 'x' : ''",
-              "movement.origin_known ? `Atendimento: ${movement.appointment_id}` : 'Origem: ajuste sem atendimento vinculado'": "movement.origin_known ? 'Atendimento: ' + movement.appointment_id : 'Origem: ajuste sem atendimento vinculado'",
-          }
-          for old, new in replacements.items():
+          replacements = [
+              ("movement.quantity > 1 ? ` · ${movement.quantity}x` : ''", "movement.quantity > 1 ? ' · ' + movement.quantity + 'x' : ''"),
+              ("movement.origin_known ? `Atendimento: ${movement.appointment_id}` : 'Origem: ajuste sem atendimento vinculado'", "movement.origin_known ? 'Atendimento: ' + movement.appointment_id : 'Origem: ajuste sem atendimento vinculado'"),
+              ('from: `          <div className="tbl-wrapper overflow-x-auto">`,', 'from: `          <div className="tbl-wrapper overflow-x-auto">\\n            <table className="tbl min-w-[1130px]">`,'),
+              ('            </Card>\\n          )}\\n\\n          <div className="tbl-wrapper overflow-x-auto">`,', '            </Card>\\n          )}\\n\\n          <div className="tbl-wrapper overflow-x-auto">\\n            <table className="tbl min-w-[1130px]">`,'),
+          ]
+          for old, new in replacements:
               if text.count(old) != 1:
-                  raise SystemExit(f'expected nested expression once: {old!r}; found {text.count(old)}')
+                  raise SystemExit(f'expected normalization source once: {old!r}; found {text.count(old)}')
               text = text.replace(old, new)
           path.write_text(text)
           PY
@@ -51,7 +53,7 @@ jobs:
         run: node scripts/apply-delivery2-packages-commissions.mjs
 
       - name: Focused frontend contracts
-        run: npx vitest run src/modules/petshop/lib/subscriptionUsageAdmin.test.js src/modules/petshop/lib/teamCommissionSummary.test.js src/modules/petshop/lib/packageCommissionOperations.test.js
+        run: npx vitest run src/modules/petshop/lib/subscriptionUsageAdmin.test.js src/modules/petshop/lib/teamCommissionSummary.test.js src/modules/petshop/lib/packageCommissionOperations.test.js src/modules/petshop/lib/delivery2CommissionPresentation.test.js
 
       - name: Focused package ledger Edge tests
         run: npm run test --workspace @yuisync/edge-api -- subscriptionBenefitLedgerProjection.test.ts packageUsageLedgerV29.test.ts petshopSubscriptionReadV30.test.ts
