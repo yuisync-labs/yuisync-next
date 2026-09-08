@@ -34,18 +34,42 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+
           path = Path('scripts/apply-delivery2-packages-commissions.mjs')
           text = path.read_text()
-          replacements = [
+
+          simple = [
               ("movement.quantity > 1 ? ` · ${movement.quantity}x` : ''", "movement.quantity > 1 ? ' · ' + movement.quantity + 'x' : ''"),
               ("movement.origin_known ? `Atendimento: ${movement.appointment_id}` : 'Origem: ajuste sem atendimento vinculado'", "movement.origin_known ? 'Atendimento: ' + movement.appointment_id : 'Origem: ajuste sem atendimento vinculado'"),
-              ('from: `          <div className="tbl-wrapper overflow-x-auto">`,', 'from: `          <div className="tbl-wrapper overflow-x-auto">\\n            <table className="tbl min-w-[1130px]">`,'),
-              ('            </Card>\\n          )}\\n\\n          <div className="tbl-wrapper overflow-x-auto">`,', '            </Card>\\n          )}\\n\\n          <div className="tbl-wrapper overflow-x-auto">\\n            <table className="tbl min-w-[1130px]">`,'),
           ]
-          for old, new in replacements:
-              if text.count(old) != 1:
-                  raise SystemExit(f'expected normalization source once: {old!r}; found {text.count(old)}')
+          for old, new in simple:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected nested expression once: {old!r}; found {count}')
               text = text.replace(old, new)
+
+          label = "label: 'commission missing rule panel'"
+          label_pos = text.find(label)
+          if label_pos < 0:
+              raise SystemExit('commission missing rule panel label not found')
+
+          from_old = '    from: `          <div className="tbl-wrapper overflow-x-auto">`,'
+          from_pos = text.find(from_old, label_pos)
+          if from_pos < 0:
+              raise SystemExit('commission panel from-anchor not found')
+          from_new = '    from: `          <div className="tbl-wrapper overflow-x-auto">\n            <table className="tbl min-w-[1130px]">`,'
+          text = text[:from_pos] + from_new + text[from_pos + len(from_old):]
+
+          to_pos = text.find('    to: `', from_pos + len(from_new))
+          if to_pos < 0:
+              raise SystemExit('commission panel to-block not found')
+          table_old = '          <div className="tbl-wrapper overflow-x-auto">`'
+          table_pos = text.find(table_old, to_pos)
+          if table_pos < 0:
+              raise SystemExit('commission panel output table anchor not found')
+          table_new = '          <div className="tbl-wrapper overflow-x-auto">\n            <table className="tbl min-w-[1130px]">`'
+          text = text[:table_pos] + table_new + text[table_pos + len(table_old):]
+
           path.write_text(text)
           PY
 
