@@ -198,8 +198,13 @@ export function appointmentCommissionLines(appointment = {}) {
     const rawLabel = item.name || item.label || item.code || item.value || appointment.service_type || 'Servico estetico'
     const legacyGeneric = genericBathTosaPattern.test(normalizeText(item.service_type || item.code || appointment.service_type || ''))
     const baseLabel = legacyGeneric && category === 'bath' ? 'Banho (registro antigo)' : rawLabel
+    const packageBaseSource = String(item.package_base_source || appointment.package_commission_base_source || '')
     const baseSource = packageCovered
-      ? packageRevenue > 0 ? 'package_allocation' : 'catalog_reference'
+      ? packageBaseSource === 'current_plan_allocation'
+        ? 'package_current_plan_allocation'
+        : packageBaseSource === 'appointment_snapshot'
+          ? 'package_appointment_snapshot'
+          : packageRevenue > 0 ? 'package_allocation' : 'catalog_reference'
       : 'appointment_snapshot'
     return {
       appointment_id: appointment.id,
@@ -255,6 +260,16 @@ export function buildCommissionQueues(history = []) {
   })
 
   return { pendingResponsible, pendingRuleSnapshot, ready }
+}
+
+export function commissionBaseSourceLabel(source = '') {
+  const normalized = String(source || '')
+  if (normalized === 'appointment_snapshot') return 'Valor gravado no atendimento'
+  if (normalized === 'package_appointment_snapshot') return 'Base de pacote gravada no atendimento'
+  if (normalized === 'package_current_plan_allocation') return 'Base reconstruída pelo plano atual'
+  if (normalized === 'package_allocation') return 'Alocação do pacote'
+  if (normalized === 'catalog_reference') return 'Referência de catálogo'
+  return 'Base sem origem identificada'
 }
 
 export function buildCommissionRows(history = [], configuredStaff = []) {

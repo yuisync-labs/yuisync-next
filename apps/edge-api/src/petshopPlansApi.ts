@@ -1,4 +1,5 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import { projectBenefitLedger } from './subscriptionBenefitLedger'
 
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 type Scope = { tenantId: string; moduleId: string }
@@ -458,6 +459,52 @@ async function cancelSubscription(request: Request, bindings: Bindings, subscrip
   return json({ subscription: subscriptionPayload(row) })
 }
 
+async function listSubscriptionBenefitLedger(request: Request, bindings: Bindings, subscriptionId: string): Promise<Response> {
+  const resolved = await resolveScope(request, bindings)
+  if (resolved.error) return resolved.error
+  const scope = resolved.scope!
+  const subscription = await bindings.DB!.prepare(`
+    SELECT subscription.id,subscription.benefit_ledger_base_used_json,plan.services_json
+    FROM client_subscriptions subscription
+    JOIN subscription_plans plan
+      ON plan.tenant_id=subscription.tenant_id AND plan.module_id=subscription.module_id AND plan.id=subscription.plan_id
+    WHERE subscription.tenant_id=?1 AND subscription.module_id=?2 AND subscription.id=?3
+    LIMIT 1
+  `).bind(scope.tenantId, scope.moduleId, subscriptionId).first<{
+    id: string; benefit_ledger_base_used_json: string; services_json: string
+  }>()
+  if (!subscription) return json({ code: 'SUBSCRIPTION_NOT_FOUND' }, 404)
+
+  const allocations = await bindings.DB!.prepare(`
+    SELECT allocation.id,allocation.benefit_key,allocation.service_code,allocation.state,
+      allocation.appointment_id,allocation.reserved_at_ms,allocation.consumed_at_ms,
+      allocation.released_at_ms,allocation.updated_at_ms,
+      appointment.status AS appointment_status,appointment.scheduled_at_ms,
+      service.service_name
+    FROM subscription_benefit_allocations allocation
+    LEFT JOIN appointments appointment
+      ON appointment.tenant_id=allocation.tenant_id
+      AND appointment.module_id=allocation.module_id
+      AND appointment.id=allocation.appointment_id
+    LEFT JOIN appointment_services service
+      ON service.tenant_id=allocation.tenant_id
+      AND service.module_id=allocation.module_id
+      AND service.appointment_id=allocation.appointment_id
+      AND service.position=allocation.appointment_service_position
+    WHERE allocation.tenant_id=?1 AND allocation.module_id=?2 AND allocation.subscription_id=?3
+    ORDER BY COALESCE(allocation.consumed_at_ms,allocation.released_at_ms,allocation.reserved_at_ms,allocation.updated_at_ms) DESC,
+      allocation.id DESC
+  `).bind(scope.tenantId, scope.moduleId, subscriptionId).all<any>()
+
+  return json({
+    benefits: projectBenefitLedger({
+      services: parseArray(subscription.services_json),
+      baseUsage: numericObject(subscription.benefit_ledger_base_used_json),
+      allocations: allocations.results,
+    }),
+  })
+}
+
 async function listSubscriptionAppointments(request: Request, bindings: Bindings, subscriptionId: string): Promise<Response> {
   const resolved = await resolveScope(request, bindings)
   if (resolved.error) return resolved.error
@@ -511,6 +558,13 @@ export async function handlePetshopPlansApiRequest(request: Request, bindings: B
     if (request.method === 'GET') return listSubscriptions(request, bindings)
     if (request.method === 'POST') return saveSubscription(request, bindings, null)
     return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET, POST' })
+  }
+  const benefitsMatch = /^\/api\/petshop\/subscriptions\/([^/]+)\/benefits$/.exec(pathname)
+  if (benefitsMatch) {
+    const id = decodeURIComponent(benefitsMatch[1])
+    if (!ID.test(id)) return json({ code: 'INVALID_SUBSCRIPTION_ID' }, 400)
+    if (request.method === 'GET') return listSubscriptionBenefitLedger(request, bindings, id)
+    return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET' })
   }
   const appointmentsMatch = /^\/api\/petshop\/subscriptions\/([^/]+)\/appointments$/.exec(pathname)
   if (appointmentsMatch) {
