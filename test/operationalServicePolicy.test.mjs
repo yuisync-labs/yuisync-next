@@ -100,10 +100,11 @@ test('historical appointment commission snapshot wins over current catalog rate'
   assert.equal(line.commission, 2.5)
 })
 
-test('current catalog commission is fallback only for legacy rows without snapshot', () => {
+test('legacy row without commission snapshot is blocked instead of using current catalog rate', () => {
   const appointment = {
     id: 'legacy-appointment',
     service_group: 'banho_tosa',
+    responsible_staff_key: 'esteticista-1',
     service_items: [{
       code: 'banho_pequeno',
       name: 'Banho pequeno',
@@ -121,9 +122,12 @@ test('current catalog commission is fallback only for legacy rows without snapsh
 
   const hydrated = hydrateLegacyCommissionAppointment(appointment, catalog)
   const [line] = appointmentCommissionLines(hydrated)
-  assert.equal(hydrated.service_items[0].commission_rate, 8)
-  assert.equal(line.commission_rate, 8)
-  assert.equal(line.commission, 4)
+  assert.equal(hydrated.service_items[0].commission_rate, undefined)
+  assert.equal(line.commission_rate, null)
+  assert.equal(line.commission, null)
+  assert.equal(line.commission_rule_source, 'missing_snapshot')
+  assert.equal(line.rule_snapshot_missing, true)
+  assert.equal(line.close_ready, false)
 })
 
 test('v24 schema stores operational policy, immutable snapshots and command identity', async () => {
