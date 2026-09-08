@@ -1,5 +1,6 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 import { handleAppSettingsApiRequest } from './appSettingsApi'
+import { handleAssistedOnboardingApiRequest } from './assistedOnboardingApi'
 
 type AppApiBindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 
@@ -278,6 +279,8 @@ export async function handleAppApiRequest(
   if (pathname === '/api/app/bootstrap' && request.method === 'GET') return bootstrap(request, bindings)
   const settingsResponse = await handleAppSettingsApiRequest(request, bindings, dependencies)
   if (settingsResponse) return settingsResponse
+  const onboardingResponse = await handleAssistedOnboardingApiRequest(request, bindings, dependencies)
+  if (onboardingResponse) return onboardingResponse
   if (pathname === '/api/app/tenants' && request.method === 'POST') return createTenant(request, bindings, dependencies)
   if (pathname === '/api/admin/users' && request.method === 'GET') return managedUsers(request, bindings, dependencies)
   if (pathname === '/api/admin/users') return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET' })
