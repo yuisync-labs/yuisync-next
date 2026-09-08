@@ -118,11 +118,12 @@ async function reloadAgenda(page, petName) {
 }
 
 test('Agenda hospedada persiste criacao, edicao, responsavel, concorrencia, drag e conclusao', async ({ page, context }, testInfo) => {
-  test.skip(testInfo.project.name !== 'hosted', 'Esta regressao exige o staging hospedado real.')
-  test.skip(!process.env.E2E_EMAIL || !process.env.E2E_PASSWORD, 'Credenciais E2E hospedadas nao configuradas.')
+  const e2eEmail = String(process.env.E2E_EMAIL || '')
+  test.skip(!process.env.YUISYNC_STAGING_URL || !e2eEmail.endsWith('@staging.invalid'), 'Esta regressao exige o tenant efemero do staging real.')
+  test.skip(!process.env.E2E_PASSWORD, 'Credenciais E2E hospedadas nao configuradas.')
   test.setTimeout(6 * 60_000)
 
-  await signIn(page, process.env.E2E_EMAIL, process.env.E2E_PASSWORD)
+  await signIn(page, e2eEmail, process.env.E2E_PASSWORD)
   const fixture = await seedAgendaFixture(page, `${Date.now().toString(36)}-${testInfo.workerIndex}`)
 
   await page.goto('/petshop/agenda')
@@ -213,7 +214,7 @@ test('Agenda hospedada persiste criacao, edicao, responsavel, concorrencia, drag
 
   await reloadAgenda(page, fixture.petName)
   panel = await openAppointmentPanel(page, fixture.petName)
-  await expect(panel.getByText('Concluido', { exact: false })).toBeVisible({ timeout: 15_000 })
+  await expect(panel.getByText(/Conclu[ií]do/i).first()).toBeVisible({ timeout: 15_000 })
   await expect(panel.getByRole('button', { name: 'Confirmar', exact: true })).toHaveCount(0)
   await expect(panel.getByRole('button', { name: 'Iniciar', exact: true })).toHaveCount(0)
   await expect(panel.getByRole('button', { name: 'Concluir', exact: true })).toHaveCount(0)
