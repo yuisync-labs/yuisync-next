@@ -4,8 +4,11 @@ const baseURL = process.env.E2E_BASE_URL || 'http://localhost:3080'
 
 export default defineConfig({
   testDir: './test/e2e',
-  // The drag fixture exercises the local demo, never the hosted tenant.
-  testIgnore: ['**/agenda-drag-semantic.spec.js'],
+  // These fixtures exercise the local demo, never the hosted tenant.
+  testIgnore: [
+    '**/agenda-drag-semantic.spec.js',
+    '**/agenda-appointment-panel.spec.js',
+  ],
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
