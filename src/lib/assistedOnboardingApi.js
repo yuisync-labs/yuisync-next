@@ -34,11 +34,15 @@ export function getAssistedOnboarding(tenantId) {
   return request(`/app/onboarding?${params.toString()}`, { method: 'GET' })
 }
 
-export function saveAssistedTeam(tenantId, staff) {
+export function saveAssistedTeam(tenantId, staff, options = {}) {
   const params = new URLSearchParams({ tenant_id: tenantId })
   return request(`/app/onboarding?${params.toString()}`, {
     method: 'PATCH',
-    body: JSON.stringify({ step: 'team', staff }),
+    body: JSON.stringify({
+      step: 'team',
+      staff,
+      ...(options.commissionResetAt ? { commission_reset_at: options.commissionResetAt } : {}),
+    }),
   })
 }
 
