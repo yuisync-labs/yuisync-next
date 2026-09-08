@@ -29,6 +29,7 @@ const MetaWhatsappPage = lazy(() => import('../shared/pages/MetaWhatsappPage'))
 const BillingPage = lazy(() => import('../shared/pages/BillingPage'))
 const LogsPage = lazy(() => import('../shared/pages/LogsPage'))
 const SupportHubPage = lazy(() => import('../shared/pages/SupportHubPage'))
+const AssistedOnboardingPage = lazy(() => import('../shared/pages/AssistedOnboardingPage'))
 
 function DashboardWithServiceKpis(props) {
   return (
@@ -186,12 +187,14 @@ export const MODULES = {
     ],
     nav: [
       { id: 'usuarios', label: 'Usuarios & Cargos', icon: Users, roles: ['admin'] },
+      { id: 'implantacao', label: 'Implantacao assistida', icon: ClipboardList, roles: ['admin'] },
       { id: 'modulos', label: 'Config. Modulos', icon: Settings, roles: ['admin'] },
       { id: 'suporte', label: 'Suporte Central', icon: MessageSquare, roles: ['admin'] },
       { id: 'logs', label: 'Logs', icon: FileText, roles: ['admin'] },
     ],
     pages: {
       usuarios: UsersPage,
+      implantacao: AssistedOnboardingPage,
       modulos: SettingsPage,
       suporte: SupportHubPage,
       logs: LogsPage,

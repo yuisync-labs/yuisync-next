@@ -1,6 +1,6 @@
 # Lançamento comercial: implementação e critérios pendentes
 
-Atualização: 2026-09-07. Escopo: até dez empresas com implantação assistida e WhatsApp humano. Luna e fiscal não fazem parte desta entrega.
+Atualização: 2026-09-08. Escopo: até dez empresas com implantação assistida e WhatsApp humano. Luna e fiscal não fazem parte desta entrega.
 
 ## Implementado e já promovido nos ciclos anteriores
 
@@ -13,7 +13,7 @@ Atualização: 2026-09-07. Escopo: até dez empresas com implantação assistida
 - Pacotes passaram a expor capacidade, saldo, reservas, consumo e origem; comissões não aplicam regra atual retroativamente quando o snapshot histórico está ausente.
 - CI rejeita falta de configuração de E2E/isolamento. Publicação final exige certificação do mesmo commit, sem herdar resultado de outro SHA.
 
-Isto não certifica todas as APIs, nem remove a compatibilidade: o inventário atual está em 206 `.from()` e 11 `.rpc()` no frontend. O runtime de compatibilidade usa D1. A conversão por domínio permanece pendente.
+Isto não certifica todas as APIs, nem remove a compatibilidade: o inventário candidato da Entrega 4 está em 205 `.from()` e 11 `.rpc()` no frontend, distribuídos em 30 arquivos. O runtime de compatibilidade usa D1. A conversão por domínio permanece pendente.
 
 ## Entrega 3 — Agenda e consistência das abas
 
@@ -40,6 +40,29 @@ Evidência focada antes da PR:
 
 A Entrega 3 só deve ser considerada publicada depois de Quality da PR, Quality do SHA mesclado, certificação completa de staging incluindo browser contra o `/release` servido e promoção formal desse mesmo SHA para produção.
 
+## Entrega 4 — Implantação assistida resumível
+
+Implementação candidata em `codex/delivery4-assisted-onboarding`:
+
+- Gestão Central expõe o fluxo `empresa -> administrador -> equipe -> catálogo -> horários/regras -> revisão`, com retomada calculada a partir do estado realmente persistido em D1, não de um checklist local.
+- `/api/app/onboarding` exige sessão Better Auth, principal ativo, tenant ativo e vínculo `owner`/`admin`. Perda da autorização administrativa passa a responder `403`.
+- Criação de empresa reaproveita `/api/app/tenants` com chave de idempotência e defaults neutros. Reexecução com a mesma operação não cria uma segunda empresa.
+- Administrador com login usa o gerenciamento nativo Better Auth + D1; colaborador operacional continua sendo configuração de equipe, sem criação automática de credencial.
+- Equipe e horários/regras são persistidos pelo Worker/D1 preservando extensões não relacionadas. A tela operacional de Equipe deixa de usar a mutação da fachada Supabase; o reset de comissão existente permanece explícito.
+- Remover todos os colaboradores continua permitido por compatibilidade operacional: `staff: []` é persistido, mas a etapa Equipe volta a ficar pendente até que haja ao menos um colaborador.
+- Catálogo reutiliza o CRUD nativo de serviços e a unicidade já existente por empresa/módulo; reexecução do mesmo código atualiza em vez de criar duplicidade.
+- Cobrança SaaS não é criada automaticamente. O assistente não classifica WhatsApp como funcional apenas por existirem credenciais; a certificação do canal permanece um gate separado.
+- O inventário de compatibilidade cai de 206 para 205 chamadas `.from()` e permanece em 11 `.rpc()`, agora em 30 arquivos. Nenhuma chamada de compatibilidade foi adicionada em arquivo novo.
+- Nenhuma migration nova é necessária para a Entrega 4: o fluxo usa tabelas e contratos já existentes.
+
+Evidência implementada antes da PR:
+
+- `assistedOnboarding.test.ts` cobre retomada, replay de equipe/horários, preservação de extensões não alteradas, reset de comissão, limpeza e restauração de equipe, `review_ready` baseado nas pendências reais e `403` após perda de autorização.
+- O ratchet de compatibilidade foi atualizado para 205 `.from()` / 11 `.rpc()` em 30 arquivos, removendo `teamSettingsOperations.js` do inventário.
+- A certificação ainda depende do Quality completo da PR; estes itens não substituem CI, staging ou smoke live.
+
+A Entrega 4 só deve ser considerada publicada depois de Quality da PR, Quality do SHA mesclado, certificação completa de staging do mesmo SHA e promoção formal desse mesmo SHA para produção, seguida por confirmação de `/release`, `/health` e `/ready`.
+
 ## Ordem obrigatória para homologar/publicar
 
 1. Aplicar `apps/edge-api/auth-migrations/0003_auth_rate_limit.sql` primeiro em AUTH_DB de staging quando aplicável a um ambiente ainda não migrado. Não remover migrations já aplicadas.
@@ -54,7 +77,7 @@ A Entrega 3 só deve ser considerada publicada depois de Quality da PR, Quality 
 - Os ciclos de release usam Quality completo, staging por SHA exato e produção por SHA exato; os últimos releases publicados preservaram schema D1 v30 e password recovery configurado.
 - Testes locais de recuperação usam AUTH_DB local e transporte de e-mail simulado; configuração do provider não substitui teste de entrega real a uma caixa postal.
 - Consultas `EXPLAIN QUERY PLAN` de clientes e agenda em inspeção anterior apontaram índices de chave/agenda; isso não mede o custo de todos os percursos.
-- A compatibilidade frontend ainda existe em 206 `.from()` / 11 `.rpc()` e deve continuar reduzindo por domínio, sem aumentos permitidos pelo ratchet.
+- A compatibilidade frontend candidata da Entrega 4 ainda existe em 205 `.from()` / 11 `.rpc()` distribuídos em 30 arquivos e deve continuar reduzindo por domínio, sem aumentos permitidos pelo ratchet.
 - O `ClientHistoryGroomingEnhancer` ainda usa compatibilidade em percursos legados; a Entrega 3 migra o histórico exibido pelo novo painel da Agenda, não elimina o enhancer inteiro.
 - Nenhum teste de carga comercial de dez empresas foi executado por esta entrega.
 
@@ -63,11 +86,11 @@ A Entrega 3 só deve ser considerada publicada depois de Quality da PR, Quality 
 - Continuar a certificação de isolamento incluindo empresa inativa, acesso cruzado e chamadas administrativas diretas por funcionário nos domínios ainda não cobertos.
 - Ampliar regressões combinadas de unha/tosas, comissão sem responsável/regra histórica, cancelamento/reserva, consumo editável, reenvio idempotente e concorrência no último benefício/estoque/caixa.
 - WhatsApp por empresa: conexão, recebimento/envio, reconexão e eventos duplicados/fora de ordem com números autorizados.
-- Continuar validação de teclado, celular e contraste nos percursos fora da Agenda e dos comprovantes já cobertos.
+- Continuar validação de teclado, celular e contraste nos percursos fora da Agenda, implantação assistida e comprovantes já cobertos.
 - Paginação e agregação nativas por domínio, medição por percurso de `rows_read`, alertas e interrupção automática ao orçamento de 500 mil leituras por rodada em staging.
 - Carga somente em staging: dez empresas, cinco sessões por empresa, trinta minutos. Metas: erros inesperados abaixo de 1%, nenhuma divergência financeira, p95 de consultas abaixo de 1 s e gravações internas abaixo de 2 s.
 - Ensaio de restauração isolada de dados/autenticação e rollback de código; política de retenção dos registros de rate limit.
-- Provisionamento completo de catálogo, horários, regras e administrador; revisão dos defaults específicos restantes sem alterar histórico do Quatro Patas.
+- Certificar a implantação assistida ponta a ponta em staging, incluindo retomada após interrupção, reexecução sem duplicidade, limpeza/restauração da equipe e revisão final sem alterar histórico de empresas existentes.
 - Duas empresas piloto apenas após bloqueadores e WhatsApp certificados; expansão para dez após sete dias sem incidentes críticos e custo medido.
 
 Não classificar o produto como “100% pronto” enquanto estes critérios não tiverem evidência registrada.
