@@ -2,7 +2,10 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './test/e2e',
-  testMatch: '**/agenda-drag-semantic.spec.js',
+  testMatch: [
+    '**/agenda-drag-semantic.spec.js',
+    '**/agenda-appointment-panel.spec.js',
+  ],
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
   workers: 1,
