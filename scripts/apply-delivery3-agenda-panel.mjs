@@ -114,7 +114,7 @@ import { appointmentRequiresGroomingMachineNumber } from '../lib/groomingMachine
   const responsible = staffById.get(appointment?.responsible_staff_key)?.name`,
     to: `  const nextAction = appointmentPanelAction(appointment?.status)
   const needsMachineNumber = nextAction?.status === 'concluido'
-    && appointmentRequiresGroomingMachineNumber(appointment || {}, [])
+    && appointmentRequiresGroomingMachineNumber(appointment || {})
   const responsible = staffById.get(appointment?.responsible_staff_key)?.name`,
   },
   {
@@ -156,38 +156,55 @@ import { AgendaAppointmentPanel } from '../components/AgendaAppointmentPanel'`,
   },
   {
     label: 'panel state',
-    from: `  const [receipt,      setReceipt]      = useState(null)
+    from: `  const [receipt, setReceipt]       = useState(null) // appt to print
   const view = 'agenda'`,
-    to: `  const [receipt,      setReceipt]      = useState(null)
+    to: `  const [receipt, setReceipt]       = useState(null) // appt to print
   const [selectedAppointmentId, setSelectedAppointmentId] = useState(null)
   const agendaScrollPositionRef = useRef(null)
   const view = 'agenda'`,
   },
   {
     label: 'selected appointment derivation',
-    from: `  const deferredSearch = useDeferredValue(search)
+    from: `  const tabCounts = AGENDA_TABS.reduce((acc, tab) => ({
+    ...acc,
+    [tab.id]: appointments.filter((appointment) => getAppointmentServiceGroup(appointment, agendaServices) === tab.id).length,
+  }), {})
 
-  const displayed = useMemo(() => {`,
-    to: `  const deferredSearch = useDeferredValue(search)
+  const displayed = tabbedAppointments.filter(a => {`,
+    to: `  const tabCounts = AGENDA_TABS.reduce((acc, tab) => ({
+    ...acc,
+    [tab.id]: appointments.filter((appointment) => getAppointmentServiceGroup(appointment, agendaServices) === tab.id).length,
+  }), {})
   const selectedAppointment = useMemo(
     () => appointments.find((appointment) => String(appointment.id) === String(selectedAppointmentId || '')) || null,
     [appointments, selectedAppointmentId],
   )
 
-  const displayed = useMemo(() => {`,
+  const displayed = tabbedAppointments.filter(a => {`,
   },
   {
     label: 'panel open close helpers',
-    from: `  const openSlotModal = (slotDate) => {
-    setSelectedDate(slotDate)
-    setModal({ scheduled_at: slotDate.toISOString(), service_group: activeAgendaTab })
+    from: `  const openSlotModal = (day, timeOrHour) => {
+    const time = typeof timeOrHour === 'number'
+      ? \`${'${String(timeOrHour).padStart(2, \'0\')}'}:00\`
+      : String(timeOrHour || '08:00')
+    setModal({
+      serviceGroup: activeAgendaTab,
+      date: isoDate(day),
+      time,
+    })
   }
-`,
-    to: `  const openSlotModal = (slotDate) => {
-    setSelectedDate(slotDate)
-    setModal({ scheduled_at: slotDate.toISOString(), service_group: activeAgendaTab })
+  const handleStatusChange = async (appointmentId, status) => {`,
+    to: `  const openSlotModal = (day, timeOrHour) => {
+    const time = typeof timeOrHour === 'number'
+      ? \`${'${String(timeOrHour).padStart(2, \'0\')}'}:00\`
+      : String(timeOrHour || '08:00')
+    setModal({
+      serviceGroup: activeAgendaTab,
+      date: isoDate(day),
+      time,
+    })
   }
-
   const openAppointmentPanel = (appointment) => {
     if (!appointment?.id) return
     if (!selectedAppointmentId) {
@@ -196,7 +213,6 @@ import { AgendaAppointmentPanel } from '../components/AgendaAppointmentPanel'`,
     }
     setSelectedAppointmentId(appointment.id)
   }
-
   const closeAppointmentPanel = () => {
     setSelectedAppointmentId(null)
     const savedScrollTop = agendaScrollPositionRef.current
@@ -207,7 +223,6 @@ import { AgendaAppointmentPanel } from '../components/AgendaAppointmentPanel'`,
       if (scroller) scroller.scrollTop = savedScrollTop
     })
   }
-
   const completeAppointmentWithMachine = async (appointmentId, groomingMachineNo) => {
     if (!window.confirm('Concluir este atendimento?')) return null
     const updated = await update(appointmentId, {
@@ -217,13 +232,16 @@ import { AgendaAppointmentPanel } from '../components/AgendaAppointmentPanel'`,
     if (updated) handleCompletedAction(updated)
     return updated
   }
-`,
+  const handleStatusChange = async (appointmentId, status) => {`,
   },
   {
     label: 'regional loading wrapper start',
     from: `      {/* Content */}
-      <div key={\`${'${'}view}-${'${'}localAgendaPeriod}-${'${'}selectedDate.toISOString().slice(0, 10)}\`} className="yuisync-agenda-view-transition">
-        {loading ? (`,
+      <div
+        key={\`${'${'}view}-${'${'}agendaPeriod}-${'${'}isoDate(selectedDate)}-${'${'}activeAgendaTab}\`}
+        className="yuisync-agenda-view-transition"
+      >
+      {loading ? (`,
     to: `      {/* Content */}
       <div className={selectedAppointment ? 'xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(340px,420px)] xl:items-start xl:gap-4' : ''}>
         <div className="min-w-0" aria-busy={loading || undefined}>
@@ -232,31 +250,34 @@ import { AgendaAppointmentPanel } from '../components/AgendaAppointmentPanel'`,
               <RefreshCw size={13} className="animate-spin"/> Atualizando agenda…
             </div>
           )}
-          <div key={\`${'${'}view}-${'${'}localAgendaPeriod}-${'${'}selectedDate.toISOString().slice(0, 10)}\`} className="yuisync-agenda-view-transition">
-        {loading && appointments.length === 0 ? (`,
+          <div
+            key={\`${'${'}view}-${'${'}agendaPeriod}-${'${'}isoDate(selectedDate)}-${'${'}activeAgendaTab}\`}
+            className="yuisync-agenda-view-transition"
+          >
+      {loading && appointments.length === 0 ? (`,
   },
   {
     label: 'timeline click opens panel',
-    from: `              onEdit={(appt) => setModal(appt)}`,
-    to: `              onEdit={openAppointmentPanel}`,
+    from: `          onEdit={(appt) => setModal(appt)}`,
+    to: `          onEdit={openAppointmentPanel}`,
   },
   {
     label: 'panel wrapper close',
-    from: `        )}
+    from: `      )}
       </div>
 
       {/* Modals */}`,
-    to: `        )}
+    to: `      )}
           </div>
         </div>
         {selectedAppointment && (
           <AgendaAppointmentPanel
             appointment={selectedAppointment}
-            staffById={operationalStaffById}
-            serviceLabel={(appointment) => serviceLabel(appointment, agendaServices)}
+            staffById={staffById}
+            serviceLabel={serviceLabel}
             statusBadge={statusBadge}
             transportOptions={transportOptions}
-            needsPayment={needsAppointmentPayment}
+            needsPayment={needsPayment}
             onClose={closeAppointmentPanel}
             onEdit={(appointment) => setModal(appointment)}
             onStatus={handleStatusChange}
