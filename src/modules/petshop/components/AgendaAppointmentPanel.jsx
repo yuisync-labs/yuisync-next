@@ -57,7 +57,6 @@ export function AgendaAppointmentPanel({
   onClose,
   onEdit,
   onStatus,
-  onReceipt,
   onCompletedAction,
 }) {
   const { activeTenantId } = useAuthCtx()
@@ -227,7 +226,7 @@ export function AgendaAppointmentPanel({
           {history.map((item) => {
             const badge = statusBadge(item.status)
             return (
-              <Card key={item.id} tone={item.current ? 'highlight' : 'subtle'} className="p-3 text-xs">
+              <Card key={item.id} tone={item.current ? 'info' : 'subtle'} className="p-3 text-xs">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="font-semibold text-text">{serviceLabel(item)}</p>
