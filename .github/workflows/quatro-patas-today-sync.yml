@@ -1,0 +1,123 @@
+name: Quatro Patas today sync
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quatro-patas-today-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Audit, apply and verify 08/09 appointments
+    if: >-
+      github.event.pull_request.head.ref == 'codex/quatro-patas-today-sync' &&
+      contains(github.event.pull_request.body, 'Authorization: AUTHORIZE_QUATRO_PATAS_TODAY_SYNC_2026_09_08')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL || secrets.VITE_SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY || secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      QUATRO_PATAS_WRANGLER_CONFIG: .migration/quatro-patas-production-wrangler.jsonc
+      SYNC_DATE: '2026-09-08'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+
+      - name: Require explicit source and destination credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_SECRET_KEY"
+          test "${{ github.event.pull_request.base.sha }}" = "0e7298df90b2cc9b0cbbbdde42b2fcc177531cfe"
+
+      - run: npm ci
+
+      - name: Prepare minimal production D1 resolver config
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .migration
+          node --input-type=module <<'NODE'
+          import { writeFile } from 'node:fs/promises'
+          const config = {
+            account_id: process.env.CLOUDFLARE_ACCOUNT_ID,
+            name: 'yuisync-edge-api-production-sync',
+            main: 'apps/edge-api/src/index.ts',
+            compatibility_date: '2026-08-05',
+            env: { production: { name: 'yuisync-edge-api-production' } },
+          }
+          await writeFile(process.env.QUATRO_PATAS_WRANGLER_CONFIG, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
+          NODE
+
+      - name: Read-only audit of legacy source and production D1
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/migration/legacy-supabase/quatroPatasTodaySync.mjs audit --date="$SYNC_DATE" > /tmp/quatro-audit.log
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const report = JSON.parse(await readFile('.migration/quatro-patas-today-sync-report.json', 'utf8'))
+          console.log(JSON.stringify({
+            status: 'audit-ok',
+            date: report.date,
+            source_appointments: report.source_appointments,
+            target_appointments_before: report.target_appointments_before,
+            missing_count: report.missing_count,
+            schedule_mismatch_count: report.mismatches.length,
+            belinha_correction_count: report.correction_candidates.length,
+            unexpected_mismatch_count: report.other_mismatches.length,
+          }))
+          NODE
+
+      - name: Apply only missing same-day appointments and guarded BELINHA correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/migration/legacy-supabase/quatroPatasTodaySync.mjs apply --date="$SYNC_DATE" > /tmp/quatro-apply.log
+
+      - name: Independent post-write verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/migration/legacy-supabase/quatroPatasTodaySync.mjs verify --date="$SYNC_DATE" > /tmp/quatro-verify.log
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises'
+          const report = JSON.parse(await readFile('.migration/quatro-patas-today-sync-report.json', 'utf8'))
+          if (report.status !== 'applied-and-verified' || report.verification?.verified !== true) throw new Error('TODAY_SYNC_REPORT_NOT_VERIFIED')
+          console.log(JSON.stringify({
+            status: report.status,
+            date: report.date,
+            imported_appointments: report.missing_count,
+            corrected_schedule: Boolean(report.corrected_appointment_id),
+            source_appointments: report.verification.source_appointments,
+            target_appointments_after: report.verification.target_appointments_after,
+            remaining_missing: report.verification.missing_ids.length,
+            remaining_mismatches: report.verification.mismatched_ids.length,
+          }))
+          NODE
+
+      - name: Remove local sensitive evidence
+        if: always()
+        shell: bash
+        run: |
+          rm -f .migration/quatro-patas-today-sync-report.json \
+            .migration/quatro-patas-today-rollback.json \
+            .migration/quatro-patas-today-apply.sql \
+            .migration/quatro-patas-production-wrangler.jsonc \
+            /tmp/quatro-audit.log /tmp/quatro-apply.log /tmp/quatro-verify.log
