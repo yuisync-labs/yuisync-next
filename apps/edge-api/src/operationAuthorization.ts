@@ -2,20 +2,52 @@ import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/bet
 
 export type OperationAccess = 'operational' | 'administrative'
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
-type Membership = { role: string; status: string; tenant_status: string; module_permissions_json: string | null }
+export type OperationMembership = { role: string; status: string; tenant_status: string; module_permissions_json: string | null }
 
-export function membershipAllows(row: Membership, moduleId: string, access: OperationAccess): boolean {
+function permissionForModule(row: OperationMembership, moduleId: string): unknown {
+  let permissions: Record<string, unknown>
+  try { permissions = JSON.parse(row.module_permissions_json || '{}') } catch { return undefined }
+  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) return undefined
+  // Administrative aliases are module-scoped. A wildcard can grant generic
+  // operational access, but it must never project an admin role into another module.
+  return permissions[moduleId] ?? permissions['*']
+}
+
+function roleFromPermission(permission: unknown): string | null {
+  if (typeof permission === 'string') return permission
+  if (!permission || typeof permission !== 'object' || Array.isArray(permission)) return null
+  const role = (permission as Record<string, unknown>).role
+  return typeof role === 'string' ? role : null
+}
+
+function recognizedModuleAdminRole(moduleId: string): string {
+  return moduleId === 'petshop' ? 'admin_pet' : `admin_${moduleId}`
+}
+
+function recognizedModuleStaffRole(moduleId: string): string {
+  return moduleId === 'petshop' ? 'funcionario_pet' : `funcionario_${moduleId}`
+}
+
+export function membershipAllows(row: OperationMembership, moduleId: string, access: OperationAccess): boolean {
   if (row.status !== 'active' || row.tenant_status !== 'active') return false
   if (row.role === 'owner' || row.role === 'admin') return true
-  let permissions: Record<string, unknown>
-  try { permissions = JSON.parse(row.module_permissions_json || '{}') } catch { return false }
-  if (!permissions || typeof permissions !== 'object') return false
-  const permission = permissions[moduleId] ?? permissions['*']
-  const role = typeof permission === 'string' ? permission
-    : permission && typeof permission === 'object' && !Array.isArray(permission)
-      ? (permission as Record<string, unknown>).role : null
-  if (moduleId === 'petshop' && role === 'admin_pet') return true
-  return access === 'operational' && (permission === true || (moduleId === 'petshop' && role === 'funcionario_pet'))
+
+  const explicitPermission = (() => {
+    let permissions: Record<string, unknown>
+    try { permissions = JSON.parse(row.module_permissions_json || '{}') } catch { return undefined }
+    if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) return undefined
+    return permissions[moduleId]
+  })()
+  const permission = explicitPermission ?? permissionForModule(row, moduleId)
+  const permissionRole = roleFromPermission(permission)
+  const adminRole = recognizedModuleAdminRole(moduleId)
+  const staffRole = recognizedModuleStaffRole(moduleId)
+
+  // A persisted module role on the membership itself is accepted only for its
+  // matching module. Flags such as { admin: true } are deliberately ignored.
+  if (row.role === adminRole || permissionRole === adminRole) return true
+  if (access === 'administrative') return false
+  return row.role === staffRole || permissionRole === staffRole || permission === true
 }
 
 export async function authorizeOperation(request: Request, bindings: Bindings, access: OperationAccess, getSession = getBetterAuthSession): Promise<Response | null> {
@@ -32,7 +64,7 @@ export async function authorizeOperation(request: Request, bindings: Bindings, a
     JOIN tenant_memberships m ON m.principal_id=p.id
     JOIN tenants t ON t.id=m.tenant_id
     WHERE p.provider='better-auth' AND p.subject=?1 AND p.status='active' AND m.tenant_id=?2 LIMIT 1
-  `).bind(session.user.id, tenant).first<Membership>()
+  `).bind(session.user.id, tenant).first<OperationMembership>()
   return membership && membershipAllows(membership, moduleId, access) ? null : fail('FORBIDDEN', 403)
 }
 
