@@ -66,7 +66,7 @@ function normalizeKey(value: unknown, index: number): string {
 }
 
 function normalizeStaff(value: unknown): StaffRow[] | null {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 50) return null
+  if (!Array.isArray(value) || value.length > 50) return null
   const result: StaffRow[] = []
   const seen = new Set<string>()
   for (let index = 0; index < value.length; index += 1) {
@@ -80,7 +80,7 @@ function normalizeStaff(value: unknown): StaffRow[] | null {
     seen.add(key)
     result.push({ key, name, active: row.active !== false })
   }
-  return result.length ? result : null
+  return result
 }
 
 function staffFromExtensions(extensions: Record<string, unknown>): StaffRow[] {
