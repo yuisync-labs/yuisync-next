@@ -65,8 +65,11 @@ async function appointmentRequest(path, { tenantId, moduleId = 'petshop', method
             ['status', 'eq', url.searchParams.get('status')],
             ['service_type', 'eq', url.searchParams.get('service_type')],
             ['employee_id', 'eq', url.searchParams.get('employee_id')],
+            ['client_id', 'eq', url.searchParams.get('client_id')],
           ].filter(([, , value]) => value).map(([column, op, value]) => ({ column, op, value }))
-      const result = runVisualPreviewQuery({ table: 'appointments', filters, orders: [{ column: 'scheduled_at', ascending: true }] })
+      const descending = url.searchParams.get('sort') === 'desc'
+      const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 500))
+      const result = runVisualPreviewQuery({ table: 'appointments', filters, orders: [{ column: 'scheduled_at', ascending: !descending }], limit })
       return appointmentId ? { appointment: result.data?.[0] || null } : { appointments: result.data || [] }
     }
 

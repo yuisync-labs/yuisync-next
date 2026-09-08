@@ -243,6 +243,14 @@ async function readAppointments(request: Request, bindings: Bindings, appointmen
   const status = requestedStatus ? (STATUS_TO_CANONICAL[requestedStatus] || requestedStatus) : null
   const serviceType = text(url.searchParams.get('service_type')) || null
   const employeeId = text(url.searchParams.get('employee_id')) || null
+  const requestedClientId = text(url.searchParams.get('client_id'))
+  if (requestedClientId && !ID.test(requestedClientId)) return json({ code: 'INVALID_CLIENT_ID' }, 400)
+  const clientId = requestedClientId || null
+  const requestedLimit = Number(url.searchParams.get('limit'))
+  const listLimit = clientId
+    ? Math.max(1, Math.min(50, Number.isFinite(requestedLimit) ? Math.trunc(requestedLimit) : 12))
+    : 500
+  const orderDirection = url.searchParams.get('sort') === 'desc' ? 'DESC' : 'ASC'
 
   const statement = bindings.DB!.prepare(`${APPOINTMENT_READ_SQL}
     WHERE a.tenant_id=?1 AND a.module_id=?2
@@ -253,9 +261,21 @@ async function readAppointments(request: Request, bindings: Bindings, appointmen
       AND (?7 IS NULL OR a.employee_id=?7 OR a.groomer_id=?7 OR a.responsible_staff_key=?7)
       AND (?8 IS NULL OR EXISTS(SELECT 1 FROM appointment_services sx
         WHERE sx.tenant_id=a.tenant_id AND sx.module_id=a.module_id AND sx.appointment_id=a.id AND sx.service_code=?8))
-    ORDER BY a.scheduled_at_ms,a.id
-    LIMIT ?9
-  `).bind(scope.tenantId, scope.moduleId, appointmentId || null, start, end, status, employeeId, serviceType, appointmentId ? 1 : 500)
+      AND (?9 IS NULL OR a.client_id=?9)
+    ORDER BY a.scheduled_at_ms ${orderDirection},a.id ${orderDirection}
+    LIMIT ?10
+  `).bind(
+    scope.tenantId,
+    scope.moduleId,
+    appointmentId || null,
+    start,
+    end,
+    status,
+    employeeId,
+    serviceType,
+    clientId,
+    appointmentId ? 1 : listLimit,
+  )
   const result = await statement.all<AppointmentReadRow>()
   const appointments = (result.results || []).map(appointmentPayload)
   if (appointmentId) return appointments[0] ? json({ appointment: appointments[0] }) : json({ code: 'APPOINTMENT_NOT_FOUND' }, 404)

@@ -38,4 +38,5 @@ test('arrasta um agendamento no modo diario sem depender da cor do tema', async 
 
   await expect(page.getByText(/Agendamento movido para 08:50/i)).toBeVisible()
   await expect(card).toContainText('08:50')
+  await expect(page.locator('[data-qa="agenda-appointment-panel"]')).toHaveCount(0)
 })

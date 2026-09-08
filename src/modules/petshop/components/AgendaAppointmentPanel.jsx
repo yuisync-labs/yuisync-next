@@ -26,6 +26,7 @@ import {
   appointmentPaymentPresentation,
 } from '../lib/agendaPanelPresentation'
 import { appointmentCheckoutTotals } from '../pages/appointmentCheckoutFlow'
+import { appointmentRequiresGroomingMachineNumber } from '../lib/groomingMachinePolicy'
 
 const fmtDateTime = (value) => {
   const date = new Date(value || '')
@@ -57,6 +58,7 @@ export function AgendaAppointmentPanel({
   onClose,
   onEdit,
   onStatus,
+  onCompleteWithMachine,
   onCompletedAction,
 }) {
   const { activeTenantId } = useAuthCtx()
@@ -66,6 +68,7 @@ export function AgendaAppointmentPanel({
   const [historyError, setHistoryError] = useState('')
   const [savingAction, setSavingAction] = useState(false)
   const [actionError, setActionError] = useState('')
+  const [machineNo, setMachineNo] = useState(null)
 
   const packagePresentation = useMemo(
     () => appointmentPackagePresentation(appointment || {}),
@@ -82,6 +85,8 @@ export function AgendaAppointmentPanel({
     usesPackage: packagePresentation.usesPackage,
   }), [appointment, needsPayment, packagePresentation.usesPackage, totals.total])
   const nextAction = appointmentPanelAction(appointment?.status)
+  const needsMachineNumber = nextAction?.status === 'concluido'
+    && appointmentRequiresGroomingMachineNumber(appointment || {})
   const responsible = staffById.get(appointment?.responsible_staff_key)?.name
     || appointment?.responsible_staff_name
     || 'Sem responsável'
@@ -119,7 +124,8 @@ export function AgendaAppointmentPanel({
     setSavingAction(true)
     setActionError('')
     try {
-      await onStatus(appointment.id, nextAction.status)
+      if (needsMachineNumber) await onCompleteWithMachine(appointment.id, machineNo)
+      else await onStatus(appointment.id, nextAction.status)
     } catch (error) {
       setActionError(error?.message || 'Não foi possível atualizar este atendimento. O estado anterior foi mantido.')
     } finally {
@@ -162,6 +168,17 @@ export function AgendaAppointmentPanel({
       footer={footer}
     >
       <div className="space-y-4" data-qa="agenda-appointment-panel">
+        {needsMachineNumber && (
+          <Panel title="Nº da máquina" icon={Scissors} description="Opcional. Será salvo junto com a conclusão, na mesma atualização.">
+            <div className="grid grid-cols-4 gap-2">
+              {[4, 7, 10].map((value) => (
+                <button key={value} type="button" className={`btn btn-sm justify-center ${machineNo === value ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMachineNo(value)}>Nº {value}</button>
+              ))}
+              <button type="button" className={`btn btn-sm justify-center ${machineNo === null ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMachineNo(null)}>Sem Nº</button>
+            </div>
+          </Panel>
+        )}
+
         {actionError && (
           <div role="alert" className="rounded-xl border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-300">
             {actionError}
