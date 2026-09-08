@@ -7,7 +7,9 @@ export type OperationMembership = { role: string; status: string; tenant_status:
 function permissionsFor(row: OperationMembership): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(row.module_permissions_json || '{}')
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null
   } catch {
     return null
   }
