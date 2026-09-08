@@ -28,6 +28,7 @@ type ResolvedScope =
   | { ok: false; response: Response }
 
 const OPERATIONAL_STAFF_TEMPLATE_KEY = '__petshop_operational_staff'
+const COMMISSION_RESET_TEMPLATE_KEY = '__petshop_commission_reset_at'
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
@@ -95,7 +96,7 @@ function normalizeBusinessHours(value: unknown): BusinessHours | null {
   const result: BusinessHours = {}
   let openDays = 0
   for (let weekday = 1; weekday <= 7; weekday += 1) {
-    const rows = source[String(weekday)] ?? source[weekday]
+    const rows = source[String(weekday)]
     if (!Array.isArray(rows) || rows.length > 4) return null
     const normalizedRows: Array<{ open: string; close: string }> = []
     for (const raw of rows) {
@@ -119,6 +120,13 @@ function hoursFromExtensions(extensions: Record<string, unknown>): BusinessHours
 function positiveInteger(value: unknown, min: number, max: number): number | null {
   const parsed = Number(value)
   return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : null
+}
+
+function commissionReset(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null
+  if (typeof value !== 'string' || value.length > 64) return null
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null
 }
 
 async function resolveScope(
@@ -250,7 +258,7 @@ async function patchOnboarding(
   const extensions = parseExtensions(extensionRow)
 
   if (body.step === 'team') {
-    if (Object.keys(body).some((key) => !['step', 'staff'].includes(key))) return json({ code: 'INVALID_ONBOARDING_FIELDS' }, 400)
+    if (Object.keys(body).some((key) => !['step', 'staff', 'commission_reset_at'].includes(key))) return json({ code: 'INVALID_ONBOARDING_FIELDS' }, 400)
     const staff = normalizeStaff(body.staff)
     if (!staff) return json({ code: 'INVALID_OPERATIONAL_STAFF' }, 400)
     extensions.petshop_operational_staff = staff
@@ -258,6 +266,11 @@ async function patchOnboarding(
       ? { ...(extensions.message_templates as Record<string, unknown>) }
       : {}
     templates[OPERATIONAL_STAFF_TEMPLATE_KEY] = staff
+    if ('commission_reset_at' in body) {
+      const resetAt = commissionReset(body.commission_reset_at)
+      if (!resetAt) return json({ code: 'INVALID_COMMISSION_RESET_AT' }, 400)
+      templates[COMMISSION_RESET_TEMPLATE_KEY] = resetAt
+    }
     extensions.message_templates = templates
   } else {
     if (Object.keys(body).some((key) => !['step', 'business_hours', 'slot_interval_min', 'booking_lead_time_min', 'booking_capacity'].includes(key))) {
