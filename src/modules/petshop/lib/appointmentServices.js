@@ -269,6 +269,15 @@ export function appointmentServiceLabel(appointment = {}, services = []) {
   return names.join(' + ') || 'Servico'
 }
 
+export function dashboardAppointmentServiceLabel(appointment = {}, legacyLabel = (value) => value) {
+  const items = Array.isArray(appointment?.service_items) ? appointment.service_items : []
+  const hasSnapshotName = items.some((item) => String(item?.name || '').trim())
+  if (hasSnapshotName) return appointmentServiceLabel(appointment)
+
+  const fallback = String(legacyLabel(appointment?.service_type) || '').trim()
+  return fallback && !/^catalog_/i.test(fallback) ? fallback : 'Serviço agendado'
+}
+
 export function appointmentServiceGroup(appointment = {}, services = []) {
   const items = Array.isArray(appointment?.service_items) ? appointment.service_items : []
   const code = appointment?.service_type || appointment

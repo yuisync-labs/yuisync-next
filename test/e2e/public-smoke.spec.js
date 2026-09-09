@@ -1,5 +1,14 @@
 import { expect, test } from '@playwright/test'
 
+test.beforeEach(async ({ page }) => {
+  if (process.env.E2E_PUBLIC_SMOKE_LOCAL !== '1') return
+  await page.route('**/api/auth/get-session', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: 'null',
+  }))
+})
+
 for (const path of ['/', '/vendas', '/entrar']) {
   test(`${path} loads without horizontal overflow or console errors`, async ({ page }) => {
     const errors = []

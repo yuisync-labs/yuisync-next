@@ -214,6 +214,11 @@ jobs:
           }
           NODE
 
+      - name: Prove tenant isolation with disposable tenants
+        run: npm run test:tenant
+        env:
+          REQUIRE_TENANT_ISOLATION_TESTS: '1'
+
       - name: Install browser runtime
         run: npx playwright install --with-deps chromium
 

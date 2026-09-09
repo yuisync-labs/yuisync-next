@@ -92,10 +92,12 @@ async function exportEnv(entries) {
 function fixture() {
   const runId = `e2e-${Date.now()}-${randomBytes(4).toString('hex')}`
   const tenantId = `${runId}-tenant`
+  const isolationTenantId = `${runId}-isolation-tenant`
   const users = [
-    { key: 'admin', role: 'admin', moduleRole: 'admin_pet', envEmail: 'E2E_EMAIL', envPassword: 'E2E_PASSWORD', name: 'E2E Admin' },
-    { key: 'manager', role: 'manager', moduleRole: 'funcionario_pet', envEmail: 'E2E_MANAGER_EMAIL', envPassword: 'E2E_MANAGER_PASSWORD', name: 'E2E Manager' },
-    { key: 'member', role: 'member', moduleRole: 'funcionario_pet', envEmail: 'E2E_COMMON_EMAIL', envPassword: 'E2E_COMMON_PASSWORD', name: 'E2E Member' },
+    { key: 'admin', role: 'admin', moduleRole: 'admin_pet', envEmail: 'E2E_EMAIL', envPassword: 'E2E_PASSWORD', name: 'E2E Admin', tenantId },
+    { key: 'manager', role: 'manager', moduleRole: 'funcionario_pet', envEmail: 'E2E_MANAGER_EMAIL', envPassword: 'E2E_MANAGER_PASSWORD', name: 'E2E Manager', tenantId },
+    { key: 'member', role: 'member', moduleRole: 'funcionario_pet', envEmail: 'E2E_COMMON_EMAIL', envPassword: 'E2E_COMMON_PASSWORD', name: 'E2E Member', tenantId },
+    { key: 'isolation', role: 'admin', moduleRole: 'admin_pet', name: 'E2E Isolation Admin', tenantId: isolationTenantId },
   ].map((user) => ({
     ...user,
     userId: randomUUID(),
@@ -103,7 +105,7 @@ function fixture() {
     email: `${runId}-${user.key}@staging.invalid`,
     password: password(),
   }))
-  return { schema: 'yuisync-staging-e2e-fixture/v3', runId, tenantId, users }
+  return { schema: 'yuisync-staging-e2e-fixture/v4', runId, tenantId, isolationTenantId, users }
 }
 
 function referencedTables(createSql) {
@@ -231,14 +233,17 @@ async function setup() {
     schema: current.schema,
     runId: current.runId,
     tenantId: current.tenantId,
+    tenantIds: [current.tenantId, current.isolationTenantId],
     wranglerEnv: WRANGLER_ENV,
-    users: current.users.map(({ key, role, moduleRole, userId, principalId, email }) => ({ key, role, moduleRole, userId, principalId, email })),
+    users: current.users.map(({ key, role, moduleRole, userId, principalId, email, tenantId }) => ({ key, role, moduleRole, userId, principalId, email, tenantId })),
   }, null, 2))
 
   const authStatements = []
   const mainStatements = [
     `INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(${sql(current.tenantId)},${sql(current.tenantId)},'Release E2E','active',${now},${now});`,
     `INSERT INTO tenant_module_settings(tenant_id,module_id,store_name,created_at_ms,updated_at_ms) VALUES(${sql(current.tenantId)},'petshop','Release E2E',${now},${now});`,
+    `INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(${sql(current.isolationTenantId)},${sql(current.isolationTenantId)},'Isolation E2E','active',${now},${now});`,
+    `INSERT INTO tenant_module_settings(tenant_id,module_id,store_name,created_at_ms,updated_at_ms) VALUES(${sql(current.isolationTenantId)},'petshop','Isolation E2E',${now},${now});`,
   ]
   const env = { E2E_BASE_URL: E2E_BASE_URL }
 
@@ -251,12 +256,21 @@ async function setup() {
     )
     mainStatements.push(
       `INSERT INTO identity_principals(id,provider,subject,display_name,email,status,created_at_ms,updated_at_ms) VALUES(${sql(user.principalId)},'better-auth',${sql(user.userId)},${sql(user.name)},${sql(user.email)},'active',${now},${now});`,
-      `INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(${sql(current.tenantId)},${sql(user.principalId)},'active',${now},${now},${sql(user.role)},${sql(modulePermissions)});`,
+      `INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(${sql(user.tenantId)},${sql(user.principalId)},'active',${now},${now},${sql(user.role)},${sql(modulePermissions)});`,
     )
     mask(user.password)
-    env[user.envEmail] = user.email
-    env[user.envPassword] = user.password
+    if (user.envEmail) env[user.envEmail] = user.email
+    if (user.envPassword) env[user.envPassword] = user.password
   }
+
+  const primaryAdmin = current.users.find((user) => user.key === 'admin')
+  const isolationAdmin = current.users.find((user) => user.key === 'isolation')
+  env.TENANT_A_EMAIL = primaryAdmin.email
+  env.TENANT_A_PASSWORD = primaryAdmin.password
+  env.TENANT_A_ID = current.tenantId
+  env.TENANT_B_EMAIL = isolationAdmin.email
+  env.TENANT_B_PASSWORD = isolationAdmin.password
+  env.TENANT_B_ID = current.isolationTenantId
 
   try {
     d1Run('AUTH_DB', authStatements.join(' '))
@@ -279,8 +293,9 @@ async function cleanup() {
   }
 
   const userIds = (manifest.users || []).map((user) => user.userId).filter(Boolean)
-  const principalIds = (manifest.users || []).map((user) => user.principalId).filter(Boolean)
-  const tenantId = String(manifest.tenantId || '')
+  const tenantIds = Array.isArray(manifest.tenantIds) && manifest.tenantIds.length
+    ? manifest.tenantIds.map(String)
+    : [String(manifest.tenantId || '')].filter(Boolean)
   const errors = []
 
   try {
@@ -289,7 +304,11 @@ async function cleanup() {
     errors.push(`AUTH_DB:${error instanceof Error ? error.message : String(error)}`)
   }
 
-  if (tenantId) {
+  for (const tenantId of tenantIds) {
+    const principalIds = (manifest.users || [])
+      .filter((user) => !user.tenantId || String(user.tenantId) === tenantId)
+      .map((user) => user.principalId)
+      .filter(Boolean)
     try {
       cleanupMainTenant(tenantId, principalIds)
     } catch (error) {
@@ -300,7 +319,7 @@ async function cleanup() {
   if (errors.length) {
     throw new Error(`STAGING_E2E_CLEANUP_FAILED:${errors.join('|')}`)
   }
-  console.log(JSON.stringify({ status: 'cleaned', run_id: manifest.runId || null, tenant_id: tenantId || null, wrangler_env: WRANGLER_ENV }))
+  console.log(JSON.stringify({ status: 'cleaned', run_id: manifest.runId || null, tenant_ids: tenantIds, wrangler_env: WRANGLER_ENV }))
 }
 
 if (!['setup', 'cleanup', 'sweep'].includes(COMMAND)) {
