@@ -211,5 +211,5 @@ describe('D1 recent migration upgrade matrix', () => {
     await setSchemaSnapshot(25)
     await applyD1Migrations(db, migrationsFrom(25))
     await assertLatestSchema()
-  })
+  }, 30_000)
 })

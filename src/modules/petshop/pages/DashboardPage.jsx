@@ -13,6 +13,7 @@ import { useAnalytics } from '../../../shared/hooks/useAnalytics'
 import { MetricCard, Panel, StatusBadge } from '../../../components/ui'
 import AIHoursSavedCard from '../components/AIHoursSavedCard'
 import { buildAIHoursFromScopedSessions } from '../utils/aiHoursSaved'
+import { dashboardAppointmentServiceLabel } from '../lib/appointmentServices'
 import { EmptyState, LoadingState } from '../../../components/PageState'
 
 function RevenueMixCard({ value, sub, mix = [], onClick }) {
@@ -95,6 +96,7 @@ function StockAlert({ product }) {
 
 function ApptRow({ appt, serviceLabel, statusBadge, isAdmin }) {
   const sb = statusBadge(appt.status)
+  const resolvedServiceLabel = dashboardAppointmentServiceLabel(appt, serviceLabel)
   return (
     <tr>
       <td>
@@ -104,7 +106,7 @@ function ApptRow({ appt, serviceLabel, statusBadge, isAdmin }) {
         <p className="font-semibold text-text">{appt.pets?.pet_name || '—'}</p>
         <p className="text-xs text-muted">{appt.pets?.breed || appt.pets?.species}</p>
       </td>
-      <td>{serviceLabel(appt.service_type)}</td>
+      <td>{resolvedServiceLabel}</td>
       <td>
         <span className={`badge ${sb.cls}`}>{sb.label}</span>
       </td>
@@ -297,7 +299,7 @@ export default function DashboardPage({ setPage }) {
             icon={Star}
             label="Satisfação IA"
             value={chatQuality.avgCsat === null ? '-' : chatQuality.avgCsat.toFixed(1)}
-            description={`${chatQuality.csatCount} avaliação${chatQuality.csatCount !== 1 ? 'ões' : ''} coletada${chatQuality.csatCount !== 1 ? 's' : ''}`}
+            description={`${chatQuality.csatCount} ${chatQuality.csatCount === 1 ? 'avaliação coletada' : 'avaliações coletadas'}`}
             onClick={() => setPage('chat')}
           />
         </div>
