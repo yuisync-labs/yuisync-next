@@ -7,7 +7,7 @@ import YuiSyncMark from '../../public/components/YuiSyncMark'
 
 // Uma página sem Sidebar, que apenas mostra os "Apps" que o usuário tem acesso.
 export default function LauncherPage() {
-  const { profile, signOut, tenantEnabledModules = [] } = useAuthCtx()
+  const { profile, signOut, activeTenantId, tenantEnabledModules = [] } = useAuthCtx()
   const navigate = useNavigate()
 
   // Se o usuário tem allowed_modules no banco, nós filtramos as chaves disponíveis.
@@ -18,6 +18,7 @@ export default function LauncherPage() {
 
   const modulesList = Object.values(MODULES).filter(m => {
     if (m.id === 'system') return isAdmin
+    if (!activeTenantId) return false
     if (!tenantModules.includes(m.id)) return false
     if (isAdmin) return true
     if (allowed.length === 0) return m.id === 'petshop' // fallback legado: quem não tem array, vê petshop

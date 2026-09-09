@@ -1,4 +1,5 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import { isPlatformAdmin } from './platformAuthorization'
 
 type Bindings = BetterAuthRuntimeBindings & {
   DB?: D1Database
@@ -55,31 +56,20 @@ async function resolveAdminScope(
   if (!userId) throw new AdminMaintenanceError('UNAUTHENTICATED', 401, 'Sessão necessária.')
 
   const access = await bindings.DB.prepare(`
-    SELECT principal.id AS principal_id,principal.email,membership.status AS membership_status,tenant.status AS tenant_status
+    SELECT principal.id AS principal_id,tenant.status AS tenant_status
     FROM identity_principals principal
-    JOIN tenant_memberships membership ON membership.principal_id=principal.id
-    JOIN tenants tenant ON tenant.id=membership.tenant_id
+    JOIN tenants tenant ON tenant.id=?2
     WHERE principal.provider='better-auth' AND principal.subject=?1 AND principal.status='active'
-      AND membership.tenant_id=?2 AND membership.status='active'
     LIMIT 1
   `).bind(userId, tenantId).first<{
     principal_id: string
-    email: string | null
-    membership_status: string
     tenant_status: string
   }>()
   if (!access || access.tenant_status !== 'active') {
     throw new AdminMaintenanceError('FORBIDDEN', 403, 'Sem acesso ao tenant informado.')
   }
 
-  const globalAdmin = await bindings.DB.prepare(`
-    SELECT role,active
-    FROM profiles
-    WHERE active=1 AND role='admin'
-      AND (id=?1 OR (?2 IS NOT NULL AND lower(email)=lower(?2)))
-    LIMIT 1
-  `).bind(access.principal_id, access.email).first<{ role: string; active: number }>()
-  if (!globalAdmin) {
+  if (!await isPlatformAdmin(bindings.DB, { id: access.principal_id })) {
     throw new AdminMaintenanceError('FORBIDDEN', 403, 'A manutenção exige administrador global.')
   }
   return { tenantId, moduleId }

@@ -1,6 +1,7 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 import { handleAppSettingsApiRequest } from './appSettingsApi'
 import { handleAssistedOnboardingApiRequest } from './assistedOnboardingApi'
+import { isPlatformAdmin } from './platformAuthorization'
 
 type AppApiBindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 
@@ -18,6 +19,12 @@ type MembershipRow = {
   tenant_name: string
   tenant_slug: string
   tenant_status: string
+}
+
+type TenantDirectoryRow = {
+  id: string
+  name: string
+  slug: string
 }
 
 type DirectoryMembershipRow = {
@@ -154,17 +161,30 @@ function staffType(tenantRole: string): 'gerente' | 'funcionario' {
     : 'funcionario'
 }
 
-async function bootstrap(request: Request, bindings: AppApiBindings): Promise<Response> {
-  const resolved = await resolvePrincipal(request, bindings)
+async function bootstrap(request: Request, bindings: AppApiBindings, dependencies: AppApiDependencies): Promise<Response> {
+  const resolved = await resolvePrincipal(request, bindings, dependencies.getSession)
   if (!resolved.ok) return resolved.error
-  const rows = await memberships(bindings.DB!, resolved.principal.id)
+  const [rows, platformAdmin] = await Promise.all([
+    memberships(bindings.DB!, resolved.principal.id),
+    isPlatformAdmin(bindings.DB!, resolved.principal),
+  ])
+  const managedTenants = platformAdmin
+    ? (await bindings.DB!.prepare(`
+      SELECT id,name,slug
+      FROM tenants
+      WHERE status='active'
+      ORDER BY name,id
+    `).all<TenantDirectoryRow>()).results
+    : []
   return json({
     session: resolved.session,
     profile: {
       id: resolved.principal.id,
       user_id: resolved.session.user.id,
       name: resolved.principal.display_name || resolved.session.user.name || '',
+      full_name: resolved.principal.display_name || resolved.session.user.name || '',
       email: resolved.principal.email || resolved.session.user.email || '',
+      role: platformAdmin ? 'admin' : 'member',
       active: true,
     },
     tenants: rows.map((row) => ({
@@ -174,6 +194,10 @@ async function bootstrap(request: Request, bindings: AppApiBindings): Promise<Re
       role: row.role,
       enabled_modules: modulesFor(row),
       module_permissions: modulePermissionsFor(row),
+    })),
+    managed_tenants: managedTenants.map((tenant) => ({
+      ...tenant,
+      enabled_modules: ['petshop'],
     })),
   })
 }
@@ -236,10 +260,15 @@ async function managedUsers(
 async function createTenant(request: Request, bindings: AppApiBindings, dependencies: AppApiDependencies): Promise<Response> {
   const resolved = await resolvePrincipal(request, bindings, dependencies.getSession)
   if (!resolved.ok) return resolved.error
-  const access = await bindings.DB!.prepare(`SELECT 1 FROM tenant_memberships m JOIN tenants t ON t.id=m.tenant_id
-    WHERE m.principal_id=?1 AND m.status='active' AND t.status='active' AND m.role IN ('owner','admin') LIMIT 1`)
-    .bind(resolved.principal.id).first()
-  if (!access) return json({ code: 'FORBIDDEN' }, 403)
+  const platformAdmin = await isPlatformAdmin(bindings.DB!, resolved.principal)
+  const tenantAdministrator = platformAdmin ? null : await bindings.DB!.prepare(`
+    SELECT 1 AS allowed FROM tenant_memberships m
+    JOIN tenants t ON t.id=m.tenant_id
+    WHERE m.principal_id=?1 AND m.status='active' AND t.status='active'
+      AND m.role IN ('owner','admin')
+    LIMIT 1
+  `).bind(resolved.principal.id).first<{ allowed: number }>()
+  if (!platformAdmin && !tenantAdministrator) return json({ code: 'FORBIDDEN' }, 403)
   const operationKey = request.headers.get('idempotency-key') || ''
   if (!/^[A-Za-z0-9_-]{16,100}$/.test(operationKey)) return json({ code: 'IDEMPOTENCY_KEY_REQUIRED' }, 400)
   let body: { name?: unknown } = {}
@@ -254,20 +283,28 @@ async function createTenant(request: Request, bindings: AppApiBindings, dependen
   const now = Date.now()
   const existing = await bindings.DB!.prepare('SELECT name,slug FROM tenants WHERE id=?1').bind(id).first<{ name: string; slug: string }>()
   if (existing && existing.name !== name) return json({ code: 'IDEMPOTENCY_CONFLICT' }, 409)
-  if (existing) return json({ id, name: existing.name, slug: existing.slug, role: 'owner', enabled_modules: ['petshop'], module_permissions: { petshop: { role: 'admin_pet' } } })
-  await bindings.DB!.batch([
+  const returnedRole = platformAdmin ? 'platform_admin' : 'owner'
+  const returnedPermissions = platformAdmin ? {} : { petshop: { role: 'admin_pet' } }
+  if (existing) return json({ id, name: existing.name, slug: existing.slug, role: returnedRole, enabled_modules: ['petshop'], module_permissions: returnedPermissions })
+  const statements: D1PreparedStatement[] = [
     bindings.DB!.prepare(`INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,'active',?4,?4) ON CONFLICT(id) DO NOTHING`)
       .bind(id, slug, name, now),
-    bindings.DB!.prepare(`INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json) VALUES(?1,?2,'active',?3,?3,'owner','{"petshop":{"role":"admin_pet"}}') ON CONFLICT DO NOTHING`)
-      .bind(id, resolved.principal.id, now),
     bindings.DB!.prepare(`INSERT INTO tenant_module_settings(tenant_id,module_id,store_name,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,?3,?3) ON CONFLICT DO NOTHING`)
       .bind(id, name, now),
     bindings.DB!.prepare(`INSERT INTO module_settings_extensions(tenant_id,module_id,data_json,updated_at_ms) VALUES(?1,'petshop',?2,?3) ON CONFLICT DO NOTHING`)
       .bind(id, JSON.stringify({ veterinary_name: 'Veterinário responsável', petshop_operational_staff: [], petshop_delivery_staff: [], message_templates: { __petshop_operational_staff: [], __petshop_delivery_staff: [] } }), now),
-  ])
+  ]
+  if (!platformAdmin) {
+    statements.push(bindings.DB!.prepare(`
+      INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json)
+      VALUES(?1,?2,'active',?3,?3,'owner','{"petshop":{"role":"admin_pet"}}')
+      ON CONFLICT DO NOTHING
+    `).bind(id, resolved.principal.id, now))
+  }
+  await bindings.DB!.batch(statements)
   const saved = await bindings.DB!.prepare('SELECT name FROM tenants WHERE id=?1').bind(id).first<{ name: string }>()
   if (saved?.name !== name) return json({ code: 'IDEMPOTENCY_CONFLICT' }, 409)
-  return json({ id, name, slug, role: 'owner', enabled_modules: ['petshop'], module_permissions: { petshop: { role: 'admin_pet' } } }, 201)
+  return json({ id, name, slug, role: returnedRole, enabled_modules: ['petshop'], module_permissions: returnedPermissions }, 201)
 }
 
 export async function handleAppApiRequest(
@@ -276,7 +313,7 @@ export async function handleAppApiRequest(
   dependencies: AppApiDependencies = {},
 ): Promise<Response | null> {
   const { pathname } = new URL(request.url)
-  if (pathname === '/api/app/bootstrap' && request.method === 'GET') return bootstrap(request, bindings)
+  if (pathname === '/api/app/bootstrap' && request.method === 'GET') return bootstrap(request, bindings, dependencies)
   const settingsResponse = await handleAppSettingsApiRequest(request, bindings, dependencies)
   if (settingsResponse) return settingsResponse
   const onboardingResponse = await handleAssistedOnboardingApiRequest(request, bindings, dependencies)

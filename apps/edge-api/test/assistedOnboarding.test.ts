@@ -15,7 +15,7 @@ const hours = {
 }
 
 describe('assisted onboarding state', () => {
-  it('resumes from persisted state, preserves extensions and replays team/schedule without duplication', async () => {
+  it('preserves staff identity/status, homonyms, extensions and idempotent replays', async () => {
     const DB = (env as EdgeEnv & { DB: D1Database }).DB
     const now = Date.now()
     const suffix = crypto.randomUUID().slice(0, 8)
@@ -46,24 +46,28 @@ describe('assisted onboarding state', () => {
     const initialResponse = await handleAppApiRequest(new Request(onboardingUrl), { DB }, { getSession })
     expect(initialResponse?.status).toBe(200)
     expect(await initialResponse!.json()).toMatchObject({
-      steps: { company: true, administrator: false, team: false, catalog: false, schedule: false },
+      steps: { company: true, administrator: true, team: false, catalog: false, schedule: false },
       review_ready: false,
       safeguards: {
         saas_subscription_created_automatically: false,
         whatsapp_functional: false,
         whatsapp_status: 'not_verified_by_assisted_onboarding',
+        administrator_readiness_rule: 'any_active_owner_or_admin_membership',
       },
     })
 
     const extension = await DB.prepare("SELECT data_json FROM module_settings_extensions WHERE tenant_id=?1 AND module_id='petshop'")
       .bind(created.id).first<{ data_json: string }>()
-    const seeded = { ...JSON.parse(extension!.data_json), keep_me: { untouched: true } }
+    const seeded = { ...JSON.parse(extension!.data_json), keep_me: { untouched: true }, printing: { width: '80' } }
     await DB.prepare("UPDATE module_settings_extensions SET data_json=?2 WHERE tenant_id=?1 AND module_id='petshop'")
       .bind(created.id, JSON.stringify(seeded)).run()
 
     const teamPayload = {
       step: 'team',
-      staff: [{ key: 'ana', name: 'Ana Souza', active: true }, { key: 'bruno', name: 'Bruno Lima', active: true }],
+      staff: [
+        { key: 'staff-123', name: 'Alex Silva', active: true },
+        { key: 'staff-456', name: 'Alex Silva', active: false },
+      ],
       commission_reset_at: '2026-09-07T18:00:00.000Z',
     }
     for (let replay = 0; replay < 2; replay += 1) {
@@ -71,18 +75,47 @@ describe('assisted onboarding state', () => {
         method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(teamPayload),
       }), { DB }, { getSession })
       expect(response?.status).toBe(200)
-      expect((await response!.json<{ team: unknown[] }>()).team).toHaveLength(2)
+      const payload = await response!.json<{ team: Array<{ key: string; name: string; active: boolean }> }>()
+      expect(payload.team).toHaveLength(2)
+      expect(payload.team).toEqual(expect.arrayContaining([
+        { key: 'staff-123', name: 'Alex Silva', active: true },
+        { key: 'staff-456', name: 'Alex Silva', active: false },
+      ]))
     }
 
-    const clearedTeamResponse = await handleAppApiRequest(new Request(onboardingUrl, {
-      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ step: 'team', staff: [] }),
+    const renameResponse = await handleAppApiRequest(new Request(onboardingUrl, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ step: 'team', staff: [{ key: 'staff-123', name: 'Alex Renomeado', active: true }] }),
     }), { DB }, { getSession })
-    expect(clearedTeamResponse?.status).toBe(200)
-    expect(await clearedTeamResponse!.json()).toMatchObject({
-      team: [],
-      steps: { team: false },
-      review_ready: false,
-    })
+    expect(renameResponse?.status).toBe(200)
+    const renamed = await renameResponse!.json<{ team: Array<{ key: string; name: string; active: boolean }> }>()
+    expect(renamed.team).toHaveLength(2)
+    expect(renamed.team).toEqual(expect.arrayContaining([
+      { key: 'staff-123', name: 'Alex Renomeado', active: true },
+      { key: 'staff-456', name: 'Alex Silva', active: false },
+    ]))
+
+    const invalidDuplicate = await handleAppApiRequest(new Request(onboardingUrl, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ step: 'team', staff: [
+        { key: 'staff-123', name: 'Um', active: true },
+        { key: 'staff-123', name: 'Dois', active: true },
+      ] }),
+    }), { DB }, { getSession })
+    expect(invalidDuplicate?.status).toBe(400)
+
+    const allInactiveResponse = await handleAppApiRequest(new Request(onboardingUrl, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ step: 'team', staff: [
+        { key: 'staff-123', name: 'Alex Renomeado', active: false },
+        { key: 'staff-456', name: 'Alex Silva', active: false },
+      ] }),
+    }), { DB }, { getSession })
+    expect(allInactiveResponse?.status).toBe(200)
+    expect(await allInactiveResponse!.json()).toMatchObject({ steps: { team: false }, review_ready: false })
 
     const restoredTeamResponse = await handleAppApiRequest(new Request(onboardingUrl, {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(teamPayload),
@@ -104,18 +137,11 @@ describe('assisted onboarding state', () => {
       expect(response?.status).toBe(200)
     }
 
-    const clientAdminId = `assist-client-admin-${suffix}`
-    await DB.batch([
-      DB.prepare('INSERT INTO identity_principals(id,provider,subject,display_name,email,status,created_at_ms,updated_at_ms) VALUES(?1,\'better-auth\',?2,\'Administrador Cliente\',?3,\'active\',?4,?4)')
-        .bind(clientAdminId, `assist-client-subject-${suffix}`, `cliente-${suffix}@test.invalid`, now),
-      DB.prepare('INSERT INTO tenant_memberships(tenant_id,principal_id,role,status,module_permissions_json,created_at_ms,updated_at_ms) VALUES(?1,?2,\'admin\',\'active\',\'{"petshop":{"role":"admin_pet"}}\',?3,?3)')
-        .bind(created.id, clientAdminId, now),
-      DB.prepare(`INSERT INTO services(
-        tenant_id,module_id,id,code,name,group_type,default_price_cents,default_duration_min,
-        commission_type,commission_basis_points,sort_order,status,created_at_ms,updated_at_ms
-      ) VALUES(?1,'petshop',?2,?3,?4,'banho_tosa',5000,60,'percentage',0,1,'active',?5,?5)`)
-        .bind(created.id, `assist-service-${suffix}`, `banho-${suffix}`, 'Banho', now),
-    ])
+    await DB.prepare(`INSERT INTO services(
+      tenant_id,module_id,id,code,name,group_type,default_price_cents,default_duration_min,
+      commission_type,commission_basis_points,sort_order,status,created_at_ms,updated_at_ms
+    ) VALUES(?1,'petshop',?2,?3,?4,'banho_tosa',5000,60,'percentage',0,1,'active',?5,?5)`)
+      .bind(created.id, `assist-service-${suffix}`, `banho-${suffix}`, 'Banho', now).run()
 
     const finalResponse = await handleAppApiRequest(new Request(onboardingUrl), { DB }, { getSession })
     expect(finalResponse?.status).toBe(200)
@@ -129,6 +155,7 @@ describe('assisted onboarding state', () => {
       .bind(created.id).first<{ data_json: string }>()
     const parsed = JSON.parse(persisted!.data_json)
     expect(parsed.keep_me).toEqual({ untouched: true })
+    expect(parsed.printing).toEqual({ width: '80' })
     expect(parsed.petshop_operational_staff).toHaveLength(2)
     expect(parsed.message_templates.__petshop_operational_staff).toHaveLength(2)
     expect(parsed.message_templates.__petshop_commission_reset_at).toBe('2026-09-07T18:00:00.000Z')

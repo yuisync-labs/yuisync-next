@@ -1,6 +1,7 @@
 import { hash } from 'bcryptjs'
 
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import { findPlatformProfile, isPlatformAdmin } from './platformAuthorization'
 
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 type AuthSession = Awaited<ReturnType<typeof getBetterAuthSession>>
@@ -39,7 +40,7 @@ type AuthUserRow = { id: string; name: string; updatedAt: number | string }
 type AuthAccountRow = { id: string; password: string | null; updatedAt: number | string }
 
 type ActorResolution =
-  | { ok: true; session: NonNullable<AuthSession>; principal: PrincipalRow; memberships: MembershipRow[] }
+  | { ok: true; session: NonNullable<AuthSession>; principal: PrincipalRow; memberships: MembershipRow[]; platformAdmin: boolean }
   | { ok: false; error: Response }
 
 type StaffType = 'funcionario' | 'banho_tosa' | 'veterinaria' | 'motodog' | 'vendedor_caixa' | 'gerente'
@@ -53,7 +54,7 @@ type ManagedPayload = {
   permissions: Record<string, string>
   scopeModuleId: string
   tenantIds: string[]
-  activeTenantId: string
+  activeTenantId: string | null
 }
 
 const STAFF_TYPES = new Set<StaffType>(['funcionario', 'banho_tosa', 'veterinaria', 'motodog', 'vendedor_caixa', 'gerente'])
@@ -156,7 +157,7 @@ function uniqueIds(value: unknown): string[] | null {
     if (!id) return null
     if (!result.includes(id)) result.push(id)
   }
-  return result.length > 0 && result.length <= MAX_TENANTS_PER_USER ? result : null
+  return result.length <= MAX_TENANTS_PER_USER ? result : null
 }
 
 function safeStaffType(value: unknown): StaffType | null {
@@ -181,13 +182,20 @@ async function parsePayload(request: Request, create: boolean): Promise<ManagedP
   const activeTenantId = safeId(body.activeTenantId)
   const email = create ? safeEmail(body.email) : null
   const password = safePassword(body.password, create)
+  const isGlobalAdminPayload = role === 'admin' && scopeModuleId === 'system'
 
   if (!fullName) return json({ code: 'INVALID_NAME' }, 400)
   if (!role) return json({ code: 'INVALID_ROLE' }, 400)
   if (!staffType) return json({ code: 'INVALID_STAFF_TYPE' }, 400)
   if (!permissions) return json({ code: 'INVALID_PERMISSIONS' }, 400)
-  if (!scopeModuleId || !tenantIds || !activeTenantId || !tenantIds.includes(activeTenantId)) {
+  if (!scopeModuleId || !tenantIds) {
     return json({ code: 'INVALID_TENANT_SCOPE' }, 400)
+  }
+  if (!isGlobalAdminPayload && (!activeTenantId || !tenantIds.includes(activeTenantId))) {
+    return json({ code: 'INVALID_TENANT_SCOPE' }, 400)
+  }
+  if (isGlobalAdminPayload && (tenantIds.length > 0 || activeTenantId)) {
+    return json({ code: 'GLOBAL_ADMIN_TENANT_SCOPE_FORBIDDEN' }, 400)
   }
   if (role === 'employee' && Object.keys(permissions).length === 0) {
     return json({ code: 'EMPLOYEE_PERMISSION_REQUIRED' }, 400)
@@ -220,15 +228,17 @@ async function resolveActor(request: Request, bindings: Bindings, getSession: Se
     ORDER BY m.tenant_id
   `).bind(principal.id).all<MembershipRow>()
 
-  return { ok: true, session, principal, memberships: result.results || [] }
+  const platformAdmin = await isPlatformAdmin(bindings.DB, principal)
+  return { ok: true, session, principal, memberships: result.results || [], platformAdmin }
 }
 
 function byTenant(rows: MembershipRow[]): Map<string, MembershipRow> {
   return new Map(rows.map((row) => [row.tenant_id, row]))
 }
 
-function authorizeDesiredScope(actorRows: MembershipRow[], payload: ManagedPayload): Response | null {
-  const memberships = byTenant(actorRows)
+function authorizeDesiredScope(actor: Extract<ActorResolution, { ok: true }>, payload: ManagedPayload): Response | null {
+  if (actor.platformAdmin) return null
+  const memberships = byTenant(actor.memberships)
   for (const tenantId of payload.tenantIds) {
     const actorRow = memberships.get(tenantId)
     if (!canManageUsers(actorRow, payload.scopeModuleId)) return json({ code: 'FORBIDDEN' }, 403)
@@ -297,14 +307,20 @@ async function renderProfile(database: D1Database, principal: PrincipalRow, visi
     ? profile.preferred_tenant_id
     : (rows[0]?.tenant_id || null)
 
+  const platformProfile = await findPlatformProfile(database, principal)
+  const platformAdmin = Boolean(platformProfile)
   return {
     id: principal.id,
     full_name: principal.display_name || principal.email || '',
     email: principal.email || '',
-    role: operationalRole(rows),
-    active: principal.status === 'active' && rows.some((row) => row.status === 'active' && row.tenant_status === 'active'),
-    staff_type: profile?.staff_type || fallbackStaff,
-    module_permissions: aggregatePermissions(rows),
+    role: platformAdmin ? 'admin' : operationalRole(rows),
+    active: principal.status === 'active' && (
+      platformAdmin
+        ? platformProfile?.status === 'active'
+        : rows.some((row) => row.status === 'active' && row.tenant_status === 'active')
+    ),
+    staff_type: platformAdmin ? 'gerente' : (profile?.staff_type || fallbackStaff),
+    module_permissions: platformAdmin ? {} : aggregatePermissions(rows),
     tenant_ids: rows.map((row) => row.tenant_id),
     active_tenant_id: preferred,
     tenants: rows.map((row) => ({
@@ -344,11 +360,19 @@ async function listUsers(request: Request, bindings: Bindings, dependencies: Man
 
   if (requestedTenantId || requestedModuleId) {
     if (!requestedTenantId || !requestedModuleId) return json({ code: 'INVALID_SCOPE' }, 400)
-    if (!canManageUsers(byTenant(actor.memberships).get(requestedTenantId), requestedModuleId)) return json({ code: 'FORBIDDEN' }, 403)
+    if (!actor.platformAdmin && !canManageUsers(byTenant(actor.memberships).get(requestedTenantId), requestedModuleId)) {
+      return json({ code: 'FORBIDDEN' }, 403)
+    }
     visibleTenantIds = [requestedTenantId]
   } else {
-    visibleTenantIds = actor.memberships.filter(isTenantAdmin).map((row) => row.tenant_id)
-    if (!visibleTenantIds.length) return json({ code: 'FORBIDDEN' }, 403)
+    if (!actor.platformAdmin) return json({ code: 'FORBIDDEN' }, 403)
+    const result = await bindings.DB!.prepare(`
+      SELECT id,subject,display_name,email,status
+      FROM identity_principals
+      ORDER BY COALESCE(NULLIF(TRIM(display_name),''),email,id),id
+    `).all<PrincipalRow>()
+    const profiles = await Promise.all((result.results || []).map((principal) => renderProfile(bindings.DB!, principal)))
+    return json({ profiles })
   }
 
   const result = await bindings.DB!.prepare(`
@@ -369,7 +393,7 @@ async function createUser(request: Request, bindings: Bindings, dependencies: Ma
   if (!actor.ok) return actor.error
   const payload = await parsePayload(request, true)
   if (payload instanceof Response) return payload
-  const authorizationError = authorizeDesiredScope(actor.memberships, payload)
+  const authorizationError = authorizeDesiredScope(actor, payload)
   if (authorizationError) return authorizationError
 
   const existing = await bindings.AUTH_DB!.prepare('SELECT id FROM user WHERE lower(email)=?1 LIMIT 1').bind(payload.email).first()
@@ -381,6 +405,7 @@ async function createUser(request: Request, bindings: Bindings, dependencies: Ma
   const passwordHash = await hash(payload.password!, BCRYPT_ROUNDS)
   const permissions = storedPermissions(payload.permissions)
   const role = membershipRole(payload)
+  const isGlobalAdminPayload = payload.role === 'admin' && payload.scopeModuleId === 'system'
 
   try {
     await bindings.AUTH_DB!.batch([
@@ -409,6 +434,20 @@ async function createUser(request: Request, bindings: Bindings, dependencies: Ma
         VALUES(?1,?2,?3,?4,?4)
       `).bind(principalId, payload.staffType, payload.activeTenantId, now),
     ]
+    if (isGlobalAdminPayload) {
+      statements.push(bindings.DB!.prepare(`
+        INSERT INTO platform_administrators(principal_id,status,created_at_ms,updated_at_ms)
+        VALUES(?1,'active',?2,?2)
+      `).bind(principalId, now))
+      statements.push(bindings.DB!.prepare(`
+        INSERT INTO profiles(id,full_name,email,role,active,allowed_modules,module_permissions,created_at,updated_at)
+        VALUES(?1,?2,?3,'admin',1,'[]','{}',?4,?4)
+        ON CONFLICT(id) DO UPDATE SET
+          full_name=excluded.full_name,email=excluded.email,role='admin',active=1,
+          allowed_modules='[]',module_permissions='{}',updated_at=excluded.updated_at
+      `).bind(principalId, payload.fullName, payload.email, new Date(now).toISOString()))
+      statements.push(audit(bindings.DB!, actor.principal.id, principalId, null, 'platform_admin.created', {}, now))
+    }
     for (const tenantId of payload.tenantIds) {
       statements.push(bindings.DB!.prepare(`
         INSERT INTO tenant_memberships(tenant_id,principal_id,status,created_at_ms,updated_at_ms,role,module_permissions_json)
@@ -494,7 +533,7 @@ async function updateUser(
   if (!actor.ok) return actor.error
   const payload = await parsePayload(request, false)
   if (payload instanceof Response) return payload
-  const authorizationError = authorizeDesiredScope(actor.memberships, payload)
+  const authorizationError = authorizeDesiredScope(actor, payload)
   if (authorizationError) return authorizationError
 
   const target = await bindings.DB!.prepare(`
@@ -506,7 +545,15 @@ async function updateUser(
   if (!target) return json({ code: 'USER_NOT_FOUND' }, 404)
 
   const currentRows = await targetMemberships(bindings.DB!, principalId)
-  if (!currentRows.length) return json({ code: 'USER_MEMBERSHIP_NOT_FOUND' }, 404)
+  const targetPlatformProfile = await findPlatformProfile(bindings.DB!, target)
+  const targetIsPlatformAdmin = Boolean(targetPlatformProfile)
+  if (!currentRows.length && !targetIsPlatformAdmin && payload.role !== 'admin') {
+    return json({ code: 'USER_MEMBERSHIP_NOT_FOUND' }, 404)
+  }
+  const isGlobalAdminPayload = payload.role === 'admin' && payload.scopeModuleId === 'system'
+  if ((targetIsPlatformAdmin || isGlobalAdminPayload) && !actor.platformAdmin) {
+    return json({ code: 'GLOBAL_ADMIN_REQUIRED' }, 403)
+  }
 
   const actorMemberships = byTenant(actor.memberships)
   const desired = new Set(payload.tenantIds)
@@ -515,7 +562,7 @@ async function updateUser(
   // let an administrator of tenant A change global credentials for a principal
   // that also belongs to tenant B unless the actor can manage every membership.
   for (const row of currentRows) {
-    if (!canManageUsers(actorMemberships.get(row.tenant_id), payload.scopeModuleId)) {
+    if (!actor.platformAdmin && !canManageUsers(actorMemberships.get(row.tenant_id), payload.scopeModuleId)) {
       return json({ code: 'FULL_IDENTITY_ADMIN_REQUIRED' }, 403)
     }
     if (row.role === 'owner' && (!desired.has(row.tenant_id) || payload.role !== 'admin')) {
@@ -523,7 +570,8 @@ async function updateUser(
     }
   }
 
-  if (actor.principal.id === principalId && operationalRole(currentRows) !== payload.role) {
+  const currentRole = targetIsPlatformAdmin ? 'admin' : operationalRole(currentRows)
+  if (actor.principal.id === principalId && currentRole !== payload.role) {
     return json({ code: 'SELF_ROLE_CHANGE_FORBIDDEN' }, 409)
   }
 
@@ -553,6 +601,32 @@ async function updateUser(
       `).bind(principalId, payload.staffType, payload.activeTenantId, now),
     ]
 
+    statements.push(bindings.DB!.prepare(`
+      INSERT INTO profiles(id,full_name,email,role,active,allowed_modules,module_permissions,created_at,updated_at)
+      VALUES(?1,?2,?3,?4,1,?5,?6,?7,?7)
+      ON CONFLICT(id) DO UPDATE SET
+        full_name=excluded.full_name,email=excluded.email,role=excluded.role,active=1,
+        allowed_modules=excluded.allowed_modules,module_permissions=excluded.module_permissions,
+        updated_at=excluded.updated_at
+    `).bind(
+      principalId,
+      payload.fullName,
+      target.email,
+      isGlobalAdminPayload ? 'admin' : 'employee',
+      JSON.stringify(isGlobalAdminPayload ? [] : Object.keys(payload.permissions)),
+      JSON.stringify(isGlobalAdminPayload ? {} : payload.permissions),
+      new Date(now).toISOString(),
+    ))
+    if (isGlobalAdminPayload) {
+      statements.push(bindings.DB!.prepare(`
+        INSERT INTO platform_administrators(principal_id,status,created_at_ms,updated_at_ms)
+        VALUES(?1,'active',?2,?2)
+        ON CONFLICT(principal_id) DO UPDATE SET status='active',updated_at_ms=excluded.updated_at_ms
+      `).bind(principalId, now))
+    } else if (targetIsPlatformAdmin) {
+      statements.push(bindings.DB!.prepare('DELETE FROM platform_administrators WHERE principal_id=?1').bind(principalId))
+    }
+
     for (const row of currentRows) {
       if (desired.has(row.tenant_id)) continue
       if (row.role === 'owner') throw new Error('OWNER_MUTATION_FORBIDDEN')
@@ -575,6 +649,11 @@ async function updateUser(
         role: payload.role,
         staff_type: payload.staffType,
         scope_module_id: payload.scopeModuleId,
+        password_rotated: Boolean(payload.password),
+      }, now))
+    }
+    if (isGlobalAdminPayload) {
+      statements.push(audit(bindings.DB!, actor.principal.id, principalId, null, 'platform_admin.updated', {
         password_rotated: Boolean(payload.password),
       }, now))
     }
@@ -621,20 +700,32 @@ async function updateStatus(
   if (!target) return json({ code: 'USER_NOT_FOUND' }, 404)
 
   const rows = await targetMemberships(bindings.DB!, principalId)
-  if (!rows.length) return json({ code: 'USER_MEMBERSHIP_NOT_FOUND' }, 404)
+  const targetPlatformProfile = await findPlatformProfile(bindings.DB!, target)
+  const targetIsPlatformAdmin = Boolean(targetPlatformProfile)
+  if (!rows.length && !targetIsPlatformAdmin) return json({ code: 'USER_MEMBERSHIP_NOT_FOUND' }, 404)
+  if (targetIsPlatformAdmin && !actor.platformAdmin) return json({ code: 'GLOBAL_ADMIN_REQUIRED' }, 403)
   const actorMemberships = byTenant(actor.memberships)
   for (const row of rows) {
     if (row.role === 'owner') return json({ code: 'OWNER_STATUS_CHANGE_FORBIDDEN' }, 409)
-    if (!isTenantAdmin(actorMemberships.get(row.tenant_id))) return json({ code: 'FULL_TENANT_ADMIN_REQUIRED' }, 403)
+    if (!actor.platformAdmin && !isTenantAdmin(actorMemberships.get(row.tenant_id))) {
+      return json({ code: 'FULL_TENANT_ADMIN_REQUIRED' }, 403)
+    }
   }
 
   const status = body.active ? 'active' : 'inactive'
   const now = Date.now()
   const statements: D1PreparedStatement[] = [
     bindings.DB!.prepare('UPDATE identity_principals SET status=?1,updated_at_ms=?2 WHERE id=?3').bind(status, now, principalId),
+    bindings.DB!.prepare('UPDATE profiles SET active=?1,updated_at=?2 WHERE id=?3 OR lower(email)=lower(?4)')
+      .bind(body.active ? 1 : 0, new Date(now).toISOString(), principalId, target.email),
+    bindings.DB!.prepare('UPDATE platform_administrators SET status=?1,updated_at_ms=?2 WHERE principal_id=?3')
+      .bind(status, now, principalId),
   ]
   for (const row of rows) {
     statements.push(audit(bindings.DB!, actor.principal.id, principalId, row.tenant_id, body.active ? 'managed_user.unblocked' : 'managed_user.blocked', {}, now))
+  }
+  if (targetIsPlatformAdmin) {
+    statements.push(audit(bindings.DB!, actor.principal.id, principalId, null, body.active ? 'platform_admin.unblocked' : 'platform_admin.blocked', {}, now))
   }
   await bindings.DB!.batch(statements)
 

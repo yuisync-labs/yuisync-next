@@ -46,6 +46,25 @@ function assessAllowlistRule({ packageName, vulnerability, rule, today, threshol
   const viaOnly = Array.isArray(rule.via_only)
     ? [...new Set(rule.via_only.map((name) => String(name || '').trim()).filter(Boolean))].sort()
     : []
+  const advisoriesOnly = Array.isArray(rule.advisories_only)
+    ? [...new Set(rule.advisories_only.map((source) => String(source ?? '').trim()).filter(Boolean))].sort()
+    : []
+
+  if (advisoriesOnly.length > 0) {
+    const actualAdvisories = [...new Set((vulnerability?.via || [])
+      .filter((entry) => isThresholdSeverityForRule(entry, threshold))
+      .map((entry) => String(entry.source ?? '').trim())
+      .filter(Boolean))].sort()
+    const unexpected = actualAdvisories.filter((source) => !advisoriesOnly.includes(source))
+    const missing = advisoriesOnly.filter((source) => !actualAdvisories.includes(source))
+    if (actualAdvisories.length === 0 || unexpected.length > 0 || missing.length > 0) {
+      return {
+        accepted: false,
+        reason: 'advisory_set_changed',
+        details: { expected_advisories: advisoriesOnly, actual_advisories: actualAdvisories },
+      }
+    }
+  }
 
   if (viaOnly.length > 0) {
     const directAdvisories = (vulnerability?.via || []).filter(
@@ -79,6 +98,7 @@ function assessAllowlistRule({ packageName, vulnerability, rule, today, threshol
       review_by: rule.review_by || null,
       reason: rule.reason || null,
       ...(viaOnly.length > 0 ? { via_only: viaOnly } : {}),
+      ...(advisoriesOnly.length > 0 ? { advisories_only: advisoriesOnly } : {}),
     },
   }
 }

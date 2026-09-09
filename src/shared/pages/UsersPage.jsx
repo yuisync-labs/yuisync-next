@@ -114,6 +114,12 @@ function UserModal({
     setForm((prev) => ({
       ...prev,
       role,
+      tenantIds: role === 'admin'
+        ? []
+        : (prev.tenantIds.length ? prev.tenantIds : (currentActiveTenantId ? [currentActiveTenantId] : [])),
+      activeTenantId: role === 'admin'
+        ? null
+        : (prev.activeTenantId || currentActiveTenantId || null),
       permissions: role === 'employee'
         ? sanitizeModulePermissions(prev.permissions, activeModuleId, true)
         : sanitizeModulePermissions(prev.permissions, activeModuleId, false),
@@ -173,7 +179,7 @@ function UserModal({
       return setErr('Selecione um nivel de acesso para este modulo.')
     }
 
-    if (canManageBusiness && form.tenantIds.length === 0) {
+    if (form.role === 'employee' && canManageBusiness && form.tenantIds.length === 0) {
       return setErr('Selecione pelo menos um negocio para este login.')
     }
 
@@ -188,8 +194,12 @@ function UserModal({
         staff_type: form.role === 'employee' ? form.staff_type : null,
         permissions,
         scopeModuleId: activeModuleId,
-        tenantIds: canManageBusiness ? form.tenantIds : (currentActiveTenantId ? [currentActiveTenantId] : []),
-        activeTenantId: canManageBusiness ? form.activeTenantId : currentActiveTenantId,
+        tenantIds: form.role === 'admin'
+          ? []
+          : (canManageBusiness ? form.tenantIds : (currentActiveTenantId ? [currentActiveTenantId] : [])),
+        activeTenantId: form.role === 'admin'
+          ? null
+          : (canManageBusiness ? form.activeTenantId : currentActiveTenantId),
       }
 
       if (isEditing) {
@@ -330,6 +340,19 @@ function UserModal({
             </div>
           )}
 
+          {form.role === 'admin' ? (
+            <div className="petshop-soft-panel rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <Shield size={18} className="mt-0.5 shrink-0 text-violet-500" />
+                <div>
+                  <p className="text-sm font-semibold text-text">Acesso à Gestão Central</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted">
+                    Administradores globais pertencem à plataforma YuiSync e não precisam ser vinculados a um negócio.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
           <div className="space-y-4">
             <label className="inp-label flex items-center gap-2">
               <Briefcase size={14} />
@@ -403,6 +426,7 @@ function UserModal({
               </div>
             )}
           </div>
+          )}
 
           {err && (
             <p className="text-xs text-red-400 bg-red-500/10 p-4 rounded-xl border border-red-500/20 flex items-center gap-2">
@@ -564,7 +588,7 @@ export default function UsersPage() {
                       </td>
                       <td>
                         <span className="badge badge-gray">
-                          {getStaffTypeLabel(profile.staff_type)}
+                          {profile.role === 'admin' ? 'Plataforma' : getStaffTypeLabel(profile.staff_type)}
                         </span>
                       </td>
                       <td>
@@ -645,7 +669,7 @@ export default function UsersPage() {
           currentUserRole={auth?.profile?.role}
           activeModuleId={activeModuleId}
           currentActiveTenantId={auth?.activeTenantId}
-          availableTenants={auth?.tenants || []}
+          availableTenants={auth?.managedTenants?.length ? auth.managedTenants : (auth?.tenants || [])}
           onCreateBusiness={async (businessName) => auth.createTenant(businessName)}
           onConfigureBusiness={configureBusinessNow}
           canManageBusiness={isHubView && (isGlobalAdmin || isModuleAdmin)}

@@ -34,6 +34,30 @@
       "package": "shell-quote",
       "review_by": "2026-08-31",
       "reason": "Pre-existing development dependency advisory; update in a dedicated PR."
+    },
+    {
+      "package": "sharp",
+      "advisories_only": [1193725],
+      "review_by": "2026-09-16",
+      "reason": "Development-only dependency pinned by the latest Cloudflare miniflare toolchain; remove as soon as Cloudflare publishes sharp 0.35.4 or newer."
+    },
+    {
+      "package": "miniflare",
+      "via_only": ["sharp"],
+      "review_by": "2026-09-16",
+      "reason": "Development-only transitive exposure through the exact time-boxed sharp advisory."
+    },
+    {
+      "package": "wrangler",
+      "via_only": ["miniflare"],
+      "review_by": "2026-09-16",
+      "reason": "Development-only transitive exposure through the exact time-boxed miniflare chain."
+    },
+    {
+      "package": "@cloudflare/vitest-pool-workers",
+      "via_only": ["miniflare", "wrangler"],
+      "review_by": "2026-09-16",
+      "reason": "Development-only transitive exposure through the exact time-boxed Cloudflare toolchain chain."
     }
   ]
 }
