@@ -225,7 +225,11 @@ jobs:
       - name: Run browser E2E against the proven SHA
         env:
           E2E_BASE_URL: ${{ env.YUISYNC_STAGING_URL }}
-        run: npm run test:e2e
+        # The hosted suite includes a write-heavy Agenda regression and a
+        # read-heavy module sweep. Running them concurrently on the same D1
+        # produces avoidable SQLITE_BUSY/503 cascades; keep the certification
+        # deterministic and within the free-tier read/write budget.
+        run: npm run test:e2e -- --workers=1
 
       - name: Re-prove SHA after browser E2E
         shell: bash
