@@ -65,8 +65,14 @@ export function normalizeCode(value) {
 }
 
 export function normalizeService(row = {}) {
-  const code = normalizeCode(row.code || row.service_type || row.name)
-  const fallback = DEFAULT_PETSHOP_SERVICES.find((item) => item.code === code)
+  // `code` is the persistent identity used by the Worker/D1 catalog.  It must
+  // not be slugified after it has been created: doing so changes valid values
+  // such as `banho-premium` into `banho_premium` and makes subsequent writes
+  // reference a service that does not exist.
+  const persistedCode = String(row.code || row.service_type || '').trim()
+  const code = persistedCode || normalizeCode(row.name)
+  const normalizedCode = normalizeCode(code)
+  const fallback = DEFAULT_PETSHOP_SERVICES.find((item) => normalizeCode(item.code) === normalizedCode)
   return {
     ...row,
     id: row.id || code,
@@ -108,8 +114,11 @@ export function serviceOptionsForGroup(services = [], group = 'banho_tosa') {
 }
 
 export function findService(services = [], code = '') {
-  const normalized = normalizeCode(code)
-  return normalizeServices(services).find((service) => service.code === normalized) || normalizeService({ code: normalized || 'outro' })
+  const requested = String(code || '').trim()
+  const normalized = normalizeCode(requested)
+  return normalizeServices(services).find((service) => (
+    service.code === requested || normalizeCode(service.code) === normalized
+  )) || normalizeService({ code: requested || normalized || 'outro' })
 }
 
 export function serviceLabel(services = [], code = '') {

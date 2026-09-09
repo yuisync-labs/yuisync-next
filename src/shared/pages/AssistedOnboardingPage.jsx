@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Building2, CheckCircle2, CircleAlert, ClipboardCheck, Clock3,
   Plus, RefreshCw, ShieldCheck, Store, Users2, Wrench,
@@ -20,6 +20,9 @@ const WEEKDAYS = [
   ['1', 'Segunda'], ['2', 'Terça'], ['3', 'Quarta'], ['4', 'Quinta'],
   ['5', 'Sexta'], ['6', 'Sábado'], ['7', 'Domingo'],
 ]
+const EMPTY_ADMIN_FORM = { fullName: '', email: '', password: '' }
+const EMPTY_SERVICE_FORM = { name: '', code: '', price: '', duration: '60', group: 'banho_tosa' }
+const EMPTY_SCHEDULE_RULES = { slotInterval: '30', leadTime: '15', capacity: '2' }
 
 function initialHours() {
   return Object.fromEntries(WEEKDAYS.map(([key]) => [key, {
@@ -52,6 +55,10 @@ function serviceCode(name) {
     .slice(0, 80)
 }
 
+function newStaffKey() {
+  return `staff-${crypto.randomUUID()}`
+}
+
 function StepBadge({ ready }) {
   return ready
     ? <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700"><CheckCircle2 size={14} /> Concluído</span>
@@ -81,50 +88,78 @@ export default function AssistedOnboardingPage() {
   const tenants = managedTenants.length ? managedTenants : memberTenants
   const draft = useMemo(loadDraft, [])
   const [targetTenantId, setTargetTenantId] = useState(draft.targetTenantId || '')
+  const selectedTenantRef = useRef(draft.targetTenantId || '')
+  const loadRequestRef = useRef(0)
   const [operationKey, setOperationKey] = useState(draft.operationKey || crypto.randomUUID())
   const [snapshot, setSnapshot] = useState(null)
   const [services, setServices] = useState([])
   const [companyName, setCompanyName] = useState('')
-  const [adminForm, setAdminForm] = useState({ fullName: '', email: '', password: '' })
-  const [teamText, setTeamText] = useState('')
-  const [serviceForm, setServiceForm] = useState({ name: '', code: '', price: '', duration: '60', group: 'banho_tosa' })
+  const [adminForm, setAdminForm] = useState(EMPTY_ADMIN_FORM)
+  const [teamRows, setTeamRows] = useState([])
+  const [serviceForm, setServiceForm] = useState(EMPTY_SERVICE_FORM)
   const [hours, setHours] = useState(initialHours)
-  const [scheduleRules, setScheduleRules] = useState({ slotInterval: '30', leadTime: '15', capacity: '2' })
+  const [scheduleRules, setScheduleRules] = useState(EMPTY_SCHEDULE_RULES)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  const loadState = useCallback(async (tenantId = targetTenantId) => {
-    if (!tenantId) return
+  const resetTenantDrafts = useCallback(() => {
+    loadRequestRef.current += 1
+    setSnapshot(null)
+    setServices([])
+    setAdminForm(EMPTY_ADMIN_FORM)
+    setTeamRows([])
+    setServiceForm(EMPTY_SERVICE_FORM)
+    setHours(initialHours())
+    setScheduleRules(EMPTY_SCHEDULE_RULES)
+  }, [])
+
+  const loadState = useCallback(async (tenantId) => {
+    const selected = String(tenantId || '')
+    if (!selected) return
+    const requestId = ++loadRequestRef.current
     setBusy('refresh')
     setError('')
     try {
       const [nextSnapshot, nextServices] = await Promise.all([
-        getAssistedOnboarding(tenantId),
-        listAssistedServices(tenantId),
+        getAssistedOnboarding(selected),
+        listAssistedServices(selected),
       ])
+      if (requestId !== loadRequestRef.current || selectedTenantRef.current !== selected) return
+
       setSnapshot(nextSnapshot)
-      setServices(nextServices)
-      if (nextSnapshot.team?.length) setTeamText(nextSnapshot.team.map((row) => row.name).join('\n'))
+      setServices(Array.isArray(nextServices) ? nextServices : [])
+      setTeamRows((nextSnapshot.team || []).map((row) => ({
+        key: String(row.key || ''),
+        name: String(row.name || ''),
+        active: row.active !== false,
+        persisted: true,
+      })))
+
       const savedHours = nextSnapshot.schedule?.business_hours
-      if (savedHours) {
-        setHours(Object.fromEntries(WEEKDAYS.map(([key]) => {
-          const row = savedHours[key]?.[0]
-          return [key, { enabled: Boolean(row), open: row?.open || '08:00', close: row?.close || '18:00' }]
-        })))
-      }
+      setHours(savedHours
+        ? Object.fromEntries(WEEKDAYS.map(([key]) => {
+            const row = savedHours[key]?.[0]
+            return [key, { enabled: Boolean(row), open: row?.open || '08:00', close: row?.close || '18:00' }]
+          }))
+        : initialHours())
       setScheduleRules({
         slotInterval: String(nextSnapshot.schedule?.slot_interval_min ?? 30),
         leadTime: String(nextSnapshot.schedule?.booking_lead_time_min ?? 15),
         capacity: String(nextSnapshot.schedule?.booking_capacity ?? 2),
       })
     } catch (loadError) {
+      if (requestId !== loadRequestRef.current || selectedTenantRef.current !== selected) return
       setError(loadError.message)
       setSnapshot(null)
+      setServices([])
+      setTeamRows([])
+      setHours(initialHours())
+      setScheduleRules(EMPTY_SCHEDULE_RULES)
     } finally {
-      setBusy('')
+      if (requestId === loadRequestRef.current && selectedTenantRef.current === selected) setBusy('')
     }
-  }, [targetTenantId])
+  }, [])
 
   useEffect(() => {
     if (targetTenantId) loadState(targetTenantId)
@@ -132,10 +167,26 @@ export default function AssistedOnboardingPage() {
 
   const setTarget = (tenantId) => {
     const next = String(tenantId || '')
+    selectedTenantRef.current = next
+    resetTenantDrafts()
+    setCompanyName('')
     setTargetTenantId(next)
-    setSnapshot(null)
-    setServices([])
+    setError('')
+    setSuccess('')
     persistDraft({ targetTenantId: next, operationKey })
+  }
+
+  const snapshotReady = Boolean(
+    targetTenantId
+    && snapshot?.tenant?.id === targetTenantId
+    && selectedTenantRef.current === targetTenantId
+    && busy !== 'refresh',
+  )
+
+  const requireCurrentSnapshot = () => {
+    if (snapshotReady) return true
+    setError('Aguarde a empresa selecionada terminar de carregar antes de salvar.')
+    return false
   }
 
   const run = async (key, action, message) => {
@@ -161,6 +212,8 @@ export default function AssistedOnboardingPage() {
       await run('company', async () => {
         persistDraft({ targetTenantId: '', operationKey })
         const created = await createAssistedTenant(name, operationKey)
+        resetTenantDrafts()
+        selectedTenantRef.current = created.id
         setTargetTenantId(created.id)
         persistDraft({ targetTenantId: created.id, operationKey })
         await refreshTenants?.()
@@ -171,6 +224,7 @@ export default function AssistedOnboardingPage() {
 
   const saveAdmin = async (event) => {
     event.preventDefault()
+    if (!requireCurrentSnapshot()) return
     try {
       await run('administrator', async () => {
         await ensureAssistedAdministrator({ tenantId: targetTenantId, ...adminForm })
@@ -182,17 +236,21 @@ export default function AssistedOnboardingPage() {
 
   const saveTeam = async (event) => {
     event.preventDefault()
-    const names = teamText.split('\n').map((name) => name.trim()).filter(Boolean)
+    if (!requireCurrentSnapshot()) return
+    const staff = teamRows
+      .filter((row) => row.name.trim())
+      .map((row) => ({ key: row.key, name: row.name.trim(), active: row.active !== false }))
     try {
       await run('team', async () => {
-        await saveAssistedTeam(targetTenantId, names.map((name) => ({ name, active: true })))
+        await saveAssistedTeam(targetTenantId, staff)
         await loadState(targetTenantId)
-      }, 'Equipe operacional salva. Nenhum login foi criado para estes colaboradores.')
+      }, 'Equipe operacional salva preservando identidade e status dos colaboradores.')
     } catch { /* mensagem já exibida */ }
   }
 
   const saveService = async (event) => {
     event.preventDefault()
+    if (!requireCurrentSnapshot()) return
     const name = serviceForm.name.trim()
     const code = serviceForm.code.trim() || serviceCode(name)
     try {
@@ -207,7 +265,7 @@ export default function AssistedOnboardingPage() {
           commission_rate: 0,
           active: true,
         })
-        setServiceForm({ name: '', code: '', price: '', duration: '60', group: 'banho_tosa' })
+        setServiceForm(EMPTY_SERVICE_FORM)
         await loadState(targetTenantId)
       }, 'Serviço salvo pelo catálogo nativo. Repetir o mesmo código atualiza em vez de duplicar.')
     } catch { /* mensagem já exibida */ }
@@ -215,6 +273,7 @@ export default function AssistedOnboardingPage() {
 
   const saveSchedule = async (event) => {
     event.preventDefault()
+    if (!requireCurrentSnapshot()) return
     const businessHours = Object.fromEntries(WEEKDAYS.map(([key]) => [
       key,
       hours[key].enabled ? [{ open: hours[key].open, close: hours[key].close }] : [],
@@ -234,10 +293,10 @@ export default function AssistedOnboardingPage() {
 
   const startNew = () => {
     const nextOperationKey = crypto.randomUUID()
+    resetTenantDrafts()
+    selectedTenantRef.current = ''
     setOperationKey(nextOperationKey)
     setTargetTenantId('')
-    setSnapshot(null)
-    setServices([])
     setCompanyName('')
     setSuccess('')
     setError('')
@@ -258,7 +317,7 @@ export default function AssistedOnboardingPage() {
         </div>
         <div className="flex gap-2">
           {targetTenantId && (
-            <button type="button" onClick={() => loadState()} disabled={Boolean(busy)} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+            <button type="button" onClick={() => loadState(targetTenantId)} disabled={Boolean(busy)} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
               <RefreshCw size={16} className={busy === 'refresh' ? 'animate-spin' : ''} /> Atualizar
             </button>
           )}
@@ -317,15 +376,42 @@ export default function AssistedOnboardingPage() {
               <label className="text-sm font-medium text-slate-700">Senha temporária
                 <input required type="password" minLength={12} value={adminForm.password} onChange={(event) => setAdminForm({ ...adminForm, password: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" placeholder="12+ caracteres, A/a/0" />
               </label>
-              <div className="md:col-span-3"><button disabled={busy === 'administrator'} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Salvar administrador</button></div>
+              <div className="md:col-span-3"><button disabled={Boolean(busy) || !snapshotReady} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Salvar administrador</button></div>
             </form>
           </Section>
 
           <Section icon={Users2} number="3" title="Equipe operacional" ready={Boolean(steps.team)}>
-            <p className="mb-3 text-sm text-slate-600">Um nome por linha. Estes registros representam colaboradores da operação e não criam usuário, senha ou acesso ao sistema.</p>
+            <p className="mb-3 text-sm text-slate-600">Cada colaborador mantém uma chave estável. Renomear não altera identidade; desativar preserva vínculos históricos.</p>
             <form onSubmit={saveTeam} className="space-y-3">
-              <textarea required rows={5} value={teamText} onChange={(event) => setTeamText(event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" placeholder={'Ana Souza\nBruno Lima'} />
-              <button disabled={busy === 'team'} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Salvar equipe</button>
+              <div className="space-y-2">
+                {teamRows.map((row, index) => (
+                  <div key={row.key} className="grid gap-2 rounded-lg border border-slate-200 p-3 md:grid-cols-[1fr_auto_auto] md:items-center">
+                    <label className="text-sm font-medium text-slate-700">Nome
+                      <input
+                        required={row.persisted}
+                        value={row.name}
+                        onChange={(event) => setTeamRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))}
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={row.active}
+                        onChange={(event) => setTeamRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, active: event.target.checked } : item))}
+                      /> Ativo
+                    </label>
+                    {!row.persisted && (
+                      <button type="button" onClick={() => setTeamRows((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">Remover</button>
+                    )}
+                    <p className="break-all font-mono text-[11px] text-slate-400 md:col-span-3">{row.key}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => setTeamRows((current) => [...current, { key: newStaffKey(), name: '', active: true, persisted: false }])} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700"><Plus size={15} /> Adicionar colaborador</button>
+                <button disabled={Boolean(busy) || !snapshotReady || teamRows.length === 0} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Salvar equipe</button>
+              </div>
             </form>
           </Section>
 
@@ -353,7 +439,7 @@ export default function AssistedOnboardingPage() {
               <label className="text-sm font-medium text-slate-700 md:col-span-2">Grupo
                 <select value={serviceForm.group} onChange={(event) => setServiceForm({ ...serviceForm, group: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"><option value="banho_tosa">Banho e tosa</option><option value="veterinaria">Veterinária</option><option value="motoboy">Entrega/MotoDog</option><option value="outro">Outro</option></select>
               </label>
-              <div className="flex items-end md:col-span-3"><button disabled={busy === 'catalog'} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Adicionar ou atualizar serviço</button></div>
+              <div className="flex items-end md:col-span-3"><button disabled={Boolean(busy) || !snapshotReady} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Adicionar ou atualizar serviço</button></div>
             </form>
           </Section>
 
@@ -372,7 +458,7 @@ export default function AssistedOnboardingPage() {
                 <label className="text-sm font-medium text-slate-700">Antecedência mínima (min)<input type="number" min="0" max="10080" value={scheduleRules.leadTime} onChange={(event) => setScheduleRules({ ...scheduleRules, leadTime: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" /></label>
                 <label className="text-sm font-medium text-slate-700">Capacidade por horário<input type="number" min="1" max="50" value={scheduleRules.capacity} onChange={(event) => setScheduleRules({ ...scheduleRules, capacity: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" /></label>
               </div>
-              <button disabled={busy === 'schedule'} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Salvar horários e regras</button>
+              <button disabled={Boolean(busy) || !snapshotReady} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Salvar horários e regras</button>
             </form>
           </Section>
 

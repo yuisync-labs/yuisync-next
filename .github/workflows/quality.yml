@@ -156,3 +156,49 @@ jobs:
       - name: Local agenda drag regression
         if: ${{ !cancelled() && steps.e2e-readiness.outcome == 'success' }}
         run: npx playwright test --config playwright.local.config.js
+
+  agenda-hosted:
+    name: Hosted Agenda regression
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      YUISYNC_STAGING_URL: https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev
+      YUISYNC_E2E_WRANGLER_ENV: staging
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - name: Require staging credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+      - run: npm ci
+      - id: agenda-fixtures
+        name: Prepare ephemeral Agenda tenant
+        run: node scripts/migration/staging-e2e-fixtures.mjs setup
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run hosted Agenda regression
+        env:
+          E2E_BASE_URL: ${{ env.YUISYNC_STAGING_URL }}
+        run: npx playwright test test/e2e/agenda-hosted-regression.spec.js --project=desktop
+      - name: Clean ephemeral Agenda tenant
+        if: always() && steps.agenda-fixtures.outcome == 'success'
+        run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
+      - name: Upload Agenda failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-agenda-${{ github.sha }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { findService, normalizeService } from '../src/modules/petshop/lib/petshopTeam.js'
 
 const root = new URL('../', import.meta.url)
 const read = (path) => readFile(new URL(path, root), 'utf8')
@@ -24,7 +25,7 @@ test('area configurada vence inferencia e metadados permanecem normalizados', as
   assert.match(loader, /serviceGroup\(linked\.group_type, product\)/)
   assert.match(loader, /category: String\(product\.category/)
   assert.match(loader, /description: String\(product\.description/)
-  assert.match(team, /return \{\n    \.\.\.row,/)
+  assert.match(team, /return \{\r?\n    \.\.\.row,/)
   assert.match(grouping, /if \(VALID_APPOINTMENT_GROUPS\.has\(declared\)\) return declared/)
 })
 
@@ -35,4 +36,15 @@ test('hook antigo fica preservado como nucleo sem duplicar implementacao', async
   assert.match(loader, /usePetshopAdvanced as usePetshopAdvancedCore/)
   assert.match(loader, /return \{[\s\S]*\.\.\.core,[\s\S]*loadPetshopServices/)
   assert.match(core, /export function usePetshopAdvanced\(\)/)
+})
+
+test('identidade persistida do servico nao e reescrita pelo frontend', () => {
+  const persisted = normalizeService({
+    code: 'agenda-e2e-hifen',
+    name: 'Banho com codigo persistido',
+  })
+
+  assert.equal(persisted.code, 'agenda-e2e-hifen')
+  assert.equal(findService([persisted], 'agenda-e2e-hifen').code, 'agenda-e2e-hifen')
+  assert.equal(findService([persisted], 'agenda_e2e_hifen').code, 'agenda-e2e-hifen')
 })

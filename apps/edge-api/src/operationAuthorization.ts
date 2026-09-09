@@ -3,22 +3,58 @@ import { isPlatformAdmin } from './platformAuthorization'
 
 export type OperationAccess = 'operational' | 'administrative'
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
-type Membership = { role: string; status: string; tenant_status: string; module_permissions_json: string | null }
+export type OperationMembership = { role: string; status: string; tenant_status: string; module_permissions_json: string | null }
 type Principal = { id: string; email: string | null; status: string }
 type TenantStatus = { status: string }
 
-export function membershipAllows(row: Membership, moduleId: string, access: OperationAccess): boolean {
+function permissionsFor(row: OperationMembership): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(row.module_permissions_json || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null
+  } catch {
+    return null
+  }
+}
+
+function roleFromPermission(permission: unknown): string | null {
+  if (typeof permission === 'string') return permission
+  if (!permission || typeof permission !== 'object' || Array.isArray(permission)) return null
+  const role = (permission as Record<string, unknown>).role
+  return typeof role === 'string' ? role : null
+}
+
+function recognizedModuleAdminRole(moduleId: string): string {
+  return moduleId === 'petshop' ? 'admin_pet' : `admin_${moduleId}`
+}
+
+function recognizedModuleStaffRole(moduleId: string): string {
+  return moduleId === 'petshop' ? 'funcionario_pet' : `funcionario_${moduleId}`
+}
+
+export function membershipAllows(row: OperationMembership, moduleId: string, access: OperationAccess): boolean {
   if (row.status !== 'active' || row.tenant_status !== 'active') return false
   if (row.role === 'owner' || row.role === 'admin') return true
-  let permissions: Record<string, unknown>
-  try { permissions = JSON.parse(row.module_permissions_json || '{}') } catch { return false }
-  if (!permissions || typeof permissions !== 'object') return false
-  const permission = permissions[moduleId] ?? permissions['*']
-  const role = typeof permission === 'string' ? permission
-    : permission && typeof permission === 'object' && !Array.isArray(permission)
-      ? (permission as Record<string, unknown>).role : null
-  if (moduleId === 'petshop' && role === 'admin_pet') return true
-  return access === 'operational' && (permission === true || (moduleId === 'petshop' && role === 'funcionario_pet'))
+
+  const permissions = permissionsFor(row)
+  if (!permissions) return false
+  const explicitPermission = permissions[moduleId]
+  const wildcardPermission = permissions['*']
+  const permissionRole = roleFromPermission(explicitPermission)
+  const adminRole = recognizedModuleAdminRole(moduleId)
+  const staffRole = recognizedModuleStaffRole(moduleId)
+
+  // Administrative aliases are accepted only from the matching module entry or
+  // from the membership role itself. Generic flags and wildcard role strings do
+  // not acquire administrative meaning.
+  if (row.role === adminRole || permissionRole === adminRole) return true
+  if (access === 'administrative') return false
+
+  return row.role === staffRole
+    || permissionRole === staffRole
+    || explicitPermission === true
+    || wildcardPermission === true
 }
 
 export async function authorizeOperation(request: Request, bindings: Bindings, access: OperationAccess, getSession = getBetterAuthSession): Promise<Response | null> {
@@ -35,7 +71,7 @@ export async function authorizeOperation(request: Request, bindings: Bindings, a
     JOIN tenant_memberships m ON m.principal_id=p.id
     JOIN tenants t ON t.id=m.tenant_id
     WHERE p.provider='better-auth' AND p.subject=?1 AND p.status='active' AND m.tenant_id=?2 LIMIT 1
-  `).bind(session.user.id, tenant).first<Membership>()
+  `).bind(session.user.id, tenant).first<OperationMembership>()
   if (membership && membershipAllows(membership, moduleId, access)) return null
 
   const principal = await bindings.DB.prepare(`

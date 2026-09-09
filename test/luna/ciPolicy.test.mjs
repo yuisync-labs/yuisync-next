@@ -53,3 +53,22 @@ test('audit bloqueia advisory direto mesmo em pacote com via_only', () => {
 
   assert.equal(result.blocking[0]?.reason, 'direct_advisory_not_allowlisted')
 })
+
+test('audit aceita somente os ids exatos de advisory direto declarados', () => {
+  const advisoryAllowlist = {
+    entries: [{ package: 'sharp', advisories_only: [1193725], review_by: '2026-09-16' }],
+  }
+  const accepted = evaluateAuditReport({
+    vulnerabilities: {
+      sharp: { severity: 'high', via: [{ source: 1193725, severity: 'high' }] },
+    },
+  }, advisoryAllowlist, { today: '2026-09-09' })
+  assert.equal(accepted.blocking.length, 0)
+
+  const changed = evaluateAuditReport({
+    vulnerabilities: {
+      sharp: { severity: 'high', via: [{ source: 9999999, severity: 'high' }] },
+    },
+  }, advisoryAllowlist, { today: '2026-09-09' })
+  assert.equal(changed.blocking[0]?.reason, 'advisory_set_changed')
+})

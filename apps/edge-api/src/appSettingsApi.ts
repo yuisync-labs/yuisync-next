@@ -1,17 +1,13 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 import { isPlatformAdmin } from './platformAuthorization'
+import { extensionMergeStatement } from './moduleSettingsExtensions'
+import { membershipAllows, type OperationAccess, type OperationMembership } from './operationAuthorization'
 
 type AppSettingsBindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 type SessionResolver = typeof getBetterAuthSession
 export type AppSettingsDependencies = { getSession?: SessionResolver }
 
-type MembershipRow = {
-  role: string
-  status: string
-  module_permissions_json: string | null
-  tenant_status: string
-}
-
+type MembershipRow = OperationMembership
 type PrincipalRow = { id: string; email: string | null; status: string }
 type TenantStatusRow = { status: string }
 type CanonicalSettingsRow = {
@@ -27,7 +23,6 @@ type CanonicalSettingsRow = {
 }
 
 type ExtensionRow = { data_json: string; updated_at_ms: number }
-type ModulePermission = true | string | Record<string, unknown>
 
 type SettingsPatch = {
   business_name?: string
@@ -77,42 +72,11 @@ function validModule(value: unknown): string | null {
   return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalized) ? normalized : null
 }
 
-function permissionsFromJson(raw: string | null | undefined): Record<string, ModulePermission> {
-  try {
-    const parsed = JSON.parse(raw || '{}')
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, ModulePermission>
-      : {}
-  } catch {
-    return {}
-  }
-}
-
-function permissionFor(membership: MembershipRow, moduleId: string): ModulePermission | undefined {
-  const permissions = permissionsFromJson(membership.module_permissions_json)
-  return permissions[moduleId] ?? permissions['*']
-}
-
-function hasModuleAccess(membership: MembershipRow, moduleId: string): boolean {
-  if (membership.role === 'owner' || membership.role === 'admin') return true
-  return Boolean(permissionFor(membership, moduleId))
-}
-
-function canAdminModule(membership: MembershipRow, moduleId: string): boolean {
-  if (membership.role === 'owner' || membership.role === 'admin') return true
-  const permission = permissionFor(membership, moduleId)
-  if (typeof permission === 'string') return permission.startsWith('admin_')
-  if (permission && typeof permission === 'object') {
-    const role = typeof permission.role === 'string' ? permission.role : ''
-    return permission.admin === true || role.startsWith('admin_')
-  }
-  return false
-}
-
 async function resolveScope(
   request: Request,
   bindings: AppSettingsBindings,
   dependencies: AppSettingsDependencies,
+  access: OperationAccess,
 ): Promise<
   | { ok: true; tenantId: string; moduleId: string; membership: MembershipRow }
   | { ok: false; response: Response }
@@ -156,12 +120,7 @@ async function resolveScope(
     LIMIT 1
   `).bind(tenantId, principal.id).first<MembershipRow>()
 
-  if (
-    !membership
-    || membership.status !== 'active'
-    || membership.tenant_status !== 'active'
-    || !hasModuleAccess(membership, moduleId)
-  ) {
+  if (!membership || !membershipAllows(membership, moduleId, access)) {
     return { ok: false, response: json({ code: 'FORBIDDEN' }, 403) }
   }
 
@@ -280,7 +239,7 @@ function validatePatch(body: unknown): { patch: SettingsPatch } | { response: Re
 }
 
 async function getSettings(request: Request, bindings: AppSettingsBindings, dependencies: AppSettingsDependencies): Promise<Response> {
-  const scope = await resolveScope(request, bindings, dependencies)
+  const scope = await resolveScope(request, bindings, dependencies, 'operational')
   if (!scope.ok) return scope.response
   const settings = await readSettings(bindings.DB!, scope.tenantId, scope.moduleId)
   if (!settings) return json({ code: 'SETTINGS_NOT_FOUND' }, 404)
@@ -288,9 +247,8 @@ async function getSettings(request: Request, bindings: AppSettingsBindings, depe
 }
 
 async function patchSettings(request: Request, bindings: AppSettingsBindings, dependencies: AppSettingsDependencies): Promise<Response> {
-  const scope = await resolveScope(request, bindings, dependencies)
+  const scope = await resolveScope(request, bindings, dependencies, 'administrative')
   if (!scope.ok) return scope.response
-  if (!canAdminModule(scope.membership, scope.moduleId)) return json({ code: 'FORBIDDEN' }, 403)
 
   let body: unknown
   try {
@@ -302,87 +260,52 @@ async function patchSettings(request: Request, bindings: AppSettingsBindings, de
   if ('response' in validated) return validated.response
 
   const database = bindings.DB!
-  const canonical = await database.prepare(`
-    SELECT store_name, store_phone, store_address, store_neighborhood, store_city,
-           bot_prompt, version, created_at_ms, updated_at_ms
-    FROM tenant_module_settings
-    WHERE tenant_id=?1 AND module_id=?2
-    LIMIT 1
-  `).bind(scope.tenantId, scope.moduleId).first<CanonicalSettingsRow>()
-  if (!canonical) return json({ code: 'SETTINGS_NOT_FOUND' }, 404)
+  const current = await readSettings(database, scope.tenantId, scope.moduleId)
+  if (!current) return json({ code: 'SETTINGS_NOT_FOUND' }, 404)
 
-  const extensionRow = await database.prepare(`
-    SELECT data_json, updated_at_ms
-    FROM module_settings_extensions
-    WHERE tenant_id=?1 AND module_id=?2
-    LIMIT 1
-  `).bind(scope.tenantId, scope.moduleId).first<ExtensionRow>()
-  const extensions = parseExtensions(extensionRow)
   const patch = validated.patch
   const now = Date.now()
-
-  const nextCanonical = {
-    store_name: patch.business_name ?? canonical.store_name,
-    store_phone: patch.business_phone ?? canonical.store_phone,
-    store_address: patch.business_address ?? canonical.store_address,
-    store_neighborhood: canonical.store_neighborhood,
-    store_city: canonical.store_city,
-  }
-
-  const extensionFields: Array<keyof SettingsPatch> = [
-    'business_email', 'business_tax_id', 'logo_url', 'receipt_format', 'receipt_footer',
-  ]
-  let extensionsChanged = false
-  for (const key of extensionFields) {
-    if (!(key in patch)) continue
-    extensionsChanged = true
-    const value = patch[key]
-    if (key === 'logo_url') {
-      if (value) {
-        extensions.logo_url = value
-        extensions.receipt_logo_data_url = value
-      } else {
-        delete extensions.logo_url
-        delete extensions.receipt_logo_data_url
-      }
-      continue
-    }
-    if (key === 'receipt_format') {
-      extensions.receipt_format = value
-      extensions.printer_width = value === '58' ? '58' : '80'
-      continue
-    }
-    extensions[key] = value ?? ''
-  }
-
-  const canonicalChanged = 'business_name' in patch || 'business_phone' in patch || 'business_address' in patch
   const statements: D1PreparedStatement[] = []
+  const canonicalChanged = 'business_name' in patch || 'business_phone' in patch || 'business_address' in patch
   if (canonicalChanged) {
     statements.push(database.prepare(`
       UPDATE tenant_module_settings
-      SET store_name=?3, store_phone=?4, store_address=?5, store_neighborhood=?6, store_city=?7,
-          version=version+1, updated_at_ms=?8
+      SET store_name=CASE WHEN ?3=1 THEN ?4 ELSE store_name END,
+          store_phone=CASE WHEN ?5=1 THEN ?6 ELSE store_phone END,
+          store_address=CASE WHEN ?7=1 THEN ?8 ELSE store_address END,
+          version=version+1,
+          updated_at_ms=?9
       WHERE tenant_id=?1 AND module_id=?2
     `).bind(
       scope.tenantId,
       scope.moduleId,
-      nextCanonical.store_name,
-      nextCanonical.store_phone,
-      nextCanonical.store_address,
-      nextCanonical.store_neighborhood,
-      nextCanonical.store_city,
+      'business_name' in patch ? 1 : 0,
+      patch.business_name ?? '',
+      'business_phone' in patch ? 1 : 0,
+      patch.business_phone ?? '',
+      'business_address' in patch ? 1 : 0,
+      patch.business_address ?? '',
       now,
     ))
   }
-  if (extensionsChanged) {
-    statements.push(database.prepare(`
-      INSERT INTO module_settings_extensions(tenant_id,module_id,data_json,updated_at_ms)
-      VALUES(?1,?2,?3,?4)
-      ON CONFLICT(tenant_id,module_id) DO UPDATE SET data_json=excluded.data_json, updated_at_ms=excluded.updated_at_ms
-    `).bind(scope.tenantId, scope.moduleId, JSON.stringify(extensions), now))
-  }
-  if (statements.length) await database.batch(statements)
 
+  const extensionPatch: Record<string, unknown> = {}
+  if ('business_email' in patch) extensionPatch.business_email = patch.business_email ?? ''
+  if ('business_tax_id' in patch) extensionPatch.business_tax_id = patch.business_tax_id ?? ''
+  if ('receipt_footer' in patch) extensionPatch.receipt_footer = patch.receipt_footer ?? ''
+  if ('logo_url' in patch) {
+    extensionPatch.logo_url = patch.logo_url || null
+    extensionPatch.receipt_logo_data_url = patch.logo_url || null
+  }
+  if ('receipt_format' in patch) {
+    extensionPatch.receipt_format = patch.receipt_format
+    extensionPatch.printer_width = patch.receipt_format === '58' ? '58' : '80'
+  }
+  if (Object.keys(extensionPatch).length) {
+    statements.push(extensionMergeStatement(database, scope.tenantId, scope.moduleId, extensionPatch, now))
+  }
+
+  if (statements.length) await database.batch(statements)
   const saved = await readSettings(database, scope.tenantId, scope.moduleId)
   return json({ tenant_id: scope.tenantId, module_id: scope.moduleId, settings: saved })
 }
