@@ -262,7 +262,7 @@ test('Agenda hospedada persiste criacao, edicao, responsavel, concorrencia, drag
     panel.getByRole('button', { name: 'Concluir', exact: true }).click(),
     dialogHandled,
   ])
-  expect(confirmationMessage).toMatch(/Concluir este atendimento/i)
+  expect(confirmationMessage).toMatch(/O serviço, valores e cliente\/pet estão preenchidos corretamente\?/i)
 
   await expect(page.getByRole('heading', { name: 'Ficha / comprovante' })).toBeVisible({ timeout: 30_000 })
   await page.getByRole('button', { name: 'Fechar impressao' }).click()
