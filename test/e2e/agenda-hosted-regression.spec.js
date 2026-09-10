@@ -96,6 +96,13 @@ function agendaCard(page, petName) {
     .first()
 }
 
+function movableAgendaCard(page, petName) {
+  return page
+    .locator('[data-yuisync-appointment-id][data-yuisync-movable="true"]')
+    .filter({ hasText: petName })
+    .first()
+}
+
 async function openAppointmentPanel(page, petName) {
   const card = agendaCard(page, petName)
   await expect(card).toBeVisible({ timeout: 30_000 })
@@ -187,7 +194,11 @@ test('Agenda hospedada persiste criacao, edicao, responsavel, concorrencia, drag
 
   // Drag sem dependencia de cor/tema e com confirmacao da persistencia apos reload.
   await reloadAgenda(page, fixture.petName)
-  card = agendaCard(page, fixture.petName)
+  // O comportamento de arraste e ligado depois que a grade resolvida sincroniza
+  // seus identificadores. Esperar por esse estado evita iniciar o ponteiro no
+  // pequeno intervalo em que o card ja esta visivel, mas ainda nao e movivel.
+  card = movableAgendaCard(page, fixture.petName)
+  await expect(card).toBeVisible({ timeout: 30_000 })
   const target = page.getByRole('button', { name: 'Agendar as 08:50' })
   await expect(target).toBeVisible({ timeout: 15_000 })
   await target.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }))
@@ -213,7 +224,12 @@ test('Agenda hospedada persiste criacao, edicao, responsavel, concorrencia, drag
   await expect(panel.getByRole('button', { name: 'Iniciar', exact: true })).toBeVisible({ timeout: 30_000 })
   await panel.getByRole('button', { name: 'Iniciar', exact: true }).click()
   await expect(panel.getByRole('button', { name: 'Concluir', exact: true })).toBeVisible({ timeout: 30_000 })
-  await panel.getByRole('button', { name: 'Concluir', exact: true }).click()
+  const dialogPromise = page.waitForEvent('dialog')
+  const completeClick = panel.getByRole('button', { name: 'Concluir', exact: true }).click()
+  const confirmation = await dialogPromise
+  expect(confirmation.message()).toMatch(/Concluir este atendimento/i)
+  await confirmation.accept()
+  await completeClick
 
   await expect(page.getByRole('heading', { name: 'Ficha / comprovante' })).toBeVisible({ timeout: 30_000 })
   await page.getByRole('button', { name: 'Fechar impressao' }).click()
