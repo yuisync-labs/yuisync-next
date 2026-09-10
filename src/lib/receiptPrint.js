@@ -1,5 +1,3 @@
-import { printThermalReceipt } from './thermalPrint'
-
 const FORMAT_CONFIG = {
   '58': { label: '58 mm', paperWidth: '58mm', contentWidth: '52mm', padding: '3mm' },
   '80': { label: '80 mm', paperWidth: '80mm', contentWidth: '72mm', padding: '4mm' },
@@ -80,10 +78,6 @@ export function buildReceiptDocument({ storeSettings = {}, tenantName = '', titl
     html[data-receipt-format="a4"] { --paper-width: 210mm; --content-width: 190mm; --paper-padding: 10mm; }
     html, body { margin: 0; min-height: 0; background: #f3f4f6; color: #111; font-family: Arial, Helvetica, sans-serif; }
     body { overflow-x: auto; }
-    .preview-toolbar { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; padding: 10px; background: #111827; color: #fff; font-size: 13px; }
-    .preview-toolbar button { border: 1px solid #4b5563; border-radius: 8px; background: #1f2937; color: #fff; padding: 7px 10px; font: inherit; font-weight: 700; cursor: pointer; }
-    .preview-toolbar button[aria-pressed="true"] { background: #fff; color: #111827; }
-    .preview-toolbar .print { background: #10b981; border-color: #10b981; color: #052e25; }
     .paper { width: var(--paper-width); max-width: none; min-height: 0; margin: 18px auto; padding: var(--paper-padding); background: #fff; box-shadow: 0 10px 30px rgba(0,0,0,.14); }
     .receipt { width: var(--content-width); max-width: 100%; min-width: 0; margin: 0 auto; overflow: visible; }
     .center { text-align: center; }
@@ -118,19 +112,13 @@ export function buildReceiptDocument({ storeSettings = {}, tenantName = '', titl
     html[data-receipt-format="a4"] .receipt-table, html[data-receipt-format="a4"] table { font-size: 10px; }
     @media print {
       html, body { background: #fff !important; min-height: 0 !important; overflow: visible !important; }
-      .preview-toolbar { display: none !important; }
-      .paper { width: var(--paper-width); min-height: 0 !important; margin: 0 auto; padding: var(--paper-padding); box-shadow: none; break-after: avoid-page; }
+      .paper { width: var(--paper-width); min-height: 0 !important; margin: 0 auto; padding: var(--paper-padding); box-shadow: none; break-after: avoid-page; page-break-after: avoid; }
       .receipt { min-height: 0 !important; overflow: visible !important; }
       .receipt-table tr, .receipt-section, .appointment { break-inside: avoid; page-break-inside: avoid; }
     }
   </style>
 </head>
 <body>
-  <div class="preview-toolbar" aria-label="Formato do comprovante">
-    <span>Prévia:</span>
-    ${Object.entries(FORMAT_CONFIG).map(([format, config]) => `<button type="button" data-receipt-format-button="${format}">${config.label}</button>`).join('')}
-    <button type="button" class="print" data-receipt-print>Imprimir / Salvar PDF</button>
-  </div>
   <div class="paper">
     <main class="receipt">
       ${identityHeader(identity)}
@@ -157,9 +145,27 @@ export function applyReceiptPreviewFormat(printWindow, format) {
       ? '@page { size: A4 portrait; margin: 0; }'
       : `@page { size: ${config.paperWidth} auto; margin: 0; }`
   }
-  printWindow.document.querySelectorAll('[data-receipt-format-button]').forEach((button) => {
-    button.setAttribute('aria-pressed', String(button.getAttribute('data-receipt-format-button') === normalized))
-  })
+  return normalized
+}
+
+/**
+ * Chromium defaults a narrow receipt to a full Letter/A4 page when the page
+ * height is left as `auto`. Measure the rendered paper and publish an explicit
+ * page height so printing ends immediately after the receipt content.
+ */
+export function applyReceiptPrintPageSize(printWindow, format) {
+  const normalized = normalizeReceiptFormat(format, '80')
+  const config = FORMAT_CONFIG[normalized]
+  const style = printWindow?.document?.getElementById('yuisync-page-style')
+  if (!style) return normalized
+  if (normalized === 'a4') {
+    style.textContent = '@page { size: A4 portrait; margin: 0; }'
+    return normalized
+  }
+  const paper = printWindow.document.querySelector('.paper')
+  const heightPx = paper?.scrollHeight || paper?.getBoundingClientRect?.().height || 0
+  const heightMm = Math.max(20, Math.ceil((heightPx * 25.4) / 96))
+  style.textContent = `@page { size: ${config.paperWidth} ${heightMm}mm; margin: 0; }`
   return normalized
 }
 
@@ -172,12 +178,10 @@ export function openReceiptPreview({ storeSettings = {}, tenantName = '', title,
 
   const format = normalizeReceiptFormat(initialFormat || identity.defaultFormat, identity.defaultFormat)
   applyReceiptPreviewFormat(printWindow, format)
-  printWindow.document.querySelectorAll('[data-receipt-format-button]').forEach((button) => {
-    button.addEventListener('click', () => applyReceiptPreviewFormat(printWindow, button.getAttribute('data-receipt-format-button')))
-  })
-  printWindow.document.querySelector('[data-receipt-print]')?.addEventListener('click', () => {
-    printThermalReceipt(printWindow, { closeAfterPrint: false })
-  })
+  applyReceiptPrintPageSize(printWindow, format)
   printWindow.focus()
+  // Keep print() in the same user-activation turn as window.open so browsers
+  // open the native print/save dialog directly, without an intermediate HUD.
+  printWindow.print()
   return true
 }

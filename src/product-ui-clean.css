@@ -538,3 +538,77 @@ select.inp {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Agenda cards: solid category colors keep the schedule legible and calm.
+ * This intentionally overrides the older metallic/neon layer above while
+ * retaining the semantic palette (bath, package, grooming). */
+body.product-ui-active :is(.yuisync-agenda-card-surface, .yuisync-resolved-card) {
+  font-family: 'Outfit', var(--ui-font-sans) !important;
+  background: #047857 !important;
+  background-image: none !important;
+  border-color: #34d399 !important;
+  box-shadow: none !important;
+  filter: none !important;
+  transition: background-color 120ms ease, border-color 120ms ease !important;
+}
+
+body.product-ui-active :is(.yuisync-agenda-card-surface, .yuisync-resolved-card)[data-yuisync-card-kind='bath'] {
+  background: #047857 !important;
+  border-color: #34d399 !important;
+}
+
+body.product-ui-active :is(.yuisync-agenda-card-surface, .yuisync-resolved-card)[data-yuisync-card-kind='package'] {
+  background: #b45309 !important;
+  border-color: #fbbf24 !important;
+}
+
+body.product-ui-active :is(.yuisync-agenda-card-surface, .yuisync-resolved-card)[data-yuisync-card-kind='grooming'] {
+  background: #1e40af !important;
+  border-color: #60a5fa !important;
+}
+
+body.product-ui-active :is(.yuisync-agenda-card-surface, .yuisync-resolved-card):hover {
+  filter: none !important;
+  box-shadow: none !important;
+  background-image: none !important;
+}
+
+body.product-ui-active :is(.yuisync-agenda-card-surface, .yuisync-resolved-card)
+  :is(.yuisync-card-time, .yuisync-card-pet, .yuisync-card-tutor, .yuisync-card-service,
+  .yuisync-card-transport, .yuisync-card-responsible, .yuisync-package-label) {
+  font-family: 'Outfit', var(--ui-font-sans) !important;
+  letter-spacing: normal !important;
+}
+
+body.product-ui-active :is(.yuisync-card-time, .yuisync-card-pet) {
+  font-weight: 700 !important;
+}
+
+body.product-ui-active :is(.yuisync-card-tutor, .yuisync-card-service, .yuisync-card-transport,
+  .yuisync-card-responsible, .yuisync-package-label) {
+  font-weight: 500 !important;
+}
+
+body.product-ui-active .yuisync-resolved-drag-ghost {
+  background: #047857 !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+  transition: opacity 120ms ease, transform 120ms ease !important;
+}
+
+body.product-ui-active .yuisync-resolved-drag-ghost[data-yuisync-card-kind='package'] {
+  background: #b45309 !important;
+}
+
+body.product-ui-active .yuisync-resolved-drag-ghost[data-yuisync-card-kind='grooming'] {
+  background: #1e40af !important;
+}
+
+body.product-ui-active .yuisync-agenda-card-surface,
+body.product-ui-active .yuisync-resolved-card,
+body.product-ui-active .yuisync-resolved-drag-ghost,
+body.product-ui-active .yuisync-agenda-card-surface *,
+body.product-ui-active .yuisync-resolved-card * {
+  text-shadow: none !important;
+}

@@ -329,11 +329,16 @@ async function consumeSubscriptionBenefit(moduleId, tenantId, benefit) {
 
 export function useAppointments() {
   const [appointments, setAppointments] = useState([])
+  const appointmentsRef = useRef(appointments)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const channelRef = useRef(null)
   const { activeModuleId } = useModuleCtx()
   const { activeTenantId } = useAuthCtx()
+
+  useEffect(() => {
+    appointmentsRef.current = appointments
+  }, [appointments])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -566,12 +571,26 @@ export function useAppointments() {
     const apiPayload = normalizeAppointmentPayload(payload)
 
     if (activeModuleId === 'petshop') {
-      const updated = mapAppointmentRow(await updateAppointmentCommand({
-        tenantId: activeTenantId,
-        moduleId: activeModuleId,
-        appointmentId: id,
-        payload: { ...apiPayload, source: payload.source || 'manual' },
-      }))
+      const previous = appointmentsRef.current.find((appointment) => String(appointment?.id) === String(id))
+      // Reflect schedule changes immediately while the Worker persists them.
+      // This keeps drag-and-drop anchored to the pointer instead of waiting
+      // for the network round trip before the card moves.
+      if (previous) {
+        const optimistic = mapAppointmentRow({ ...previous, ...apiPayload })
+        setAppointments((current) => mergeAppointmentState(current, optimistic))
+      }
+      let updated
+      try {
+        updated = mapAppointmentRow(await updateAppointmentCommand({
+          tenantId: activeTenantId,
+          moduleId: activeModuleId,
+          appointmentId: id,
+          payload: { ...apiPayload, source: payload.source || 'manual' },
+        }))
+      } catch (error) {
+        if (previous) setAppointments((current) => mergeAppointmentState(current, previous))
+        throw error
+      }
       setAppointments((current) => mergeAppointmentState(current, updated))
       emitAppointmentSync({ type: 'upsert', appointment: updated, moduleId: activeModuleId, tenantId: activeTenantId })
       return updated
