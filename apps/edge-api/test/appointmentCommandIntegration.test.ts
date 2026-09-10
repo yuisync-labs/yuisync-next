@@ -119,6 +119,8 @@ describe('appointment command policy in workerd', () => {
         status: 'agendado',
         source: 'manual',
         transport_mode: 'cliente_leva',
+        responsible_staff_key: 'esteticista-1',
+        responsible_staff_name: 'Esteticista 1',
         idempotency_key: idempotencyKey,
       }
 
@@ -147,6 +149,8 @@ describe('appointment command policy in workerd', () => {
           scheduled_at: '2026-08-20T13:00:00.000Z',
           service_type: serviceCode,
           status: 'agendado',
+          responsible_staff_key: 'esteticista-1',
+          responsible_staff_name: 'Esteticista 1',
           subscription_benefits: [],
           pets: expect.objectContaining({
             id: petId,
@@ -185,6 +189,8 @@ describe('appointment command policy in workerd', () => {
             ...basePayload,
             scheduled_at: updatedScheduledAt,
             notes: 'Horario alterado pelo cliente',
+            responsible_staff_key: 'esteticista-2',
+            responsible_staff_name: 'Esteticista 2',
           }),
         },
       ), bindings())
@@ -194,6 +200,8 @@ describe('appointment command policy in workerd', () => {
           id: firstBody.data.appointment_id,
           scheduled_at: updatedScheduledAt,
           notes: 'Horario alterado pelo cliente',
+          responsible_staff_key: 'esteticista-2',
+          responsible_staff_name: 'Esteticista 2',
         }),
       })
 
