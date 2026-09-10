@@ -282,13 +282,13 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
       const target = slot.getBoundingClientRect()
       slot.dataset.yuisyncDropCommitting = 'true'
       state.ghost.classList.add('is-dropping')
-      state.ghost.style.transform = `translate3d(${target.left + 8}px, ${target.top + 2}px, 0) scale(0.94)`
+      state.ghost.style.transform = `translate3d(${target.left + 8}px, ${target.top + 2}px, 0) scale(0.98)`
       state.ghost.style.opacity = '0'
       window.setTimeout(() => {
         state.ghost?.remove()
         state.card?.classList.remove('is-yuisync-pointer-dragging')
         slot.removeAttribute('data-yuisync-drop-committing')
-      }, 170)
+      }, 120)
     }
 
     const autoScrollTick = () => {
@@ -574,6 +574,12 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
       }
 
       event.preventDefault()
+      // Paint the ghost in the pointer event itself. The RAF remains useful
+      // for auto-scroll, but no longer adds a visible frame of drag latency.
+      if (state.ghost) {
+        state.ghost.style.transform = `translate3d(${state.clientX - state.ghostOffsetX}px, ${state.clientY - state.ghostOffsetY}px, 0) scale(1.012)`
+        setActiveSlot(chooseAgendaSlot(slots(), state.clientX, state.clientY))
+      }
       scheduleDragVisuals()
     }
 
