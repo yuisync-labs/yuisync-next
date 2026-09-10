@@ -100,9 +100,15 @@ async function openAppointmentPanel(page, petName) {
   const card = agendaCard(page, petName)
   await expect(card).toBeVisible({ timeout: 30_000 })
   await card.click()
-  const panel = page.locator('[data-qa="agenda-appointment-panel"]')
-  await expect(panel).toBeVisible({ timeout: 15_000 })
-  return panel
+  const panelContent = page.locator('[data-qa="agenda-appointment-panel"]')
+  await expect(panelContent).toBeVisible({ timeout: 15_000 })
+
+  // The appointment content and its action footer are siblings inside the
+  // responsive dialog. Scope subsequent actions to the complete dialog so
+  // footer buttons such as Editar/Confirmar remain reachable.
+  const dialog = page.getByRole('dialog', { name: petName, exact: true })
+  await expect(dialog).toBeVisible({ timeout: 15_000 })
+  return dialog
 }
 
 async function openEditModal(page, petName) {
