@@ -203,15 +203,38 @@ test('Agenda hospedada persiste criacao, edicao, responsavel, concorrencia, drag
   await expect(target).toBeVisible({ timeout: 15_000 })
   await target.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }))
 
-  const from = await card.boundingBox()
-  const to = await target.boundingBox()
-  expect(from).toBeTruthy()
-  expect(to).toBeTruthy()
+  await card.evaluate((element, targetLabel) => {
+    const targetSlot = [...document.querySelectorAll('button')]
+      .find((candidate) => candidate.getAttribute('aria-label') === targetLabel)
+    if (!targetSlot) throw new Error(`E2E_AGENDA_TARGET_NOT_FOUND:${targetLabel}`)
 
-  await page.mouse.move(from.x + Math.min(20, from.width / 3), from.y + Math.min(20, from.height / 3))
-  await page.mouse.down()
-  await page.mouse.move(to.x + to.width / 2, to.y + Math.min(10, to.height / 2), { steps: 12 })
-  await page.mouse.up()
+    const from = element.getBoundingClientRect()
+    const to = targetSlot.getBoundingClientRect()
+    const pointerId = 41
+    const start = {
+      clientX: from.left + Math.min(20, from.width / 3),
+      clientY: from.top + Math.min(20, from.height / 3),
+    }
+    const end = {
+      clientX: to.left + to.width / 2,
+      clientY: to.top + Math.min(10, to.height / 2),
+    }
+    const pointer = (type, coordinates) => new PointerEvent(type, {
+      ...coordinates,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      button: 0,
+      buttons: type === 'pointerup' ? 0 : 1,
+      pointerId,
+      pointerType: 'mouse',
+      isPrimary: true,
+    })
+
+    element.dispatchEvent(pointer('pointerdown', start))
+    document.dispatchEvent(pointer('pointermove', end))
+    document.dispatchEvent(pointer('pointerup', end))
+  }, 'Agendar as 08:50')
 
   await expect(page.getByText(/Agendamento movido para 08:50/i)).toBeVisible({ timeout: 30_000 })
   await expect(card).toContainText('08:50')
@@ -224,12 +247,22 @@ test('Agenda hospedada persiste criacao, edicao, responsavel, concorrencia, drag
   await expect(panel.getByRole('button', { name: 'Iniciar', exact: true })).toBeVisible({ timeout: 30_000 })
   await panel.getByRole('button', { name: 'Iniciar', exact: true }).click()
   await expect(panel.getByRole('button', { name: 'Concluir', exact: true })).toBeVisible({ timeout: 30_000 })
-  const dialogPromise = page.waitForEvent('dialog')
-  const completeClick = panel.getByRole('button', { name: 'Concluir', exact: true }).click()
-  const confirmation = await dialogPromise
-  expect(confirmation.message()).toMatch(/Concluir este atendimento/i)
-  await confirmation.accept()
-  await completeClick
+  const dialogHandled = new Promise((resolve, reject) => {
+    page.once('dialog', async (dialog) => {
+      try {
+        const message = dialog.message()
+        await dialog.accept()
+        resolve(message)
+      } catch (error) {
+        reject(error)
+      }
+    })
+  })
+  const [, confirmationMessage] = await Promise.all([
+    panel.getByRole('button', { name: 'Concluir', exact: true }).click(),
+    dialogHandled,
+  ])
+  expect(confirmationMessage).toMatch(/Concluir este atendimento/i)
 
   await expect(page.getByRole('heading', { name: 'Ficha / comprovante' })).toBeVisible({ timeout: 30_000 })
   await page.getByRole('button', { name: 'Fechar impressao' }).click()
