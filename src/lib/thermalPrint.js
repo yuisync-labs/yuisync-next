@@ -18,10 +18,7 @@ export function waitForPrintImages(printWindow) {
 export function printThermalReceipt(printWindow, options = {}) {
   if (!printWindow || printWindow.closed) return false
   const { closeAfterPrint = true } = options
-  const nextFrame = printWindow.requestAnimationFrame || ((callback) => setTimeout(callback, 0))
-
-  nextFrame(async () => {
-    await waitForPrintImages(printWindow)
+  const print = () => {
     if (printWindow.closed) return
 
     if (closeAfterPrint) {
@@ -32,6 +29,21 @@ export function printThermalReceipt(printWindow, options = {}) {
 
     printWindow.focus()
     printWindow.print()
+  }
+
+  const images = [...(printWindow?.document?.images || [])]
+  if (images.every((image) => image.complete)) {
+    // Keep the call in the original click event. Browsers can reject print()
+    // after requestAnimationFrame/await because the transient user activation
+    // that opened the print dialog has already expired.
+    print()
+    return true
+  }
+
+  const nextFrame = printWindow.requestAnimationFrame || ((callback) => setTimeout(callback, 0))
+  nextFrame(async () => {
+    await waitForPrintImages(printWindow)
+    print()
   })
   return true
 }
