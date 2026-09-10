@@ -53,10 +53,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Full staging certification started\n\n- Release-SHA: \`$RELEASE_SHA\`\n- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\n\nThe browser suite will run only after staging proves this exact SHA."
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Full staging certification started\n\n- Release-SHA: \`$RELEASE_SHA\`\n- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\n\nThis automatic gate validates build, schema, release identity, authentication and tenant isolation. Operational browser flows remain manually authorized."
 
   certify:
-    name: Publish, prove SHA and certify browser staging
+    name: Publish and certify staging infrastructure
     needs: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -185,7 +185,7 @@ jobs:
           [ "$matched" = true ] || { echo 'Exact staging release SHA was not observed with password recovery configured'; cat /tmp/r.json || true; cat /tmp/v.json || true; exit 1; }
           curl --fail --silent --show-error "$YUISYNC_STAGING_URL/" > /dev/null
 
-      - name: Prepare ephemeral Better Auth browser users
+      - name: Prepare ephemeral Better Auth verification users
         id: e2e-fixtures
         run: node scripts/migration/staging-e2e-fixtures.mjs setup
 
@@ -219,26 +219,14 @@ jobs:
         env:
           REQUIRE_TENANT_ISOLATION_TESTS: '1'
 
-      - name: Install browser runtime
-        run: npx playwright install --with-deps chromium
-
-      - name: Run browser E2E against the proven SHA
-        env:
-          E2E_BASE_URL: ${{ env.YUISYNC_STAGING_URL }}
-        # The hosted suite includes a write-heavy Agenda regression and a
-        # read-heavy module sweep. Running them concurrently on the same D1
-        # produces avoidable SQLITE_BUSY/503 cascades; keep the certification
-        # deterministic and within the free-tier read/write budget.
-        run: npm run test:e2e -- --workers=1
-
-      - name: Re-prove SHA after browser E2E
+      - name: Re-prove SHA after staging checks
         shell: bash
         run: |
           set -euo pipefail
           LIVE_SHA="$(curl --fail --silent --show-error "$YUISYNC_STAGING_URL/release" | node --input-type=module -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(String(JSON.parse(s).release_sha||'').toLowerCase()))")"
           test "$LIVE_SHA" = "${RELEASE_SHA,,}"
 
-      - name: Clean ephemeral Better Auth browser users
+      - name: Clean ephemeral Better Auth verification users
         if: always() && steps.e2e-fixtures.outcome == 'success'
         run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
 
@@ -249,7 +237,6 @@ jobs:
           name: full-staging-release-${{ env.RELEASE_SHA }}
           path: |
             .artifacts/staging-certification/
-            test-results/
           if-no-files-found: warn
           retention-days: 14
 
@@ -263,8 +250,9 @@ jobs:
           echo '- /health + /ready + /release exact SHA: passed' >> "$GITHUB_STEP_SUMMARY"
           echo '- Password recovery provider + sender: configured' >> "$GITHUB_STEP_SUMMARY"
           echo '- Better Auth sign-in + session HTTP smoke: passed' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Browser E2E: passed against the exact published SHA' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Exact SHA rechecked after browser E2E: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Tenant isolation: passed with disposable tenants' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Exact SHA rechecked after staging infrastructure checks: passed' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Operational browser flows: manual workflow only (D1 quota control)' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish auditable result to authorization issue
         if: always()
