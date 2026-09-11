@@ -11,6 +11,10 @@ type MainSchemaObject = { key: string; kind: 'table' | 'index' | 'trigger'; name
 type MainSchemaColumnGroup = { table: string; columns: string[] }
 
 const REQUIRED_MAIN_SCHEMA_OBJECTS: MainSchemaObject[] = [
+  // Platform identity directory. This is independent from tenant membership.
+  { key: 'table:platform_administrators', kind: 'table', name: 'platform_administrators' },
+  { key: 'index:platform_administrators_status_idx', kind: 'index', name: 'platform_administrators_status_idx' },
+
   // Operational integrity v25.
   { key: 'index:sales_scope_origin_idx', kind: 'index', name: 'sales_scope_origin_idx' },
 

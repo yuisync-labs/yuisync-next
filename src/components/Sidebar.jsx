@@ -115,7 +115,7 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
         ${open ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}
       >
-        <div className="border-b border-[var(--border2)] px-3 py-4">
+        <div className="yuisync-sidebar-header relative z-20 border-b border-[var(--border2)] px-3 py-4">
           <div className={`mb-3 flex items-center gap-2 px-2 text-text ${collapsed ? 'lg:justify-center lg:px-0' : ''}`}>
             <YuiSyncMark inverted={darkMode} decorative className="h-7 w-7" />
             <span className={`font-display text-sm font-extrabold tracking-[-0.035em] ${expandedContentClass}`}>YuiSync</span>
@@ -155,7 +155,7 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
           )}
         </div>
 
-        <nav className="custom-scrollbar flex-1 overflow-y-auto px-2.5 py-4">
+        <nav className="custom-scrollbar relative z-10 flex-1 overflow-y-auto px-2.5 py-4">
           {navGroups.map((group, index) => (
             <React.Fragment key={`${group.title || 'group'}-${index}`}>
               {renderNavGroup(group.title, group.items || [])}

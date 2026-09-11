@@ -453,6 +453,7 @@ export default function UsersPage() {
   const navigate = useNavigate()
   const [profiles, setProfiles] = useState([])
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState('')
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState({ open: false, user: null })
 
@@ -473,6 +474,7 @@ export default function UsersPage() {
 
   async function load() {
     setLoading(true)
+    setLoadError('')
     try {
       const scopedModuleId = isHubView ? null : activeModuleId
       const list = await listManagedUsers(scopedModuleId, isHubView ? {} : { tenantId: auth?.activeTenantId })
@@ -486,6 +488,7 @@ export default function UsersPage() {
     } catch (e) {
       console.error(e)
       setProfiles([])
+      setLoadError('Nao foi possivel carregar os acessos. Tente novamente.')
     } finally {
       setLoading(false)
     }
@@ -556,6 +559,15 @@ export default function UsersPage() {
         <div className="flex-1 overflow-x-auto">
           {loading ? (
             <div className="flex items-center justify-center h-full text-muted text-sm py-12">Carregando...</div>
+          ) : loadError ? (
+            <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 px-6 py-12 text-center">
+              <ShieldAlert size={24} className="text-red-400" />
+              <p className="text-sm font-semibold text-text">Falha ao carregar os acessos</p>
+              <p className="max-w-sm text-xs text-muted">{loadError}</p>
+              <button type="button" onClick={load} className="btn btn-secondary btn-sm gap-2">
+                <RefreshCw size={14} /> Tentar novamente
+              </button>
+            </div>
           ) : (
             <table className="tbl">
               <thead>
@@ -569,6 +581,13 @@ export default function UsersPage() {
                 </tr>
               </thead>
               <tbody>
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="py-14 text-center text-sm text-muted">
+                      {search ? 'Nenhum acesso corresponde a busca.' : 'Nenhum acesso cadastrado.'}
+                    </td>
+                  </tr>
+                )}
                 {filtered.map((profile) => {
                   const isLocked = profile.role === 'admin' && (!isGlobalAdmin || !isHubView)
                   const tenantBadges = profile.tenants || []
