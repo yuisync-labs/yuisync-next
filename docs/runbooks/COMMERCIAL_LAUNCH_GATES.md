@@ -13,6 +13,27 @@ Atualização: 2026-09-08. Escopo: até dez empresas com implantação assistida
 - Pacotes passaram a expor capacidade, saldo, reservas, consumo e origem; comissões não aplicam regra atual retroativamente quando o snapshot histórico está ausente.
 - CI rejeita falta de configuração de E2E/isolamento. Publicação final exige certificação do mesmo commit, sem herdar resultado de outro SHA.
 
+## Checkout comercial Stripe
+
+Implementação candidata em `codex/stripe-checkout-sales-redesign`:
+
+- `/vendas` e `/vendas/contratar` seguem a linguagem visual da página pública atual e compartilham um único catálogo de apresentação.
+- Os valores comerciais foram normalizados para R$ 197 / 347 / 597 por mês e R$ 1.970 / 3.470 / 5.970 por ano. Não há aumento oculto no segundo mês.
+- `POST /api/platform/billing/checkout` recebe somente o código do plano e o ciclo; preço e Price ID são resolvidos no Worker. A rota exige mesma origem, chave idempotente, aceite dos termos, validação de campos e limite de tentativas por e-mail.
+- A Stripe recebe a empresa e o pedido por `metadata`; o cartão nunca passa pelo YuiSync.
+- `POST /api/webhooks/stripe` preserva o corpo bruto, valida `Stripe-Signature` com HMAC/Web Crypto e processa eventos de checkout, assinatura e fatura de modo idempotente.
+- Pedidos, assinaturas comerciais e eventos Stripe usam tabelas `platform_*` próprias. Elas não reutilizam `client_subscriptions` nem as assinaturas de pacotes do petshop.
+- O checkout permanece indisponível por padrão até os oito secrets do Worker estarem configurados. O catálogo público informa quais ciclos estão realmente disponíveis.
+
+Configuração obrigatória por ambiente:
+
+1. Na Stripe, criar produtos recorrentes Yui Start, Yui Pro e Yui Prime IA, cada um com um preço mensal e um anual em BRL.
+2. Configurar no Worker `STRIPE_SECRET_KEY` e os seis `STRIPE_PRICE_*` com os IDs `price_...` correspondentes.
+3. Criar o webhook HTTPS apontando para `https://<ambiente>/api/webhooks/stripe` e assinar `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid` e `invoice.payment_failed`.
+4. Salvar o signing secret do endpoint como `STRIPE_WEBHOOK_SECRET` no mesmo Worker.
+5. Aplicar `0034_platform_stripe_billing.sql`, publicar e confirmar `checks.stripe_checkout = configured` em `/ready`.
+6. Em modo de teste, concluir um checkout, repetir o mesmo webhook e confirmar uma única assinatura em D1 antes de configurar chaves live.
+
 Isto não certifica todas as APIs, nem remove a compatibilidade: o inventário candidato da Entrega 4 está em 205 `.from()` e 11 `.rpc()` no frontend, distribuídos em 30 arquivos. O runtime de compatibilidade usa D1. A conversão por domínio permanece pendente.
 
 ## Entrega 3 — Agenda e consistência das abas

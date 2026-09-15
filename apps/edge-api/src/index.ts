@@ -24,6 +24,7 @@ import { handleClientsPetsMigrationRequest } from './migration/clientsPetsMigrat
 import { handleOperationalMigrationRequest } from './migration/operationalMigrationHttp'
 import { handlePetshopPlansApiRequest } from './petshopPlansApi'
 import { handlePetshopServicesApiRequest } from './petshopServicesApi'
+import { handlePlatformBillingApiRequest } from './platformBillingApi'
 import { handleAsyncQueue } from './queueHandler'
 import { handleRealtimeApiRequest, scheduleRealtimeInvalidation } from './realtimeApi'
 import { handleReleaseIdentity } from './releaseIdentity'
@@ -53,6 +54,9 @@ async function dispatch(request: Request, env: EdgeEnv, context: ExecutionContex
 
     const readinessResponse = await handleFinalReadiness(request, bindings)
     if (readinessResponse) return respond(readinessResponse)
+
+    const platformBillingResponse = await handlePlatformBillingApiRequest(request, bindings)
+    if (platformBillingResponse) return respond(platformBillingResponse)
 
     const authMigrationResponse = await handleAuthMigrationRequest(request, bindings)
     if (authMigrationResponse) return respond(authMigrationResponse)

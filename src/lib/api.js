@@ -83,6 +83,33 @@ export function checkoutPetshop(payload) {
   }).then((response) => response.data)
 }
 
+export function getPlatformBillingCatalog() {
+  return apiRequest('/platform/billing/catalog', { method: 'GET' })
+}
+
+export function createPlatformCheckout({ tenantId, ...payload }) {
+  const storageKey = `@yuisync-platform-checkout:${payload.planId}:${payload.billingCycle}:${payload.customer?.email || ''}`
+  const operationKey = sessionStorage.getItem(storageKey) || crypto.randomUUID()
+  sessionStorage.setItem(storageKey, operationKey)
+
+  return apiRequest('/platform/billing/checkout', {
+    method: 'POST',
+    headers: {
+      'idempotency-key': operationKey,
+      ...(tenantId ? { 'x-tenant-id': tenantId } : {}),
+    },
+    body: JSON.stringify(payload),
+  }).then((result) => {
+    sessionStorage.removeItem(storageKey)
+    return result
+  }).catch((error) => {
+    // Keep the key when the browser cannot tell whether the server completed.
+    // A retry can then resume the same Stripe Session instead of charging twice.
+    if (error?.code && error.code !== 'CHECKOUT_IN_PROGRESS') sessionStorage.removeItem(storageKey)
+    throw error
+  })
+}
+
 export function updatePetshopServiceRules(serviceId, { tenantId, moduleId = 'petshop', ...rules }) {
   return apiRequest(`/petshop/services/${encodeURIComponent(serviceId)}/rules`, {
     method: 'PATCH',

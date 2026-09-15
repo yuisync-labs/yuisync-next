@@ -2,6 +2,7 @@ import type { AuthDatabaseBindings } from './auth/authDatabaseFeature'
 import type { CoordinationDurableObject } from './coordination/coordinationDurableObject'
 import type { AuthMigrationBindings } from './migration/authMigrationHttp'
 import type { OperationalMigrationBindings } from './migration/operationalMigrationHttp'
+import type { PlatformBillingBindings } from './platformBillingApi'
 
 export type EdgeVariables = {
   requestId: string
@@ -54,5 +55,6 @@ export type EdgeAppEnvironment = {
     & OperationalMigrationBindings
     & EdgeFinalAuthBindings
     & EdgeWhatsappBindings
+    & PlatformBillingBindings
   Variables: EdgeVariables
 }

@@ -70,6 +70,10 @@ export type FinalReadinessBindings={
   EDGE_BETTER_AUTH_ENABLED?:string;AUTH_DB?:D1Database;BETTER_AUTH_SECRET?:string;
   EDGE_OPERATIONAL_MIGRATION_ENABLED?:string;EDGE_AUTH_MIGRATION_ENABLED?:string;
   AUTH_EMAIL_API_KEY?:string;AUTH_EMAIL_FROM?:string;
+  STRIPE_SECRET_KEY?:string;STRIPE_WEBHOOK_SECRET?:string;
+  STRIPE_PRICE_START_MONTHLY?:string;STRIPE_PRICE_START_YEARLY?:string;
+  STRIPE_PRICE_PRO_MONTHLY?:string;STRIPE_PRICE_PRO_YEARLY?:string;
+  STRIPE_PRICE_PRIME_MONTHLY?:string;STRIPE_PRICE_PRIME_YEARLY?:string;
 }
 
 function sqlLiteral(value: string): string {
@@ -139,7 +143,12 @@ export async function handleFinalReadiness(request:Request,bindings:FinalReadine
   return Response.json({
     service:bindings.SERVICE_NAME,environment:bindings.APP_ENV,release_channel:bindings.RELEASE_CHANNEL,request_id:requestId,status:ready?'ready':'not_ready',
     checks:{database:main.status,schema_version:main.version,schema_capabilities:main.capabilities,auth_database:authConfig==='configured'&&authCore==='ready'?'configured':authCore,
-      coordination,better_auth:authEnabled?'enabled':'disabled',migration_capabilities:migrationClosed?'closed':'open',password_recovery:recoveryEmailConfigured(bindings)?'configured':'not_configured'},
+      coordination,better_auth:authEnabled?'enabled':'disabled',migration_capabilities:migrationClosed?'closed':'open',password_recovery:recoveryEmailConfigured(bindings)?'configured':'not_configured',
+        stripe_checkout:bindings.STRIPE_SECRET_KEY&&bindings.STRIPE_WEBHOOK_SECRET
+          &&bindings.STRIPE_PRICE_START_MONTHLY&&bindings.STRIPE_PRICE_START_YEARLY
+          &&bindings.STRIPE_PRICE_PRO_MONTHLY&&bindings.STRIPE_PRICE_PRO_YEARLY
+          &&bindings.STRIPE_PRICE_PRIME_MONTHLY&&bindings.STRIPE_PRICE_PRIME_YEARLY
+          ?'configured':'not_configured'},
     missing_schema_capabilities:main.missingCapabilities,
   },{status:ready?200:503,headers:{'cache-control':'no-store','x-request-id':requestId,'x-content-type-options':'nosniff','referrer-policy':'no-referrer'}})
 }
