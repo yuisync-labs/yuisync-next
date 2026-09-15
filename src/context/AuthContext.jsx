@@ -123,11 +123,17 @@ export function AuthProvider({ children }) {
     writeStoredActiveTenant(tenantId || null)
   }, [])
 
+  const clearTenantSelection = useCallback(() => {
+    activeTenantIdRef.current = null
+    setActiveTenantId(null)
+    setStoreSettings(neutralStoreSettings())
+  }, [])
+
   const loadTenantScope = useCallback(async () => {
     if (!auth.session?.user?.id) {
       setTenants([])
       setManagedTenants([])
-      selectTenant(null)
+      clearTenantSelection()
       setTenantEnabledModules(['petshop'])
       setTenantError('')
       return
@@ -148,14 +154,23 @@ export function AuthProvider({ children }) {
       else writeStoredActiveTenant(next)
     } catch (error) {
       setTenants([])
-      selectTenant(null)
+      clearTenantSelection()
       setTenantError(error instanceof Error ? error.message : 'Nao foi possivel carregar as instancias.')
     } finally {
       setTenantLoading(false)
     }
-  }, [auth.session?.user?.id, auth.refreshAuth, selectTenant])
+  }, [auth.session?.user?.id, auth.refreshAuth, clearTenantSelection, selectTenant])
 
   useEffect(() => {
+    if (!auth.bootstrap) {
+      setTenants([])
+      setManagedTenants([])
+      clearTenantSelection()
+      setTenantEnabledModules(['petshop'])
+      setTenantError('')
+      return
+    }
+
     const bootstrapTenants = Array.isArray(auth.bootstrap?.tenants) ? auth.bootstrap.tenants : []
     setTenants(bootstrapTenants)
     setManagedTenants(Array.isArray(auth.bootstrap?.managed_tenants) ? auth.bootstrap.managed_tenants : [])
@@ -165,7 +180,7 @@ export function AuthProvider({ children }) {
     const tenantName = bootstrapTenants.find((tenant) => tenant.id === next)?.name || ''
     if (next !== activeTenantIdRef.current) selectTenant(next, tenantName)
     else writeStoredActiveTenant(next)
-  }, [auth.bootstrap, selectTenant])
+  }, [auth.bootstrap, clearTenantSelection, selectTenant])
 
   const switchTenant = useCallback(async (tenantId) => {
     const tenant = tenants.find((candidate) => candidate.id === tenantId)
