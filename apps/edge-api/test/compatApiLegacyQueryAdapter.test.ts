@@ -69,6 +69,17 @@ describe('legacy compat query adapter', () => {
     }
   })
 
+  it('maps loyalty expiry filters to the physical D1 column', () => {
+    const body = normalizeBaseCompatQueryBody({
+      table: 'loyalty_points',
+      filters: [{ op: 'gte', column: 'expires_at', value: '2026-12-25' }],
+    })
+
+    expect(body.filters).toEqual([
+      { op: 'gte', column: 'expires_at_ms', value: Date.parse('2026-12-25') },
+    ])
+  })
+
   it('removes implicit tenant and module keys from upsert conflict targets', () => {
     expect(
       normalizeBaseCompatQueryBody({

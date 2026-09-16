@@ -20,7 +20,7 @@ const LOYALTY_CHECKLIST = [
 
 function PointsModal({ clients, onClose, onSave }) {
   const [form, setForm] = useState({
-    client_id: clients[0]?.id || '',
+    pet_id: clients[0]?.id || '',
     points: 20,
     reason: 'bonus',
     expires_at: '',
@@ -32,7 +32,11 @@ function PointsModal({ clients, onClose, onSave }) {
     setSaving(true)
     setError('')
     try {
-      await onSave(form)
+      const selectedPet = clients.find((client) => String(client.id) === String(form.pet_id))
+      await onSave({
+        ...form,
+        client_id: selectedPet?.tutor_group_id || selectedPet?.id || '',
+      })
       onClose()
     } catch (err) {
       setError(err.message)
@@ -52,7 +56,7 @@ function PointsModal({ clients, onClose, onSave }) {
         <div className="modal-body space-y-4">
           <div>
             <label className="inp-label">Pet / Tutor</label>
-            <select className="inp" value={form.client_id} onChange={(event) => setForm((prev) => ({ ...prev, client_id: event.target.value }))}>
+            <select className="inp" value={form.pet_id} onChange={(event) => setForm((prev) => ({ ...prev, pet_id: event.target.value }))}>
               {clients.map((client) => (
                 <option key={client.id} value={client.id}>{client.pet_name || client.owner_name} - {client.owner_name}</option>
               ))}
@@ -154,7 +158,7 @@ export default function FidelidadePage() {
             <Trophy size={22} className="text-amber-400" />
             Fidelidade
           </h1>
-          <p className="page-sub">Pontuacao automatica nas vendas e saldo por pet.</p>
+          <p className="page-sub">Pontuacao automatica nas vendas e saldo por tutor.</p>
         </div>
         <div className="flex gap-2">
           <button onClick={() => reload()} className="btn btn-secondary">
@@ -254,7 +258,7 @@ export default function FidelidadePage() {
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>Pet / Tutor</th>
+                    <th>Tutor</th>
                     <th>Telefone</th>
                     <th>Saldo</th>
                   </tr>
@@ -263,8 +267,7 @@ export default function FidelidadePage() {
                   {balances.map((entry) => (
                     <tr key={entry.client_id}>
                       <td>
-                        <p className="font-semibold text-text">{entry.client.pet_name || entry.client.owner_name}</p>
-                        <p className="text-xs text-muted">{entry.client.owner_name}</p>
+                        <p className="font-semibold text-text">{entry.client.owner_name || 'Tutor não identificado'}</p>
                       </td>
                       <td>{entry.client.phone || '-'}</td>
                       <td className="font-bold text-amber-400">{entry.balance} pts</td>
