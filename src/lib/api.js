@@ -110,6 +110,49 @@ export function createPlatformCheckout({ tenantId, ...payload }) {
   })
 }
 
+export function getCustomerOnboardingStatus(sessionId) {
+  const params = new URLSearchParams({ session_id: sessionId })
+  return apiRequest(`/platform/onboarding/status?${params.toString()}`, { method: 'GET' })
+}
+
+export function requestCustomerOnboardingInvitation(sessionId, { resend = false } = {}) {
+  return apiRequest('/platform/onboarding/invitations', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, resend }),
+  })
+}
+
+export function inspectCustomerOnboardingInvitation(token) {
+  return apiRequest(`/platform/onboarding/invitations/${encodeURIComponent(token)}`, { method: 'GET' })
+}
+
+export function activateCustomerOnboarding(token, password) {
+  return apiRequest('/platform/onboarding/activate', {
+    method: 'POST',
+    body: JSON.stringify({ token, password }),
+  })
+}
+
+export function claimCustomerOnboardingInvitation(token) {
+  return apiRequest('/platform/onboarding/claim', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  })
+}
+
+export function getCustomerFirstRun(tenantId) {
+  const params = new URLSearchParams({ tenant_id: tenantId })
+  return apiRequest(`/app/first-run?${params.toString()}`, { method: 'GET' })
+}
+
+export function patchCustomerFirstRun(tenantId, patch) {
+  const params = new URLSearchParams({ tenant_id: tenantId })
+  return apiRequest(`/app/first-run?${params.toString()}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+}
+
 export function updatePetshopServiceRules(serviceId, { tenantId, moduleId = 'petshop', ...rules }) {
   return apiRequest(`/petshop/services/${encodeURIComponent(serviceId)}/rules`, {
     method: 'PATCH',

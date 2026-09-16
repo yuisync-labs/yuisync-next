@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowLeft, ArrowRight, Eye, EyeOff, Lock, Mail } from 'lucide-react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 
 import { useAuthCtx } from '../../context/AuthContext'
 import YuiSyncMark from '../../public/components/YuiSyncMark'
@@ -9,6 +9,7 @@ import './LoginPage.css'
 export default function LoginPage() {
   const { signIn, signInVisualPreview } = useAuthCtx()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [form, setForm] = useState({ email: '', password: '' })
   const [showPw, setShowPw] = useState(false)
   const [err, setErr] = useState('')
@@ -24,7 +25,9 @@ export default function LoginPage() {
     try {
       const { error } = await signIn(form.email, form.password)
       if (error) throw error
-      navigate('/', { replace: true })
+      const requested = searchParams.get('next') || ''
+      const next = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/'
+      navigate(next, { replace: true })
     } catch (error) {
       setErr(error.message || 'Erro ao autenticar')
     } finally {
