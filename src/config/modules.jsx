@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Calendar, ShoppingCart, Package,
   PawPrint, MessageSquare, Users, Settings, TrendingUp,
   FileText, CreditCard, Shield, Trophy, Megaphone,
-  Wallet, ClipboardList, Webhook,
+  Wallet, ClipboardList, Webhook, Rocket,
 } from 'lucide-react'
 import { DashboardServiceKpiEnhancer } from '../modules/petshop/components/DashboardServiceKpiEnhancer'
 import { ClientHistoryGroomingEnhancer } from '../modules/petshop/components/ClientHistoryGroomingEnhancer'
@@ -30,6 +30,7 @@ const BillingPage = lazy(() => import('../shared/pages/BillingPage'))
 const LogsPage = lazy(() => import('../shared/pages/LogsPage'))
 const SupportHubPage = lazy(() => import('../shared/pages/SupportHubPage'))
 const AssistedOnboardingPage = lazy(() => import('../shared/pages/AssistedOnboardingPage'))
+const CustomerFirstRunPage = lazy(() => import('../modules/petshop/pages/CustomerFirstRunPage'))
 
 function DashboardWithServiceKpis(props) {
   return (
@@ -136,6 +137,7 @@ export const MODULES = {
       {
         title: 'Administracao',
         items: [
+          { id: 'primeiros-passos', label: 'Primeiros passos', icon: Rocket, roles: ['admin_pet'] },
           { id: 'usuarios', label: 'Usuarios & Cargos', icon: Users, roles: ['admin_pet'] },
           { id: 'equipe', label: 'Equipe & Comissoes', icon: Users, roles: ['admin_pet'] },
           { id: 'meta-whatsapp', label: 'Meta / WhatsApp', icon: Webhook, roles: ['admin_pet'] },
@@ -166,6 +168,7 @@ export const MODULES = {
       'meta-whatsapp': MetaWhatsappPage,
       config: SettingsPage,
       logs: LogsPage,
+      'primeiros-passos': CustomerFirstRunPage,
     },
   },
 

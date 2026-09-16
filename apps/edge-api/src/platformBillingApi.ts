@@ -1,4 +1,5 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import { sendCustomerOnboardingInviteForOrder } from './customerOnboardingApi'
 import { isPlatformAdmin } from './platformAuthorization'
 
 export type PlatformBillingBindings = BetterAuthRuntimeBindings & {
@@ -219,7 +220,7 @@ async function createCheckout(
     'line_items[0][quantity]': '1',
     customer_email: customerEmail,
     client_reference_id: orderId,
-    success_url: `${origin}/vendas/contratar?plano=${planId}&ciclo=${billingCycle}&status=sucesso&sessao={CHECKOUT_SESSION_ID}`,
+    success_url: `${origin}/boas-vindas?session={CHECKOUT_SESSION_ID}`,
     cancel_url: `${origin}/vendas/contratar?plano=${planId}&ciclo=${billingCycle}&status=cancelado`,
     allow_promotion_codes: 'true',
     billing_address_collection: 'required',
@@ -399,8 +400,17 @@ async function webhook(request: Request, bindings: PlatformBillingBindings): Pro
     const payload = object(object(event.data).object)
     if (eventType === 'checkout.session.completed' || eventType === 'checkout.session.async_payment_succeeded' || eventType === 'checkout.session.expired') {
       await processCheckoutEvent(bindings.DB, eventType, payload)
+      if (eventType !== 'checkout.session.expired') {
+        const metadata = object(payload.metadata)
+        const orderId = optionalString(payload.client_reference_id || metadata.order_id, 255)
+        if (orderId) await sendCustomerOnboardingInviteForOrder(bindings, orderId, new URL(request.url).origin)
+      }
     } else if (eventType === 'customer.subscription.created' || eventType === 'customer.subscription.updated' || eventType === 'customer.subscription.deleted') {
       await processSubscriptionEvent(bindings.DB, eventType, payload)
+      if (eventType !== 'customer.subscription.deleted') {
+        const orderId = optionalString(object(payload.metadata).order_id, 255)
+        if (orderId) await sendCustomerOnboardingInviteForOrder(bindings, orderId, new URL(request.url).origin)
+      }
     } else if (eventType === 'invoice.paid' || eventType === 'invoice.payment_failed') {
       await processInvoiceEvent(bindings.DB, eventType, payload)
     }

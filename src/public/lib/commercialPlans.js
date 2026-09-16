@@ -18,7 +18,7 @@ export const COMMERCIAL_PLANS = Object.freeze([
       'Agenda, clientes e pets',
       'PDV, estoque e caixa',
       'Relatórios operacionais',
-      'Suporte de implantação',
+      'Sessão individual de implantação (até 60 min)',
     ]),
   }),
   Object.freeze({
