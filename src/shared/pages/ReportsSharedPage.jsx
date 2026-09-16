@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  AreaChart, Area
+  AreaChart, Area, Legend
 } from 'recharts'
 import { 
   TrendingUp, Users, Target, Activity, 
@@ -13,7 +13,7 @@ import { fmtCurrency } from '../../lib/supabase'
 
 export default function ReportsSharedPage() {
   const { activeModule, activeModuleId } = useModuleCtx()
-  const { getOverviewMetrics, getDynamicRevenueChart, getAtRiskCustomers, getCustomerCount, loading } = useAnalytics()
+  const { getOverviewMetrics, getDynamicRevenueChart, getCustomerInsights, loading } = useAnalytics()
   const isPetshop = activeModuleId === 'petshop'
   const chartAccent = isPetshop ? '#059669' : '#10b981'
   const chartGrid = isPetshop ? 'rgba(15,23,42,0.08)' : 'rgba(255,255,255,0.05)'
@@ -28,19 +28,18 @@ export default function ReportsSharedPage() {
 
   useEffect(() => {
     async function load() {
-      const [ov, ch, risk, count] = await Promise.all([
+      const [ov, ch, customers] = await Promise.all([
         getOverviewMetrics(),
         getDynamicRevenueChart(range),
-        getAtRiskCustomers(),
-        getCustomerCount()
+        getCustomerInsights(),
       ])
       setOverview(ov)
       setChartData(ch || [])
-      setAtRisk(risk || [])
-      setTotalCount(count)
+      setAtRisk(customers?.atRisk || [])
+      setTotalCount(customers?.activeCount || 0)
     }
     load()
-  }, [getOverviewMetrics, getDynamicRevenueChart, getAtRiskCustomers, range])
+  }, [getOverviewMetrics, getDynamicRevenueChart, getCustomerInsights, range])
 
   if (loading && !overview) {
     return (
@@ -70,31 +69,27 @@ export default function ReportsSharedPage() {
       {/* Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard 
-          label="Faturamento Total" 
-          val={fmtCurrency(overview?.totalRevenue || 0)} 
-          sub={
-            overview?.growth === null 
-              ? "Mês inaugural" 
-              : `${overview?.growth >= 0 ? '+' : ''}${overview?.growth}% vs mês anterior`
-          } 
+          label="Faturamento no mês"
+          val={fmtCurrency(overview?.current?.revenue || 0)}
+          sub={comparisonText(overview?.changes?.revenue, overview?.current?.revenue)}
           icon={TrendingUp} col="emerald" 
         />
         <StatCard 
-          label="Ticket Médio" 
-          val={fmtCurrency(overview?.avgTicket || 0)} 
-          sub="Por transação" 
+          label="Ticket médio no mês"
+          val={fmtCurrency(overview?.current?.avgTicket || 0)}
+          sub={comparisonText(overview?.changes?.avgTicket, overview?.current?.avgTicket)}
           icon={Target} col="blue" 
         />
         <StatCard 
-          label="Total de Vendas" 
-          val={overview?.salesCount || 0} 
-          sub="Pedidos concluídos" 
+          label="Vendas no mês"
+          val={overview?.current?.count || 0}
+          sub={comparisonText(overview?.changes?.count, overview?.current?.count)}
           icon={Activity} col="purple" 
         />
         <StatCard 
-          label="Clientes Ativos" 
-          val={totalCount} 
-          sub="Na base de dados" 
+          label="Tutores compradores"
+          val={overview?.current?.customerCount || 0}
+          sub={`${comparisonText(overview?.changes?.customerCount, overview?.current?.customerCount)} • ${totalCount} na base`}
           icon={Users} col="amber" 
         />
       </div>
@@ -104,8 +99,8 @@ export default function ReportsSharedPage() {
         <div className="lg:col-span-2 bg-surface border border-[var(--border2)] rounded-3xl p-6 shadow-card overflow-hidden">
           <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
             <div>
-              <h2 className="font-display font-bold text-lg text-text">Projeção de Faturamento</h2>
-              <p className="text-[10px] text-muted uppercase font-black tracking-widest mt-1">Valores em Reais (R$)</p>
+              <h2 className="font-display font-bold text-lg text-text">Evolução do faturamento</h2>
+              <p className="text-[10px] text-muted uppercase font-black tracking-widest mt-1">Período atual x período anterior • valores em R$</p>
             </div>
             <div className={`flex items-center p-1.5 rounded-xl border backdrop-blur-md ${
               isPetshop ? 'bg-slate-100 border-slate-200' : 'bg-white/[0.04] border-white/10'
@@ -151,6 +146,7 @@ export default function ReportsSharedPage() {
                    tickFormatter={(val) => `R$${val}`}
                 />
                 <Tooltip 
+                  formatter={(value, name) => [fmtCurrency(value), name]}
                   contentStyle={isPetshop
                     ? { backgroundColor: '#FFFFFF', border: '1px solid #CBD5E1', borderRadius: '12px', color: '#0F172A', fontSize: '12px' }
                     : { backgroundColor: 'rgb(30 41 59)', border: 'none', borderRadius: '12px', color: '#fff', fontSize: '12px' }
@@ -158,13 +154,24 @@ export default function ReportsSharedPage() {
                   itemStyle={{ color: isPetshop ? '#0F172A' : '#fff' }}
                   cursor={{stroke: chartCursor, strokeWidth: 2}}
                 />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
                 <Area 
                   type="monotone" 
-                  dataKey="total" 
+                  dataKey="current"
+                  name="Período atual"
                   stroke={chartAccent} 
                   strokeWidth={3}
                   fillOpacity={1} 
                   fill="url(#colorTotal)" 
+                />
+                <Area
+                  type="monotone"
+                  dataKey="previous"
+                  name="Período anterior"
+                  stroke="#94a3b8"
+                  strokeWidth={2}
+                  strokeDasharray="6 5"
+                  fill="transparent"
                 />
               </AreaChart>
             </ResponsiveContainer>
@@ -221,6 +228,14 @@ export default function ReportsSharedPage() {
       </div>
     </div>
   )
+}
+
+function comparisonText(change, currentValue) {
+  if (change === null || change === undefined) {
+    return Number(currentValue || 0) > 0 ? 'Novo no período comparado' : 'Sem movimento nos dois períodos'
+  }
+  const normalized = Math.abs(change) < 0.05 ? 0 : change
+  return `${normalized > 0 ? '+' : ''}${normalized.toFixed(1)}% vs período anterior`
 }
 
 function StatCard({ label, val, sub, icon: Icon, col }) {

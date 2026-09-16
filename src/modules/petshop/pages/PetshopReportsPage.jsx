@@ -39,6 +39,51 @@ const monthRange = () => {
   }
 }
 
+const previousRange = ({ startDate, endDate }) => {
+  const start = new Date(`${startDate}T12:00:00`)
+  const end = new Date(`${endDate}T12:00:00`)
+  const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1)
+  const previousEnd = new Date(start)
+  previousEnd.setDate(previousEnd.getDate() - 1)
+  const previousStart = new Date(previousEnd)
+  previousStart.setDate(previousStart.getDate() - (days - 1))
+  return {
+    startDate: previousStart.toISOString().slice(0, 10),
+    endDate: previousEnd.toISOString().slice(0, 10),
+  }
+}
+
+const emptyTotals = () => ({
+  serviceCount: 0,
+  bathCount: 0,
+  groomingCount: 0,
+  packageCount: 0,
+  otherCount: 0,
+  revenue: 0,
+  packageRevenue: 0,
+  commission: 0,
+})
+
+const summarizeRows = (rows = []) => rows.reduce((summary, row) => ({
+  serviceCount: summary.serviceCount + Number(row.service_count || 0),
+  bathCount: summary.bathCount + Number(row.bath_count || 0),
+  groomingCount: summary.groomingCount + Number(row.grooming_count || 0),
+  packageCount: summary.packageCount + Number(row.package_count || 0),
+  otherCount: summary.otherCount + Number(row.other_service_count || 0),
+  revenue: summary.revenue + Number(row.service_revenue || 0),
+  packageRevenue: summary.packageRevenue + Number(row.package_revenue || 0),
+  commission: summary.commission + Number(row.total_commission || 0),
+}), emptyTotals())
+
+function comparisonText(currentValue, previousValue) {
+  const current = Number(currentValue || 0)
+  const previous = Number(previousValue || 0)
+  if (previous === 0) return current > 0 ? 'Novo vs período anterior' : 'Sem movimento nos dois períodos'
+  const change = ((current - previous) / Math.abs(previous)) * 100
+  const normalized = Math.abs(change) < 0.05 ? 0 : change
+  return `${normalized > 0 ? '+' : ''}${normalized.toFixed(1)}% vs período anterior`
+}
+
 const tooltipStyle = {
   backgroundColor: '#0f172a',
   border: '1px solid rgba(148,163,184,.25)',
@@ -75,6 +120,7 @@ function PetshopServiceReportsPanel() {
   const moduleId = activeModuleId || 'petshop'
   const [range, setRange] = useState(monthRange)
   const [history, setHistory] = useState([])
+  const [previousHistory, setPreviousHistory] = useState([])
   const [services, setServices] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -88,19 +134,31 @@ function PetshopServiceReportsPanel() {
     setLoading(true)
     setError('')
     try {
-      const [snapshot, catalogServices] = await Promise.all([
+      const comparisonRange = previousRange(nextRange)
+      const [snapshot, previousSnapshot, catalogServices] = await Promise.all([
         loadTeamSnapshot(nextRange),
+        loadTeamSnapshot(comparisonRange),
         loadPetshopServices(),
       ])
-      const enriched = await enrichPackageCommissionAppointments({
-        appointments: snapshot.serviceHistory || [],
-        moduleId,
-        tenantId: activeTenantId,
-        settings: storeSettings,
-        catalogServices,
-      })
+      const [enriched, previousEnriched] = await Promise.all([
+        enrichPackageCommissionAppointments({
+          appointments: snapshot.serviceHistory || [],
+          moduleId,
+          tenantId: activeTenantId,
+          settings: storeSettings,
+          catalogServices,
+        }),
+        enrichPackageCommissionAppointments({
+          appointments: previousSnapshot.serviceHistory || [],
+          moduleId,
+          tenantId: activeTenantId,
+          settings: storeSettings,
+          catalogServices,
+        }),
+      ])
       setServices(catalogServices || [])
       setHistory(enriched)
+      setPreviousHistory(previousEnriched)
     } catch (loadError) {
       setError(loadError?.message || 'Nao foi possivel carregar os relatorios de servicos.')
     } finally {
@@ -120,26 +178,18 @@ function PetshopServiceReportsPanel() {
     () => buildCommissionRows(hydratedHistory, configuredStaff),
     [configuredStaff, hydratedHistory],
   )
-  const totals = useMemo(() => rows.reduce((summary, row) => ({
-    serviceCount: summary.serviceCount + Number(row.service_count || 0),
-    bathCount: summary.bathCount + Number(row.bath_count || 0),
-    groomingCount: summary.groomingCount + Number(row.grooming_count || 0),
-    packageCount: summary.packageCount + Number(row.package_count || 0),
-    otherCount: summary.otherCount + Number(row.other_service_count || 0),
-    revenue: summary.revenue + Number(row.service_revenue || 0),
-    packageRevenue: summary.packageRevenue + Number(row.package_revenue || 0),
-    commission: summary.commission + Number(row.total_commission || 0),
-  }), {
-    serviceCount: 0,
-    bathCount: 0,
-    groomingCount: 0,
-    packageCount: 0,
-    otherCount: 0,
-    revenue: 0,
-    packageRevenue: 0,
-    commission: 0,
-  }), [rows])
+  const previousHydratedHistory = useMemo(
+    () => hydrateLegacyCommissionAppointments(previousHistory, services),
+    [previousHistory, services],
+  )
+  const previousRows = useMemo(
+    () => buildCommissionRows(previousHydratedHistory, configuredStaff),
+    [configuredStaff, previousHydratedHistory],
+  )
+  const totals = useMemo(() => summarizeRows(rows), [rows])
+  const previousTotals = useMemo(() => summarizeRows(previousRows), [previousRows])
   const afterCommission = Math.max(0, totals.revenue - totals.commission)
+  const previousAfterCommission = Math.max(0, previousTotals.revenue - previousTotals.commission)
   const commissionPercent = totals.revenue > 0 ? totals.commission / totals.revenue * 100 : 0
 
   const categoryData = useMemo(() => [
@@ -192,11 +242,11 @@ function PetshopServiceReportsPanel() {
       {error && <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</p>}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <MetricCard label="Servicos" value={totals.serviceCount} detail="Concluidos no periodo" icon={TrendingUp}/>
-        <MetricCard label="Banhos avulsos" value={totals.bathCount} detail="Sem beneficios de pacote" icon={Droplets} tone="blue"/>
-        <MetricCard label="Pacotes executados" value={totals.packageCount} detail={fmtCurrency(totals.packageRevenue)} icon={PackageCheck} tone="amber"/>
-        <MetricCard label="Comissoes" value={fmtCurrency(totals.commission)} detail={`${commissionPercent.toFixed(1)}% da receita`} icon={WalletCards} tone="violet"/>
-        <MetricCard label="Apos comissao" value={fmtCurrency(afterCommission)} detail={`Receita ${fmtCurrency(totals.revenue)}`} icon={Scissors}/>
+        <MetricCard label="Serviços" value={totals.serviceCount} detail={comparisonText(totals.serviceCount, previousTotals.serviceCount)} icon={TrendingUp}/>
+        <MetricCard label="Banhos avulsos" value={totals.bathCount} detail={comparisonText(totals.bathCount, previousTotals.bathCount)} icon={Droplets} tone="blue"/>
+        <MetricCard label="Pacotes executados" value={totals.packageCount} detail={`${fmtCurrency(totals.packageRevenue)} • ${comparisonText(totals.packageCount, previousTotals.packageCount)}`} icon={PackageCheck} tone="amber"/>
+        <MetricCard label="Comissões" value={fmtCurrency(totals.commission)} detail={`${commissionPercent.toFixed(1)}% da receita • ${comparisonText(totals.commission, previousTotals.commission)}`} icon={WalletCards} tone="violet"/>
+        <MetricCard label="Após comissão" value={fmtCurrency(afterCommission)} detail={`${comparisonText(afterCommission, previousAfterCommission)} • Receita ${fmtCurrency(totals.revenue)}`} icon={Scissors}/>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">

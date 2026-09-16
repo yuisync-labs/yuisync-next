@@ -21,6 +21,7 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -107,6 +108,14 @@ function StatCard({ label, value, sub, icon: Icon, tone = 'text-emerald-400' }) 
   )
 }
 
+function comparisonText(change, currentValue) {
+  if (change === null || change === undefined) {
+    return Number(currentValue || 0) > 0 ? 'Novo vs período anterior' : 'Sem movimento nos dois períodos'
+  }
+  const normalized = Math.abs(change) < 0.05 ? 0 : change
+  return `${normalized > 0 ? '+' : ''}${normalized.toFixed(1)}% vs período anterior`
+}
+
 function ExplainerPanel({ title, items, tone = 'emerald' }) {
   return (
     <div className={`rounded-2xl border px-5 py-5 ${tone === 'amber' ? 'border-amber-500/20 bg-amber-500/10' : 'border-emerald-500/20 bg-emerald-500/10'}`}>
@@ -169,6 +178,12 @@ export default function GrowthPage() {
     noShows: 0,
     bookings: 0,
     bookingsScheduled: 0,
+    reportCardsSent: 0,
+  })
+  const [changes, setChanges] = useState({
+    totalRevenue: 0,
+    newLeads: 0,
+    noShows: 0,
     reportCardsSent: 0,
   })
 
@@ -272,6 +287,7 @@ export default function GrowthPage() {
       setPortalAccess(portalRows)
       setTimeline(execData.timeline)
       setSummary(execData.summary)
+      setChanges(execData.changes)
     } catch (err) {
       setError(err.message || 'Falha ao carregar o painel de crescimento.')
     } finally {
@@ -554,6 +570,7 @@ export default function GrowthPage() {
       const exec = await loadExecutiveTimeline({ days: nextRange })
       setTimeline(exec.timeline)
       setSummary(exec.summary)
+      setChanges(exec.changes)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -611,10 +628,10 @@ export default function GrowthPage() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard label="Receita no periodo" value={fmtCurrency(summary.totalRevenue)} icon={BarChart3} tone="text-emerald-400" />
-        <StatCard label="Leads novos" value={summary.newLeads} sub={`${summary.wonLeads} fechados`} icon={Target} tone="text-sky-400" />
-        <StatCard label="No-show registrados" value={summary.noShows} icon={AlertTriangle} tone="text-amber-400" />
-        <StatCard label="Report cards enviados" value={summary.reportCardsSent} icon={ClipboardCheck} tone="text-violet-400" />
+        <StatCard label="Receita no período" value={fmtCurrency(summary.totalRevenue)} sub={comparisonText(changes.totalRevenue, summary.totalRevenue)} icon={BarChart3} tone="text-emerald-400" />
+        <StatCard label="Leads novos" value={summary.newLeads} sub={`${summary.wonLeads} fechados • ${comparisonText(changes.newLeads, summary.newLeads)}`} icon={Target} tone="text-sky-400" />
+        <StatCard label="No-shows registrados" value={summary.noShows} sub={comparisonText(changes.noShows, summary.noShows)} icon={AlertTriangle} tone="text-amber-400" />
+        <StatCard label="Report cards enviados" value={summary.reportCardsSent} sub={comparisonText(changes.reportCardsSent, summary.reportCardsSent)} icon={ClipboardCheck} tone="text-violet-400" />
       </div>
 
       <div className="bg-card border border-[var(--border)] rounded-2xl p-5 space-y-4">
@@ -651,13 +668,25 @@ export default function GrowthPage() {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border2)" />
               <XAxis dataKey="name" tick={{ fill: 'var(--muted)', fontSize: 11 }} />
-              <YAxis tick={{ fill: 'var(--muted)', fontSize: 11 }} />
+              <YAxis
+                yAxisId="revenue"
+                tick={{ fill: 'var(--muted)', fontSize: 11 }}
+                tickFormatter={(value) => `R$ ${Number(value).toLocaleString('pt-BR', { notation: 'compact' })}`}
+              />
+              <YAxis
+                yAxisId="volume"
+                orientation="right"
+                allowDecimals={false}
+                tick={{ fill: 'var(--muted)', fontSize: 11 }}
+              />
               <Tooltip
+                formatter={(value, name) => [name === 'Receita' ? fmtCurrency(value) : value, name]}
                 contentStyle={{ borderRadius: 12, border: '1px solid var(--border)', background: 'var(--card)' }}
                 labelStyle={{ color: 'var(--text)' }}
               />
-              <Area type="monotone" dataKey="receita" stroke="#059669" fill="url(#growthRevenue)" strokeWidth={2.4} />
-              <Area type="monotone" dataKey="leads" stroke="#0ea5e9" fill="url(#growthLeads)" strokeWidth={2} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Area yAxisId="revenue" type="monotone" dataKey="receita" name="Receita" stroke="#059669" fill="url(#growthRevenue)" strokeWidth={2.4} />
+              <Area yAxisId="volume" type="monotone" dataKey="leads" name="Leads" stroke="#0ea5e9" fill="url(#growthLeads)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
