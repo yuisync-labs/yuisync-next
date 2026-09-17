@@ -1,6 +1,19 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import { GroqProvider } from './luna/providers/groqProvider'
+import { runLunaTurn } from './luna/runLunaTurn'
+import type { LunaExecutionContext } from './luna/contracts'
 
-type AiLabBindings = BetterAuthRuntimeBindings & { DB?: D1Database; OPENAI_API_KEY?: string }
+type AiLabBindings = BetterAuthRuntimeBindings & {
+  DB?: D1Database
+  OPENAI_API_KEY?: string
+  GROQ_API_KEY?: string
+  LUNA_PROVIDER?: string
+  LUNA_MODEL?: string
+  LUNA_PLAYGROUND_ENABLED?: string
+  LUNA_MAX_MODEL_CALLS_PER_TURN?: string
+  LUNA_MAX_TOOL_CALLS_PER_TURN?: string
+  LUNA_MAX_TOKENS_PER_TURN?: string
+}
 type CompanyRow = {
   id: string; tenant_id: string; module_id: string; niche_id: string; name: string; system_prompt: string;
   bot_name: string; temperature_milli: number; model_name: string;
@@ -17,6 +30,10 @@ function id(value: unknown): string | null {
 function moduleId(value: unknown): string | null {
   const normalized = String(value ?? '').trim().toLowerCase()
   return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalized) ? normalized : null
+}
+function positive(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
 }
 
 async function resolveScope(request: Request, bindings: AiLabBindings): Promise<{ scope?: Scope; error?: Response }> {
@@ -105,8 +122,88 @@ async function playground(request: Request, bindings: AiLabBindings): Promise<Re
   }
 }
 
+async function lunaPlayground(request: Request, bindings: AiLabBindings): Promise<Response> {
+  const resolved = await resolveScope(request, bindings)
+  if (!resolved.scope) return resolved.error || json({ code: 'FORBIDDEN' }, 403)
+  if (resolved.scope.moduleId !== 'petshop') return json({ code: 'LUNA_MODULE_NOT_SUPPORTED' }, 400)
+  if (bindings.LUNA_PLAYGROUND_ENABLED !== 'true') return json({ code: 'LUNA_PLAYGROUND_DISABLED' }, 404)
+  if (bindings.LUNA_PROVIDER !== 'groq' || !bindings.GROQ_API_KEY || !bindings.LUNA_MODEL) {
+    return json({ code: 'LUNA_PROVIDER_NOT_CONFIGURED' }, 503)
+  }
+  let body: { company_id?: unknown; customer_phone?: unknown; message?: unknown }
+  try { body = await request.json() as typeof body } catch { return json({ code: 'INVALID_JSON' }, 400) }
+  const companyId = id(body.company_id)
+  const message = String(body.message ?? '').trim()
+  const phone = String(body.customer_phone ?? '').replace(/\D/g, '').slice(0, 20)
+  if (!companyId || phone.length < 8 || !message || message.length > 4000) return json({ code: 'INVALID_PLAYGROUND_REQUEST' }, 400)
+  const company = await bindings.DB!.prepare(`
+    SELECT id FROM ai_companies WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1
+  `).bind(resolved.scope.tenantId, resolved.scope.moduleId, companyId).first<{ id: string }>()
+  if (!company) return json({ code: 'COMPANY_NOT_FOUND' }, 404)
+
+  const conversationId = `luna-playground:${resolved.scope.principalId}:${phone}`
+  const sourceMessageId = `luna-playground:${crypto.randomUUID()}`
+  const traceId = crypto.randomUUID()
+  const now = Date.now()
+  await bindings.DB!.batch([
+    bindings.DB!.prepare(`
+      INSERT INTO chat_threads(tenant_id,module_id,id,channel,external_thread_id,status,last_message_at_ms,created_at_ms,updated_at_ms)
+      VALUES(?1,?2,?3,'internal',?3,'open',?4,?4,?4)
+      ON CONFLICT(tenant_id,module_id,id) DO UPDATE SET status='open',last_message_at_ms=excluded.last_message_at_ms,updated_at_ms=excluded.updated_at_ms
+    `).bind(resolved.scope.tenantId, resolved.scope.moduleId, conversationId, now),
+    bindings.DB!.prepare(`
+      INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms)
+      VALUES(?1,?2,?3,?4,?5,'inbound','customer',?6,?7)
+    `).bind(resolved.scope.tenantId, resolved.scope.moduleId, crypto.randomUUID(), conversationId, sourceMessageId, message, now),
+  ])
+  const context: LunaExecutionContext = {
+    tenantId: resolved.scope.tenantId,
+    moduleId: 'petshop',
+    conversationId,
+    sourceMessageId,
+    customerAddress: phone,
+    phoneNumberId: 'luna-playground',
+    traceId,
+    executionMode: 'staging',
+  }
+  const provider = new GroqProvider({ apiKey: bindings.GROQ_API_KEY, model: bindings.LUNA_MODEL })
+  const result = await runLunaTurn({
+    database: bindings.DB!, provider,
+    context,
+    maxModelCalls: positive(bindings.LUNA_MAX_MODEL_CALLS_PER_TURN, 6),
+    maxToolCalls: positive(bindings.LUNA_MAX_TOOL_CALLS_PER_TURN, 10),
+    maxTokens: positive(bindings.LUNA_MAX_TOKENS_PER_TURN, 12_000),
+  })
+  if (result.reply) {
+    await bindings.DB!.prepare(`
+      INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,content_json,created_at_ms)
+      VALUES(?1,?2,?3,?4,'outbound','assistant',?5,?6,?7)
+    `).bind(resolved.scope.tenantId, resolved.scope.moduleId, crypto.randomUUID(), conversationId, result.reply, JSON.stringify({ trace_id: traceId, playground: true }), Date.now()).run()
+  }
+  const runId = crypto.randomUUID()
+  await bindings.DB!.prepare(`
+    INSERT INTO ai_playground_runs(tenant_id,module_id,id,company_id,created_by,customer_phone,input_message,parsed_intent_json,action,reply,raw_response_json,created_at_ms)
+    VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
+  `).bind(
+    resolved.scope.tenantId, resolved.scope.moduleId, runId, companyId, resolved.scope.principalId,
+    phone, message, JSON.stringify({ proposal_ids: result.proposalIds, operation_ids: result.committedOperationIds }),
+    result.status, result.reply || '', JSON.stringify({ trace_id: traceId, usage: result.usage, model: provider.model }), now,
+  ).run()
+  return json({ data: {
+    id: runId,
+    action: result.status,
+    reply: result.reply,
+    proposal_ids: result.proposalIds,
+    operation_ids: result.committedOperationIds,
+    usage: result.usage,
+    trace_id: traceId,
+    created_at: new Date(now).toISOString(),
+  } }, result.status === 'failed' || result.status === 'quota_paused' ? 503 : 200)
+}
+
 export async function handleAiLabApiRequest(request: Request, bindings: AiLabBindings): Promise<Response | null> {
   const pathname = new URL(request.url).pathname
+  if (pathname === '/api/ai-lab/luna/playground' && request.method === 'POST') return lunaPlayground(request, bindings)
   if (pathname === '/api/ai-lab/playground' && request.method === 'POST') return playground(request, bindings)
   if (pathname.startsWith('/api/ai-lab/')) return json({ code: 'NOT_FOUND' }, 404)
   return null

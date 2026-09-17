@@ -79,6 +79,15 @@ export {
 } from './asyncCanary'
 
 export {
+  LUNA_MESSAGE_RECEIVED_EVENT_NAME_V1,
+  LunaMessageReceivedEventV1Schema,
+  LunaMessageReceivedPayloadV1Schema,
+  parseLunaMessageReceivedEventV1,
+  type LunaMessageReceivedEventV1,
+  type LunaMessageReceivedPayloadV1,
+} from './luna'
+
+export {
   IncomingWhatsAppMessageV1Schema,
   WhatsAppAccountConnectionV1Schema,
   WhatsAppConnectionStatusV1Schema,

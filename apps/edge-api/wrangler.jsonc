@@ -36,6 +36,13 @@
     "EDGE_BETTER_AUTH_ENABLED": "false",
     "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
     "EDGE_AUTH_MIGRATION_ENABLED": "false"
+    ,"LUNA_ENABLED": "false"
+    ,"LUNA_PROVIDER": "groq"
+    ,"LUNA_MODEL": "openai/gpt-oss-20b"
+    ,"LUNA_PLAYGROUND_ENABLED": "false"
+    ,"LUNA_MAX_MODEL_CALLS_PER_TURN": "6"
+    ,"LUNA_MAX_TOOL_CALLS_PER_TURN": "10"
+    ,"LUNA_MAX_TOKENS_PER_TURN": "12000"
   },
   "env": {
     "local": {
@@ -50,6 +57,10 @@
         "EDGE_BETTER_AUTH_ENABLED": "false",
         "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
         "EDGE_AUTH_MIGRATION_ENABLED": "false"
+        ,"LUNA_ENABLED": "false"
+        ,"LUNA_PROVIDER": "groq"
+        ,"LUNA_MODEL": "openai/gpt-oss-20b"
+        ,"LUNA_PLAYGROUND_ENABLED": "false"
       }
     },
     "test": {
@@ -64,6 +75,10 @@
         "EDGE_BETTER_AUTH_ENABLED": "false",
         "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
         "EDGE_AUTH_MIGRATION_ENABLED": "false"
+        ,"LUNA_ENABLED": "false"
+        ,"LUNA_PROVIDER": "groq"
+        ,"LUNA_MODEL": "openai/gpt-oss-20b"
+        ,"LUNA_PLAYGROUND_ENABLED": "false"
       }
     },
     "staging": {
@@ -78,6 +93,13 @@
         "EDGE_BETTER_AUTH_ENABLED": "true",
         "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
         "EDGE_AUTH_MIGRATION_ENABLED": "false"
+        ,"LUNA_ENABLED": "false"
+        ,"LUNA_PROVIDER": "groq"
+        ,"LUNA_MODEL": "openai/gpt-oss-20b"
+        ,"LUNA_PLAYGROUND_ENABLED": "true"
+        ,"LUNA_MAX_MODEL_CALLS_PER_TURN": "6"
+        ,"LUNA_MAX_TOOL_CALLS_PER_TURN": "10"
+        ,"LUNA_MAX_TOKENS_PER_TURN": "12000"
       },
       "d1_databases": [
         {
@@ -119,11 +141,19 @@
           {
             "name": "COORDINATOR",
             "class_name": "CoordinationDurableObject"
+          },
+          {
+            "name": "LUNA_AGENT",
+            "class_name": "LunaConversationDurableObject"
           }
         ]
       },
       "exports": {
         "CoordinationDurableObject": {
+          "type": "durable-object",
+          "storage": "sqlite"
+        },
+        "LunaConversationDurableObject": {
           "type": "durable-object",
           "storage": "sqlite"
         }

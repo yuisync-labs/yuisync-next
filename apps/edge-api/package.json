@@ -17,7 +17,7 @@
     "bcryptjs": "3.0.3",
     "better-auth": "1.6.25",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.13.0"
+    "hono": "^4.13.8"
   },
   "engines": {
     "node": "22.x"
@@ -25,7 +25,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10",
-    "wrangler": "^4.130.0"
+    "vitest": "^4.1.11",
+    "wrangler": "^4.134.0"
   }
 }

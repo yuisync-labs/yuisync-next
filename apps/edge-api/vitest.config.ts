@@ -28,5 +28,9 @@ export default defineConfig({
     include: ['test/**/*.test.ts'],
     setupFiles: ['./test/applyD1Migrations.ts'],
     clearMocks: true,
+    // Workerd/D1 setup is shared across many integration files. Under full-suite
+    // parallel load a healthy operation can exceed Vitest's 5 s default even
+    // though the same assertion completes in about 1 s in isolation.
+    testTimeout: 20_000,
   },
 })

@@ -38,25 +38,25 @@
     {
       "package": "sharp",
       "advisories_only": [1193725],
-      "review_by": "2026-09-16",
-      "reason": "Development-only dependency pinned by the latest Cloudflare miniflare toolchain; remove as soon as Cloudflare publishes sharp 0.35.4 or newer."
+      "review_by": "2026-09-24",
+      "reason": "Development-only dependency still pinned by the latest Cloudflare vitest pool 0.22.0; rechecked on 2026-09-17 and remove as soon as the pool publishes a fixed Miniflare."
     },
     {
       "package": "miniflare",
       "via_only": ["sharp"],
-      "review_by": "2026-09-16",
+      "review_by": "2026-09-24",
       "reason": "Development-only transitive exposure through the exact time-boxed sharp advisory."
     },
     {
       "package": "wrangler",
       "via_only": ["miniflare"],
-      "review_by": "2026-09-16",
+      "review_by": "2026-09-24",
       "reason": "Development-only transitive exposure through the exact time-boxed miniflare chain."
     },
     {
       "package": "@cloudflare/vitest-pool-workers",
       "via_only": ["miniflare", "wrangler"],
-      "review_by": "2026-09-16",
+      "review_by": "2026-09-24",
       "reason": "Development-only transitive exposure through the exact time-boxed Cloudflare toolchain chain."
     }
   ]

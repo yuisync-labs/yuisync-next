@@ -3,9 +3,12 @@ import {
   parseAsyncCanaryEventV1,
   parseDomainEventEnvelopeV1,
   type AsyncCanaryEventV1,
+  LUNA_MESSAGE_RECEIVED_EVENT_NAME_V1,
+  parseLunaMessageReceivedEventV1,
+  type LunaMessageReceivedEventV1,
 } from '../../../shared/contracts/v1/index'
 
-export type SupportedAsyncEventV1 = AsyncCanaryEventV1
+export type SupportedAsyncEventV1 = AsyncCanaryEventV1 | LunaMessageReceivedEventV1
 export type AsyncEventRoutingErrorCode = 'ASYNC_EVENT_UNSUPPORTED'
 
 export class AsyncEventRoutingError extends Error {
@@ -20,6 +23,7 @@ export class AsyncEventRoutingError extends Error {
 
 export function isSupportedAsyncEventName(eventName: string): boolean {
   return eventName === ASYNC_CANARY_EVENT_NAME_V1
+    || eventName === LUNA_MESSAGE_RECEIVED_EVENT_NAME_V1
 }
 
 export function parseSupportedAsyncEventV1(input: unknown): SupportedAsyncEventV1 {
@@ -28,6 +32,8 @@ export function parseSupportedAsyncEventV1(input: unknown): SupportedAsyncEventV
   switch (envelope.event_name) {
     case ASYNC_CANARY_EVENT_NAME_V1:
       return parseAsyncCanaryEventV1(envelope)
+    case LUNA_MESSAGE_RECEIVED_EVENT_NAME_V1:
+      return parseLunaMessageReceivedEventV1(envelope)
     default:
       throw new AsyncEventRoutingError('ASYNC_EVENT_UNSUPPORTED')
   }
