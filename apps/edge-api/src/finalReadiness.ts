@@ -74,6 +74,8 @@ export type FinalReadinessBindings={
   STRIPE_PRICE_START_MONTHLY?:string;STRIPE_PRICE_START_YEARLY?:string;
   STRIPE_PRICE_PRO_MONTHLY?:string;STRIPE_PRICE_PRO_YEARLY?:string;
   STRIPE_PRICE_PRIME_MONTHLY?:string;STRIPE_PRICE_PRIME_YEARLY?:string;
+  LUNA_ENABLED?:string;LUNA_PLAYGROUND_ENABLED?:string;LUNA_PROVIDER?:string;LUNA_MODEL?:string;GROQ_API_KEY?:string;
+  LUNA_AGENT?:DurableObjectNamespace;
 }
 
 function sqlLiteral(value: string): string {
@@ -136,14 +138,21 @@ export async function handleFinalReadiness(request:Request,bindings:FinalReadine
   const coordinationEnabled=isEdgeCoordinationEnabled(bindings.EDGE_COORDINATION_ENABLED)
   const coordination=coordinationEnabled?(hasCoordinationBinding(bindings.COORDINATOR)?'ready':'not_configured'):'disabled'
   const migrationClosed=bindings.EDGE_OPERATIONAL_MIGRATION_ENABLED!=='true'&&bindings.EDGE_AUTH_MIGRATION_ENABLED!=='true'
+  const lunaEnabled=bindings.LUNA_ENABLED==='true'
+  const lunaPlaygroundEnabled=bindings.LUNA_PLAYGROUND_ENABLED==='true'
+  const lunaRuntimeConfigured=bindings.LUNA_PROVIDER==='groq'&&Boolean(bindings.LUNA_MODEL&&bindings.GROQ_API_KEY)
+  const luna=lunaEnabled||lunaPlaygroundEnabled
+    ? lunaRuntimeConfigured&&(!lunaEnabled||Boolean(bindings.LUNA_AGENT))?'configured':'not_configured'
+    : 'disabled'
   const ready=Boolean(bindings.APP_ENV&&bindings.SERVICE_NAME&&bindings.RELEASE_CHANNEL)
     &&dbEnabled&&dbBinding&&main.status==='ready'&&main.capabilities==='ready'
     &&authEnabled&&authConfig==='configured'&&authCore==='ready'
-    &&(!coordinationEnabled||coordination==='ready')&&migrationClosed
+    &&(!coordinationEnabled||coordination==='ready')&&migrationClosed&&(!(lunaEnabled||lunaPlaygroundEnabled)||luna==='configured')
   return Response.json({
     service:bindings.SERVICE_NAME,environment:bindings.APP_ENV,release_channel:bindings.RELEASE_CHANNEL,request_id:requestId,status:ready?'ready':'not_ready',
     checks:{database:main.status,schema_version:main.version,schema_capabilities:main.capabilities,auth_database:authConfig==='configured'&&authCore==='ready'?'configured':authCore,
       coordination,better_auth:authEnabled?'enabled':'disabled',migration_capabilities:migrationClosed?'closed':'open',password_recovery:recoveryEmailConfigured(bindings)?'configured':'not_configured',
+        luna_agent:luna,
         stripe_checkout:bindings.STRIPE_SECRET_KEY&&bindings.STRIPE_WEBHOOK_SECRET
           &&bindings.STRIPE_PRICE_START_MONTHLY&&bindings.STRIPE_PRICE_START_YEARLY
           &&bindings.STRIPE_PRICE_PRO_MONTHLY&&bindings.STRIPE_PRICE_PRO_YEARLY

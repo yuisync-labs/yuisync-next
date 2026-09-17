@@ -3,6 +3,7 @@ import type { CoordinationDurableObject } from './coordination/coordinationDurab
 import type { AuthMigrationBindings } from './migration/authMigrationHttp'
 import type { OperationalMigrationBindings } from './migration/operationalMigrationHttp'
 import type { PlatformBillingBindings } from './platformBillingApi'
+import type { LunaQueueBindings } from './luna/conversationDurableObject'
 
 export type EdgeVariables = {
   requestId: string
@@ -56,5 +57,6 @@ export type EdgeAppEnvironment = {
     & EdgeFinalAuthBindings
     & EdgeWhatsappBindings
     & PlatformBillingBindings
+    & LunaQueueBindings
   Variables: EdgeVariables
 }

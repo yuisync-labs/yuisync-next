@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ASYNC_CANARY_EVENT_NAME_V1,
+  LUNA_MESSAGE_RECEIVED_EVENT_NAME_V1,
 } from '../../../shared/contracts/v1/index'
 import {
   AsyncEventRoutingError,
@@ -32,10 +33,24 @@ function canaryEvent() {
 }
 
 describe('asynchronous event allowlist', () => {
-  it('permite somente o evento canário inicial', () => {
+  it('permite o canário e mensagens da Luna', () => {
     expect(isSupportedAsyncEventName(ASYNC_CANARY_EVENT_NAME_V1)).toBe(true)
+    expect(isSupportedAsyncEventName(LUNA_MESSAGE_RECEIVED_EVENT_NAME_V1)).toBe(true)
     expect(isSupportedAsyncEventName('orders.created.v1')).toBe(false)
     expect(parseSupportedAsyncEventV1(canaryEvent())).toEqual(canaryEvent())
+  })
+
+  it('valida o contrato assíncrono da Luna', () => {
+    const event = {
+      ...canaryEvent(),
+      event_name: LUNA_MESSAGE_RECEIVED_EVENT_NAME_V1,
+      aggregate: { type: 'luna.conversation', id: 'wa:5532999999999', version: 1 },
+      payload: {
+        module_id: 'petshop', conversation_id: 'wa:5532999999999', source_message_id: 'wamid.1',
+        channel: 'whatsapp', customer_address: '5532999999999', phone_number_id: '1234567890',
+      },
+    }
+    expect(parseSupportedAsyncEventV1(event)).toEqual(event)
   })
 
   it('rejeita eventos válidos no envelope, mas ainda não habilitados', () => {

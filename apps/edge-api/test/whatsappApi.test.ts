@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { parseWhatsAppAccountConnectionV1 } from '../../../shared/contracts/v1/index'
 import { D1WhatsAppConnectionRepository } from '../src/adapters/d1WhatsAppConnectionRepository'
@@ -126,6 +126,7 @@ async function seedConnections(): Promise<void> {
 }
 
 beforeEach(async () => {
+  await testEnv.DB.prepare('DELETE FROM luna_event_outbox WHERE tenant_id IN (?1,?2)').bind(TENANT_A, TENANT_B).run()
   await testEnv.DB.prepare('DELETE FROM whatsapp_ingress_receipts WHERE tenant_id IN (?1,?2)').bind(TENANT_A, TENANT_B).run()
   await testEnv.DB.prepare('DELETE FROM chat_messages WHERE tenant_id IN (?1,?2)').bind(TENANT_A, TENANT_B).run()
   await testEnv.DB.prepare('DELETE FROM chat_threads WHERE tenant_id IN (?1,?2)').bind(TENANT_A, TENANT_B).run()
@@ -209,6 +210,29 @@ describe('Cloudflare-native WhatsApp transport', () => {
       WHERE tenant_id=?1 AND module_id='petshop' AND provider_message_id='wamid.test-001'
     `).bind(TENANT_A).first<{ claim_token: string }>()
     expect(finalReceipt?.claim_token).toBe(firstReceipt?.claim_token)
+  })
+
+  it('publica uma única mensagem tipada para a Luna quando a feature está habilitada', async () => {
+    const send = vi.fn(async (_event: unknown) => undefined)
+    const runtime: WhatsappRuntimeBindings = {
+      ...bindings(testEnv.DB),
+      LUNA_ENABLED: 'true',
+      EVENTS_QUEUE: { send } as unknown as Queue,
+    }
+    const payload = webhookPayload({ messageId: 'wamid.luna-001' })
+    const first = await handleWhatsappApiRequest(await signedRequest(payload), runtime)
+    const duplicate = await handleWhatsappApiRequest(await signedRequest(payload), runtime)
+    expect(first?.status).toBe(200)
+    expect(duplicate?.status).toBe(200)
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0]?.[0]).toMatchObject({
+      event_name: 'luna.message.received.v1',
+      tenant_id: TENANT_A,
+      payload: { conversation_id: 'wa:5532985205279', source_message_id: 'wamid.luna-001' },
+    })
+    const outbox = await testEnv.DB.prepare(`SELECT status,attempt_count FROM luna_event_outbox WHERE tenant_id=?1 AND idempotency_key=?2`)
+      .bind(TENANT_A, 'wamid.luna-001').first<{ status: string; attempt_count: number }>()
+    expect(outbox).toEqual({ status: 'published', attempt_count: 0 })
   })
 
   it('rejeita assinatura inválida antes de consultar ou persistir tenant', async () => {

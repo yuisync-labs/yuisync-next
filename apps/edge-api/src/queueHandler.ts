@@ -1,4 +1,5 @@
 import type { AsyncCanaryEventV1 } from '../../../shared/contracts/v1/index'
+import { LUNA_MESSAGE_RECEIVED_EVENT_NAME_V1 } from '../../../shared/contracts/v1/index'
 import { D1EventProcessingRepository } from './adapters/d1EventProcessingRepository'
 import {
   processAsyncEventBatch,
@@ -6,6 +7,7 @@ import {
 } from './asyncEventBatchProcessor'
 import type { SupportedAsyncEventV1 } from './asyncEvents'
 import { emitEdgeLog } from './observability'
+import { dispatchLunaMessageEvent, type LunaQueueBindings } from './luna/conversationDurableObject'
 
 const DISABLED_RETRY_DELAY_SECONDS = 300
 
@@ -13,7 +15,11 @@ export function isAsyncQueueEnabled(value: string | undefined): boolean {
   return value?.trim().toLowerCase() === 'true'
 }
 
-async function handleSupportedAsyncEvent(event: SupportedAsyncEventV1): Promise<void> {
+async function handleSupportedAsyncEvent(event: SupportedAsyncEventV1, env: EdgeEnv): Promise<void> {
+  if (event.event_name === LUNA_MESSAGE_RECEIVED_EVENT_NAME_V1) {
+    await dispatchLunaMessageEvent(event, env as LunaQueueBindings)
+    return
+  }
   const canary = event as AsyncCanaryEventV1
 
   emitEdgeLog('info', 'edge.async_canary.processed', {
@@ -56,7 +62,7 @@ export async function handleAsyncQueue(
   const summary = await processAsyncEventBatch({
     messages: batch.messages,
     repository,
-    handleEvent: handleSupportedAsyncEvent,
+    handleEvent: (event) => handleSupportedAsyncEvent(event, env),
     observe: observeQueue,
   })
 

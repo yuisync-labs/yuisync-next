@@ -19,19 +19,26 @@ function moduleKey(activeModule) {
 }
 
 async function runEdgePlayground({ tenantId, moduleId, companyId, customerPhone, message }) {
-  const response = await fetch('/api/ai-lab/playground', {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-tenant-id': tenantId,
-      'x-module-id': moduleId,
-    },
-    body: JSON.stringify({ company_id: companyId, customer_phone: customerPhone, message }),
-  })
-  const payload = await response.json().catch(() => ({}))
+  const request = (path) => fetch(path, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-tenant-id': tenantId,
+        'x-module-id': moduleId,
+      },
+      body: JSON.stringify({ company_id: companyId, customer_phone: customerPhone, message }),
+    })
+  let response = await request('/api/ai-lab/luna/playground')
+  let payload = await response.json().catch(() => ({}))
+  let engine = 'luna-operational'
+  if (response.status === 404 && payload?.code === 'LUNA_PLAYGROUND_DISABLED') {
+    response = await request('/api/ai-lab/playground')
+    payload = await response.json().catch(() => ({}))
+    engine = 'legacy-preview'
+  }
   if (!response.ok) throw new Error(payload?.message || payload?.code || 'Falha ao executar playground no Edge.')
-  return payload?.data || payload
+  return { ...(payload?.data || payload), engine }
 }
 
 export default function AiLabPage() {
@@ -273,7 +280,14 @@ export default function AiLabPage() {
         created_at: run.created_at || new Date().toISOString(),
       }, ...current].slice(0, 40))
       setPlaygroundMessage('')
-      setMessage({ type: 'success', text: 'Playground executado no Cloudflare Edge sem efeitos operacionais.' })
+      setMessage({
+        type: 'success',
+        text: run.engine === 'luna-operational'
+          ? run.operation_ids?.length
+            ? 'A Luna executou e confirmou a operação no ambiente de staging.'
+            : 'A Luna processou a conversa no ambiente operacional de staging.'
+          : 'Playground atual executado no Cloudflare Edge; a Luna operacional permanece restrita ao staging.',
+      })
     } catch (testError) {
       setError(testError instanceof Error ? testError.message : 'Falha ao testar a IA.')
     } finally {
@@ -329,7 +343,8 @@ export default function AiLabPage() {
           </div>
 
           <div className="bg-card border border-white/10 rounded-3xl p-5 space-y-4">
-            <p className="text-xs font-black uppercase tracking-wider text-muted flex items-center gap-2"><Sparkles size={14} />Playground Edge</p>
+            <p className="text-xs font-black uppercase tracking-wider text-muted flex items-center gap-2"><Sparkles size={14} />Luna operacional · staging</p>
+            <p className="text-xs text-muted">Usa o mesmo motor, ferramentas, confirmação e banco do agente. Operações confirmadas alteram somente os dados de staging.</p>
             <input className="inp" value={playgroundPhone} onChange={(event) => setPlaygroundPhone(event.target.value)} placeholder="Telefone de teste" />
             <textarea className="inp min-h-[130px]" value={playgroundMessage} onChange={(event) => setPlaygroundMessage(event.target.value)} placeholder="Mensagem para testar o bot" />
             <button onClick={runPlayground} disabled={testing || !playgroundMessage.trim()} className="btn btn-primary w-full gap-2"><Send size={14} />{testing ? 'Executando...' : 'Testar no Edge'}</button>

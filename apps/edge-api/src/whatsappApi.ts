@@ -1,10 +1,19 @@
-import { parseIncomingWhatsAppMessageV1, type IncomingWhatsAppMessageV1 } from '../../../shared/contracts/v1/index'
+import {
+  LUNA_MESSAGE_RECEIVED_EVENT_NAME_V1,
+  parseIncomingWhatsAppMessageV1,
+  parseLunaMessageReceivedEventV1,
+  type DomainEventEnvelopeV1,
+  type IncomingWhatsAppMessageV1,
+  type LunaMessageReceivedEventV1,
+} from '../../../shared/contracts/v1/index'
 import { D1WhatsAppConnectionRepository } from './adapters/d1WhatsAppConnectionRepository'
 
 export type WhatsappRuntimeBindings = {
   DB?: D1Database
   WHATSAPP_VERIFY_TOKEN?: string
   WHATSAPP_APP_SECRET?: string
+  LUNA_ENABLED?: string
+  EVENTS_QUEUE?: Queue<DomainEventEnvelopeV1>
 }
 
 type MetaMessage = Record<string, any>
@@ -129,10 +138,11 @@ async function tenantAcceptsWhatsapp(database: D1Database, tenantId: string): Pr
 }
 
 async function persistInbound(
-  database: D1Database,
+  bindings: WhatsappRuntimeBindings,
   message: IncomingWhatsAppMessageV1,
   profileName: string,
 ) {
+  const database = bindings.DB!
   const claimToken = crypto.randomUUID()
   const now = Date.now()
   const threadId = `wa:${message.from}`
@@ -148,7 +158,32 @@ async function persistInbound(
     ingress: 'live_webhook',
   })
 
-  await database.batch([
+  const lunaEvent: LunaMessageReceivedEventV1 | null = bindings.LUNA_ENABLED?.trim().toLowerCase() === 'true' && message.message_type === 'text'
+    ? parseLunaMessageReceivedEventV1({
+        type: 'domain_event',
+        version: 1,
+        event_id: crypto.randomUUID(),
+        event_name: LUNA_MESSAGE_RECEIVED_EVENT_NAME_V1,
+        event_version: 1,
+        tenant_id: message.tenant_id,
+        aggregate: { type: 'luna.conversation', id: threadId, version: 1 },
+        occurred_at: new Date(now).toISOString(),
+        correlation_id: crypto.randomUUID(),
+        causation_id: message.message_id,
+        idempotency_key: message.message_id,
+        payload: {
+          module_id: WHATSAPP_MODULE_ID,
+          conversation_id: threadId,
+          source_message_id: message.message_id,
+          channel: 'whatsapp',
+          customer_address: message.from,
+          phone_number_id: message.phone_number_id,
+        },
+        metadata: { ingress: 'meta_whatsapp' },
+      })
+    : null
+
+  const statements: D1PreparedStatement[] = [
     database.prepare(`
       INSERT OR IGNORE INTO whatsapp_ingress_receipts(
         tenant_id,module_id,provider_message_id,waba_id,phone_number_id,claim_token,received_at_ms
@@ -203,7 +238,24 @@ async function persistInbound(
       createdAt,
       claimToken,
     ),
-  ])
+  ]
+  if (lunaEvent) {
+    statements.push(database.prepare(`
+      INSERT OR IGNORE INTO luna_event_outbox(
+        tenant_id,module_id,event_id,event_name,idempotency_key,payload_json,status,
+        attempt_count,next_attempt_at_ms,created_at_ms,updated_at_ms
+      )
+      SELECT ?1,?2,?3,?4,?5,?6,'pending',0,?7,?7,?7
+      WHERE EXISTS (
+        SELECT 1 FROM whatsapp_ingress_receipts
+        WHERE tenant_id=?1 AND module_id=?2 AND provider_message_id=?5 AND claim_token=?8
+      )
+    `).bind(
+      message.tenant_id, WHATSAPP_MODULE_ID, lunaEvent.event_id, lunaEvent.event_name,
+      message.message_id, JSON.stringify(lunaEvent), now, claimToken,
+    ))
+  }
+  await database.batch(statements)
 
   const receipt = await database.prepare(`
     SELECT claim_token
@@ -212,6 +264,31 @@ async function persistInbound(
     LIMIT 1
   `).bind(message.tenant_id, WHATSAPP_MODULE_ID, message.message_id).first<{ claim_token: string }>()
 
+  if (lunaEvent) {
+    const pending = await database.prepare(`
+      SELECT event_id,payload_json FROM luna_event_outbox
+      WHERE tenant_id=?1 AND module_id=?2 AND idempotency_key=?3 AND status='pending' LIMIT 1
+    `).bind(message.tenant_id, WHATSAPP_MODULE_ID, message.message_id).first<{ event_id: string; payload_json: string }>()
+    if (pending) {
+      if (!bindings.EVENTS_QUEUE) throw new Error('LUNA_QUEUE_NOT_CONFIGURED')
+      try {
+        const event = parseLunaMessageReceivedEventV1(JSON.parse(pending.payload_json))
+        await bindings.EVENTS_QUEUE.send(event)
+        await database.prepare(`
+          UPDATE luna_event_outbox SET status='published',published_at_ms=?4,updated_at_ms=?4
+          WHERE tenant_id=?1 AND module_id=?2 AND event_id=?3
+        `).bind(message.tenant_id, WHATSAPP_MODULE_ID, pending.event_id, Date.now()).run()
+      } catch {
+        await database.prepare(`
+          UPDATE luna_event_outbox SET attempt_count=attempt_count+1,last_error_code='QUEUE_UNAVAILABLE',
+            next_attempt_at_ms=?4,updated_at_ms=?5
+          WHERE tenant_id=?1 AND module_id=?2 AND event_id=?3
+        `).bind(message.tenant_id, WHATSAPP_MODULE_ID, pending.event_id, Date.now() + 15_000, Date.now()).run()
+        throw new Error('LUNA_QUEUE_UNAVAILABLE')
+      }
+    }
+  }
+
   if (!receipt || receipt.claim_token !== claimToken) {
     return { duplicate: true, message_id: message.message_id }
   }
@@ -219,10 +296,11 @@ async function persistInbound(
 }
 
 async function processInboundEvent(
-  database: D1Database,
+  bindings: WhatsappRuntimeBindings,
   repository: D1WhatsAppConnectionRepository,
   event: MetaEvent,
 ) {
+  const database = bindings.DB!
   if (!event.phoneNumberId) return { ignored: true, reason: 'missing_phone_number_id', message_id: event.messageId }
   if (!event.wabaId) return { ignored: true, reason: 'missing_waba_id', message_id: event.messageId }
 
@@ -255,7 +333,7 @@ async function processInboundEvent(
     return { ignored: true, reason: 'invalid_message_contract', message_id: event.messageId }
   }
 
-  return persistInbound(database, normalized, event.profileName)
+  return persistInbound(bindings, normalized, event.profileName)
 }
 
 async function handleWebhookGet(request: Request, bindings: WhatsappRuntimeBindings): Promise<Response> {
@@ -291,7 +369,7 @@ async function handleWebhookPost(request: Request, bindings: WhatsappRuntimeBind
   const events = extractWhatsappEvents(payload)
   const results = []
   try {
-    for (const event of events) results.push(await processInboundEvent(bindings.DB, repository, event))
+    for (const event of events) results.push(await processInboundEvent(bindings, repository, event))
   } catch {
     return json({ code: 'WHATSAPP_INGRESS_UNAVAILABLE' }, 503)
   }
