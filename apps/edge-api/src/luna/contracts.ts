@@ -62,6 +62,7 @@ export type LunaTurnResult = Readonly<{
   proposalIds: readonly string[]
   committedOperationIds: readonly string[]
   traceId: string
+  errorCode: string | null
   usage: Readonly<{
     modelCalls: number
     toolCalls: number

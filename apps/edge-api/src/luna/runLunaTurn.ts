@@ -30,7 +30,7 @@ export async function runLunaTurn(input: {
   const conversationStatus = await repository.ensureConversation(input.context)
   const emptyUsage = { modelCalls: 0, toolCalls: 0, promptTokens: 0, completionTokens: 0 }
   if (conversationStatus === 'handoff' || conversationStatus === 'closed') {
-    return { status: 'handoff', reply: null, proposalIds: [], committedOperationIds: [], traceId: input.context.traceId, usage: emptyUsage }
+    return { status: 'handoff', reply: null, proposalIds: [], committedOperationIds: [], traceId: input.context.traceId, errorCode: null, usage: emptyUsage }
   }
 
   const budget = createLunaBudget({
@@ -50,6 +50,7 @@ export async function runLunaTurn(input: {
   const callSignatures = new Set<string>()
   let finalStatus: LunaTurnResult['status'] = 'failed'
   let reply: string | null = null
+  let errorCode: string | null = null
 
   try {
     for (;;) {
@@ -102,13 +103,16 @@ export async function runLunaTurn(input: {
     if (error instanceof LunaBudgetError || (error instanceof GroqProviderError && error.code === 'GROQ_RATE_LIMITED')) {
       finalStatus = 'quota_paused'
       reply = null
+      errorCode = error instanceof GroqProviderError ? error.code : error.code
     } else {
       finalStatus = 'failed'
       reply = null
+      errorCode = error instanceof GroqProviderError ? error.code : 'LUNA_EXECUTION_FAILED'
     }
   }
 
   const usage = budget.snapshot()
-  try { await repository.recordUsage({ context: input.context, model: input.provider.model, usage, outcome: finalStatus }) } catch { /* operational result wins over telemetry */ }
-  return { status: finalStatus, reply, proposalIds: proposals, committedOperationIds: committed, traceId: input.context.traceId, usage }
+  const outcome = errorCode ? `${finalStatus}:${errorCode}` : finalStatus
+  try { await repository.recordUsage({ context: input.context, model: input.provider.model, usage, outcome }) } catch { /* operational result wins over telemetry */ }
+  return { status: finalStatus, reply, proposalIds: proposals, committedOperationIds: committed, traceId: input.context.traceId, errorCode, usage }
 }

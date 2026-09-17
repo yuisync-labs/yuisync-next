@@ -4,12 +4,17 @@ import { execFileSync } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { hash } from 'bcryptjs'
 
-const REPO_ROOT = resolve(new URL('../../', import.meta.url).pathname)
+const REPO_ROOT = resolve(fileURLToPath(new URL('../../', import.meta.url)))
 const EDGE_DIR = resolve(REPO_ROOT, 'apps/edge-api')
 const ARTIFACT_DIR = resolve(REPO_ROOT, '.artifacts/staging-e2e')
 const MANIFEST_PATH = resolve(ARTIFACT_DIR, 'fixture.json')
+const NPX_EXECUTABLE = process.platform === 'win32' ? process.execPath : 'npx'
+const NPX_ARGUMENT_PREFIX = process.platform === 'win32'
+  ? [resolve(process.execPath, '..', 'node_modules/npm/bin/npx-cli.js')]
+  : []
 const E2E_BASE_URL = String(
   process.env.YUISYNC_E2E_BASE_URL ||
   process.env.YUISYNC_PRODUCTION_WORKERS_URL ||
@@ -59,9 +64,9 @@ function run(command, args, options = {}) {
 }
 
 function wrangler(args) {
-  const finalArgs = ['wrangler', ...args]
+  const finalArgs = [...NPX_ARGUMENT_PREFIX, 'wrangler', ...args]
   if (WRANGLER_CONFIG) finalArgs.push('--config', WRANGLER_CONFIG)
-  return run('npx', finalArgs, { cwd: EDGE_DIR })
+  return run(NPX_EXECUTABLE, finalArgs, { cwd: EDGE_DIR })
 }
 
 function d1Run(binding, statement) {
@@ -191,10 +196,15 @@ function cleanupMainTenant(tenantId, principalIds = []) {
 
   const schemaRows = mainSchemaRows()
   const deleteOrder = tenantScopedDeleteOrder(schemaRows)
-  const tenantDeletes = deleteOrder
-    .map((table) => `DELETE FROM ${identifier(table)} WHERE tenant_id=${sql(id)};`)
-    .join(' ')
-  if (tenantDeletes) d1Run('DB', tenantDeletes)
+  const tenantDeletes = deleteOrder.map(
+    (table) => `DELETE FROM ${identifier(table)} WHERE tenant_id=${sql(id)};`,
+  )
+  // Windows has a much smaller process command-line limit than Linux. Keep
+  // dependency order, but execute bounded batches so local cleanup is as safe
+  // and repeatable as the CI path.
+  for (let offset = 0; offset < tenantDeletes.length; offset += 12) {
+    d1Run('DB', tenantDeletes.slice(offset, offset + 12).join(' '))
+  }
 
   const principals = [...new Set(principalIds.map(String).filter(Boolean))]
   if (principals.length) {
