@@ -85,7 +85,10 @@ export class GroqProvider {
         body: JSON.stringify({
           model: this.model,
           temperature: 0.2,
-          max_completion_tokens: Math.max(128, Math.min(1_200, input.maxCompletionTokens ?? 600)),
+          // GPT-OSS can spend a material portion of this budget on reasoning.
+          // A 600-token default occasionally ended after a tool result without
+          // producing either final content or another tool call.
+          max_completion_tokens: Math.max(128, Math.min(1_200, input.maxCompletionTokens ?? 1_200)),
           parallel_tool_calls: false,
           messages: input.messages,
           tools: input.tools.map((tool) => ({
@@ -129,9 +132,11 @@ export class GroqProvider {
         arguments: String(call.function?.arguments || '{}'),
       },
     })).filter((call) => call.id && call.function.name)
+    const content = typeof message.content === 'string' ? message.content.trim() || null : null
+    if (!content && toolCalls.length === 0) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
 
     return {
-      content: typeof message.content === 'string' ? message.content.trim() || null : null,
+      content,
       toolCalls,
       usage: {
         promptTokens: Math.max(0, Number(body.usage?.prompt_tokens || 0)),
