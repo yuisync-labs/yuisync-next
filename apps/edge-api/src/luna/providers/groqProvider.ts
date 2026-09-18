@@ -85,6 +85,11 @@ export class GroqProvider {
         body: JSON.stringify({
           model: this.model,
           temperature: 0.2,
+          // Groq requires parsed or hidden reasoning whenever GPT-OSS uses
+          // tool calling. Hidden keeps private chain-of-thought out of our
+          // application state while low effort controls latency and quota.
+          reasoning_format: 'hidden',
+          reasoning_effort: 'low',
           // GPT-OSS can spend a material portion of this budget on reasoning.
           // A 600-token default occasionally ended after a tool result without
           // producing either final content or another tool call.
