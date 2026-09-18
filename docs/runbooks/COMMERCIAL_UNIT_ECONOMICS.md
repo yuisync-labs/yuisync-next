@@ -12,7 +12,7 @@ Este documento separa custos confirmados, premissas conservadoras e decisões qu
 | Cloudflare Workers | US$ 5/mês; inclui 10 milhões de requisições e 30 milhões de ms de CPU por mês. | [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/) |
 | Cloudflare D1 | No plano pago, 25 bilhões de linhas lidas e 50 milhões escritas por mês estão incluídas; excedentes custam US$ 0,001 por milhão de leituras e US$ 1 por milhão de escritas. | [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/) |
 | Resend | Gratuito até 3.000 e-mails/mês (máximo de 100/dia); Pro custa US$ 20/mês e inclui 50.000. | [Resend pricing](https://resend.com/docs/knowledge-base/what-is-resend-pricing) |
-| OpenAI GPT-4o mini | US$ 0,15 por milhão de tokens de entrada e US$ 0,60 por milhão de tokens de saída. | [OpenAI model pricing](https://developers.openai.com/api/docs/models/gpt-4o-mini) |
+| Groq GPT-OSS 20B | US$ 0,075 por milhão de tokens de entrada e US$ 0,30 por milhão de tokens de saída no modelo atualmente configurado para a Luna. O Free tier é somente para testes; produção deve usar faturamento, limite de gasto e alertas. | [Groq supported models](https://console.groq.com/docs/models) |
 | WhatsApp Business Platform | A Meta cobra por mensagem entregue e por categoria/mercado. O rate card vigente precisa ser conferido no portfólio Meta da empresa antes de publicar uma franquia. | [Meta/WhatsApp pricing](https://whatsappbusiness.com/pt-br/products/platform-pricing/) |
 
 Para orçamento interno em real, usamos câmbio de segurança de **R$ 6,00/US$**, e não a cotação do dia. Essa margem absorve variação cambial e tributos sem prometer um custo artificialmente baixo.
@@ -37,7 +37,7 @@ Os valores `support_cost_brl` e `infra_cost_brl` existentes no catálogo D1 são
 | Pro | R$ 69 | R$ 31 | 0 |
 | Prime | R$ 119 | R$ 41 | 12.000 requisições |
 
-O limite de 12.000 requisições do Prime não deve ser anunciado. Hoje ele gera alerta, mas não é um teto transacional forte, e não mede tokens. Antes de vender IA por franquia, o runtime deve registrar tokens de entrada, saída, modelo e custo por execução.
+O limite de 12.000 requisições do Prime não deve ser anunciado. A Luna já registra tokens de entrada, saída, modelo e chamadas de ferramentas no ledger operacional, mas ainda falta transformar essa telemetria em cota comercial forte e alerta financeiro antes de vender IA por franquia.
 
 A sessão individual incluída tem duração máxima de 60 minutos. Para cálculo, reserve R$ 120 por nova empresa e amortize em 12 meses (R$ 10/mês). Reagendamentos adicionais e implantação de dados fora do fluxo padrão são serviços separados.
 

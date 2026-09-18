@@ -394,11 +394,26 @@ async function insertLoyaltyPoints(db, body, scope) {
     let client=clientId?await db.prepare('SELECT id FROM clients WHERE tenant_id=?1 AND module_id=?2 AND id=?3 LIMIT 1').bind(scope.tenantId,scope.moduleId,clientId).first():null
     if(!client&&clientId){const pet=await db.prepare('SELECT client_id FROM pets WHERE tenant_id=?1 AND module_id=?2 AND id=?3 LIMIT 1').bind(scope.tenantId,scope.moduleId,clientId).first();clientId=str(pet?.client_id);client=clientId?{id:clientId}:null}
     if(!client)throw new Error('LOYALTY_CLIENT_NOT_FOUND')
-    const previous=await db.prepare('SELECT balance_after FROM loyalty_points WHERE tenant_id=?1 AND module_id=?2 AND client_id=?3 ORDER BY created_at_ms DESC,id DESC LIMIT 1').bind(scope.tenantId,scope.moduleId,clientId).first()
     const points=Math.round(num(raw.points))
-    const record=canonical('loyalty_points',{...raw,client_id:clientId,balance_after:Math.max(0,Math.round(num(previous?.balance_after)+points))},scope)
-    const entries=columnsOf(record),cols=entries.map(([k])=>k),marks=entries.map(()=>'?').join(',')
-    await db.prepare(`INSERT INTO loyalty_points(${cols.join(',')}) VALUES(${marks})`).bind(...entries.map(([,v])=>scalar(v))).run()
+    const record=canonical('loyalty_points',{...raw,client_id:clientId,balance_after:0},scope)
+    await db.prepare(`
+      WITH previous AS (
+        SELECT balance_after,created_at_ms FROM loyalty_points
+        WHERE tenant_id=?1 AND module_id=?2 AND client_id=?4
+        ORDER BY created_at_ms DESC,id DESC LIMIT 1
+      )
+      INSERT INTO loyalty_points(
+        tenant_id,module_id,id,client_id,points_delta,balance_after,
+        reason,reference_type,reference_id,expires_at_ms,created_at_ms
+      )
+      SELECT ?1,?2,?3,?4,?5,
+        MAX(0,COALESCE((SELECT balance_after FROM previous),0)+?5),
+        ?6,?7,?8,?9,
+        MAX(?10,COALESCE((SELECT created_at_ms+1 FROM previous),?10))
+    `).bind(
+      record.tenant_id,record.module_id,record.id,record.client_id,record.points_delta,
+      record.reason,record.reference_type,record.reference_id,record.expires_at_ms,record.created_at_ms,
+    ).run()
   }
 }
 

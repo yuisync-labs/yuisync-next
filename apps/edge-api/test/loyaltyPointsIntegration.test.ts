@@ -92,6 +92,7 @@ describe('loyalty points compatibility flow', () => {
         points: 20,
         reason: 'bonus',
         expires_at: '2026-12-25',
+        created_at: '2026-09-16T12:00:00.000Z',
       })
       const firstBody = await first.json<{ data: Record<string, any> }>()
       expect(first.status).toBe(200)
@@ -108,14 +109,15 @@ describe('loyalty points compatibility flow', () => {
         client_id: clientId,
         points: 10,
         reason: 'bonus',
+        created_at: '2026-09-16T12:00:00.000Z',
       })
       expect(second.status).toBe(200)
 
-      const stored = await db.prepare('SELECT client_id,points_delta,balance_after,expires_at_ms FROM loyalty_points WHERE tenant_id=?1 AND module_id=?2 ORDER BY created_at_ms,id')
+      const stored = await db.prepare('SELECT client_id,points_delta,balance_after,expires_at_ms,created_at_ms FROM loyalty_points WHERE tenant_id=?1 AND module_id=?2 ORDER BY created_at_ms,id')
         .bind(tenantId, 'petshop').all<Record<string, unknown>>()
       expect(stored.results).toEqual([
-        expect.objectContaining({ client_id: clientId, points_delta: 20, balance_after: 20, expires_at_ms: Date.parse('2026-12-25') }),
-        expect.objectContaining({ client_id: clientId, points_delta: 10, balance_after: 30, expires_at_ms: null }),
+        expect.objectContaining({ client_id: clientId, points_delta: 20, balance_after: 20, expires_at_ms: Date.parse('2026-12-25'), created_at_ms: Date.parse('2026-09-16T12:00:00.000Z') }),
+        expect.objectContaining({ client_id: clientId, points_delta: 10, balance_after: 30, expires_at_ms: null, created_at_ms: Date.parse('2026-09-16T12:00:00.000Z') + 1 }),
       ])
     } finally {
       await authDb.prepare('DELETE FROM session WHERE userId=?1').bind(userId).run()
