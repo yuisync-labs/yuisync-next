@@ -62,6 +62,24 @@ describe('Luna Groq provider and budget', () => {
     await expect(provider.complete({ messages: [], tools: [] })).rejects.toMatchObject({ code: 'GROQ_TIMEOUT' })
   })
 
+  it('rejeita resposta vazia do modelo em vez de concluir o turno sem diagnóstico', async () => {
+    const provider = new GroqProvider({
+      apiKey: 'test-key', model: 'test-model',
+      fetchFn: vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: null } }] }), { status: 200 })),
+    })
+    await expect(provider.complete({ messages: [], tools: [] })).rejects.toMatchObject({ code: 'GROQ_RESPONSE_INVALID' })
+  })
+
+  it('reserva 1.200 tokens por padrão para modelos com raciocínio', async () => {
+    const fetchFn = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => (
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 })
+    ))
+    const provider = new GroqProvider({ apiKey: 'test-key', model: 'test-model', fetchFn })
+    await provider.complete({ messages: [], tools: [] })
+    const init = fetchFn.mock.calls[0]?.[1]
+    expect(JSON.parse(String(init?.body))).toMatchObject({ max_completion_tokens: 1_200 })
+  })
+
   it('preserva margem de vinte por cento da cota de requests', () => {
     const budget = createLunaBudget({ minimumRemainingPercent: 20 })
     budget.beforeModel()
