@@ -5,7 +5,15 @@ import type {
 } from '../contracts'
 
 export class GroqProviderError extends Error {
-  readonly code: 'GROQ_NOT_CONFIGURED' | 'GROQ_RATE_LIMITED' | 'GROQ_REQUEST_FAILED' | 'GROQ_RESPONSE_INVALID'
+  readonly code:
+    | 'GROQ_NOT_CONFIGURED'
+    | 'GROQ_RATE_LIMITED'
+    | 'GROQ_UNAUTHORIZED'
+    | 'GROQ_REQUEST_INVALID'
+    | 'GROQ_TIMEOUT'
+    | 'GROQ_UNAVAILABLE'
+    | 'GROQ_REQUEST_FAILED'
+    | 'GROQ_RESPONSE_INVALID'
   readonly retryAfter: string | null
 
   constructor(code: GroqProviderError['code'], retryAfter: string | null = null) {
@@ -89,7 +97,10 @@ export class GroqProvider {
         }),
         signal: controller.signal,
       })
-    } catch {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new GroqProviderError('GROQ_TIMEOUT')
+      }
       throw new GroqProviderError('GROQ_REQUEST_FAILED')
     } finally {
       clearTimeout(timeout)
@@ -98,6 +109,9 @@ export class GroqProvider {
     if (response.status === 429) {
       throw new GroqProviderError('GROQ_RATE_LIMITED', response.headers.get('retry-after'))
     }
+    if (response.status === 401 || response.status === 403) throw new GroqProviderError('GROQ_UNAUTHORIZED')
+    if (response.status === 400 || response.status === 404) throw new GroqProviderError('GROQ_REQUEST_INVALID')
+    if (response.status >= 500) throw new GroqProviderError('GROQ_UNAVAILABLE')
     if (!response.ok) throw new GroqProviderError('GROQ_REQUEST_FAILED')
 
     let body: GroqResponseBody

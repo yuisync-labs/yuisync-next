@@ -187,7 +187,7 @@ async function lunaPlayground(request: Request, bindings: AiLabBindings): Promis
   `).bind(
     resolved.scope.tenantId, resolved.scope.moduleId, runId, companyId, resolved.scope.principalId,
     phone, message, JSON.stringify({ proposal_ids: result.proposalIds, operation_ids: result.committedOperationIds }),
-    result.status, result.reply || '', JSON.stringify({ trace_id: traceId, usage: result.usage, model: provider.model }), now,
+    result.status, result.reply || '', JSON.stringify({ trace_id: traceId, usage: result.usage, model: provider.model, error_code: result.errorCode }), now,
   ).run()
   return json({ data: {
     id: runId,
@@ -196,6 +196,7 @@ async function lunaPlayground(request: Request, bindings: AiLabBindings): Promis
     proposal_ids: result.proposalIds,
     operation_ids: result.committedOperationIds,
     usage: result.usage,
+    error_code: result.errorCode,
     trace_id: traceId,
     created_at: new Date(now).toISOString(),
   } }, result.status === 'failed' || result.status === 'quota_paused' ? 503 : 200)
