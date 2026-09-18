@@ -3,7 +3,7 @@
   "policy": "frontend-supabase-compat-ratchet",
   "generated_from": "src/**/*.{js,jsx,ts,tsx}",
   "totals": {
-    "from": 205,
+    "from": 203,
     "rpc": 11
   },
   "files": {
@@ -80,7 +80,7 @@
       "rpc": 1
     },
     "src/shared/hooks/useAnalytics.js": {
-      "from": 6,
+      "from": 4,
       "rpc": 0
     },
     "src/shared/hooks/useAppointments.js": {

@@ -3,6 +3,7 @@ import { supabase } from '../../../lib/supabase'
 import { useAuthCtx } from '../../../context/AuthContext'
 import { useModuleCtx } from '../../../context/ModuleContext'
 import { applyTenantFilter, buildTenantPayload, runWithTenantFallback } from '../../../lib/tenant'
+import { percentageChange, summarizeGrowthTimeline } from '../../../shared/lib/analyticsMetrics'
 
 const CLIENT_MIN_SELECT = 'id,name,phone,details'
 
@@ -17,6 +18,65 @@ const toLocalISODate = (date = new Date()) => {
 const toNumber = (value, fallback = 0) => {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
+}
+
+const emptyExecutiveRow = (refDate) => ({
+  ref_date: refDate,
+  total_revenue: 0,
+  total_sales: 0,
+  new_leads: 0,
+  leads_won: 0,
+  bookings_created: 0,
+  bookings_scheduled: 0,
+  no_show_count: 0,
+  report_cards_sent: 0,
+})
+
+const normalizeExecutiveRow = (row = {}) => ({
+  ...emptyExecutiveRow(row.ref_date),
+  ...row,
+  total_revenue: toNumber(row.total_revenue, 0),
+  total_sales: toNumber(row.total_sales, 0),
+  new_leads: toNumber(row.new_leads, 0),
+  leads_won: toNumber(row.leads_won, 0),
+  no_show_count: toNumber(row.no_show_count, 0),
+  bookings_created: toNumber(row.bookings_created, 0),
+  bookings_scheduled: toNumber(row.bookings_scheduled, 0),
+  report_cards_sent: toNumber(row.report_cards_sent, 0),
+})
+
+function buildExecutiveComparison(rows = [], days = 14) {
+  const today = new Date()
+  const currentStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1))
+  const previousStart = new Date(currentStart.getFullYear(), currentStart.getMonth(), currentStart.getDate() - days)
+  const currentStartIso = toLocalISODate(currentStart)
+  const previousStartIso = toLocalISODate(previousStart)
+  const normalized = rows.map(normalizeExecutiveRow)
+  const currentByDate = new Map(
+    normalized.filter((row) => row.ref_date >= currentStartIso).map((row) => [row.ref_date, row]),
+  )
+  const timeline = Array.from({ length: days }, (_, index) => {
+    const date = new Date(currentStart.getFullYear(), currentStart.getMonth(), currentStart.getDate() + index)
+    const dateKey = toLocalISODate(date)
+    return currentByDate.get(dateKey) || emptyExecutiveRow(dateKey)
+  })
+  const previousTimeline = normalized.filter((row) => (
+    row.ref_date >= previousStartIso && row.ref_date < currentStartIso
+  ))
+  const summary = summarizeGrowthTimeline(timeline)
+  const previousSummary = summarizeGrowthTimeline(previousTimeline)
+
+  return {
+    timeline,
+    summary,
+    previousSummary,
+    changes: {
+      totalRevenue: percentageChange(summary.totalRevenue, previousSummary.totalRevenue),
+      newLeads: percentageChange(summary.newLeads, previousSummary.newLeads),
+      noShows: percentageChange(summary.noShows, previousSummary.noShows),
+      reportCardsSent: percentageChange(summary.reportCardsSent, previousSummary.reportCardsSent),
+    },
+  }
 }
 
 const sanitizeSlug = (value = '') => (
@@ -516,7 +576,7 @@ export function usePetshopGrowth() {
   const loadExecutiveTimelineFallback = useCallback(async ({ days = 14 } = {}) => {
     const daysSafe = Math.max(7, Math.min(90, Number(days || 14)))
     const startDate = new Date()
-    startDate.setDate(startDate.getDate() - (daysSafe - 1))
+    startDate.setDate(startDate.getDate() - ((daysSafe * 2) - 1))
     const startIso = toLocalISODate(startDate)
 
     const loadRows = async (table, dateColumn) => {
@@ -614,33 +674,13 @@ export function usePetshopGrowth() {
         total_revenue: Number(row.total_revenue.toFixed(2)),
       }))
 
-    const summary = timeline.reduce((acc, row) => ({
-      totalRevenue: acc.totalRevenue + row.total_revenue,
-      totalSales: acc.totalSales + row.total_sales,
-      newLeads: acc.newLeads + row.new_leads,
-      wonLeads: acc.wonLeads + row.leads_won,
-      noShows: acc.noShows + row.no_show_count,
-      bookings: acc.bookings + row.bookings_created,
-      bookingsScheduled: acc.bookingsScheduled + row.bookings_scheduled,
-      reportCardsSent: acc.reportCardsSent + row.report_cards_sent,
-    }), {
-      totalRevenue: 0,
-      totalSales: 0,
-      newLeads: 0,
-      wonLeads: 0,
-      noShows: 0,
-      bookings: 0,
-      bookingsScheduled: 0,
-      reportCardsSent: 0,
-    })
-
-    return { timeline, summary }
+    return buildExecutiveComparison(timeline, daysSafe)
   }, [activeTenantId, moduleId, runScoped])
 
   const loadExecutiveTimeline = useCallback(async ({ days = 14 } = {}) => {
     const daysSafe = Math.max(7, Math.min(90, Number(days || 14)))
     const startDate = new Date()
-    startDate.setDate(startDate.getDate() - (daysSafe - 1))
+    startDate.setDate(startDate.getDate() - ((daysSafe * 2) - 1))
 
     const response = await runScoped(async (includeTenant) => {
       let query = supabase
@@ -660,39 +700,7 @@ export function usePetshopGrowth() {
       throw response.error
     }
 
-    const timeline = (response.data || []).map((row) => ({
-      ...row,
-      total_revenue: toNumber(row.total_revenue, 0),
-      total_sales: toNumber(row.total_sales, 0),
-      new_leads: toNumber(row.new_leads, 0),
-      leads_won: toNumber(row.leads_won, 0),
-      no_show_count: toNumber(row.no_show_count, 0),
-      bookings_created: toNumber(row.bookings_created, 0),
-      bookings_scheduled: toNumber(row.bookings_scheduled, 0),
-      report_cards_sent: toNumber(row.report_cards_sent, 0),
-    }))
-
-    const summary = timeline.reduce((acc, row) => ({
-      totalRevenue: acc.totalRevenue + row.total_revenue,
-      totalSales: acc.totalSales + row.total_sales,
-      newLeads: acc.newLeads + row.new_leads,
-      wonLeads: acc.wonLeads + row.leads_won,
-      noShows: acc.noShows + row.no_show_count,
-      bookings: acc.bookings + row.bookings_created,
-      bookingsScheduled: acc.bookingsScheduled + row.bookings_scheduled,
-      reportCardsSent: acc.reportCardsSent + row.report_cards_sent,
-    }), {
-      totalRevenue: 0,
-      totalSales: 0,
-      newLeads: 0,
-      wonLeads: 0,
-      noShows: 0,
-      bookings: 0,
-      bookingsScheduled: 0,
-      reportCardsSent: 0,
-    })
-
-    return { timeline, summary }
+    return buildExecutiveComparison(response.data || [], daysSafe)
   }, [activeTenantId, loadExecutiveTimelineFallback, moduleId, runScoped])
 
   return {

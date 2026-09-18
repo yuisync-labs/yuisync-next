@@ -34,7 +34,7 @@ type CompatQueryBody = Record<string, unknown> & {
 
 const LEGACY_TIMESTAMP_COLUMNS: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
   loyalty_settings: Object.freeze({ updated_at: 'updated_at_ms' }),
-  loyalty_points: Object.freeze({ created_at: 'created_at_ms' }),
+  loyalty_points: Object.freeze({ created_at: 'created_at_ms', expires_at: 'expires_at_ms' }),
   commission_rules: Object.freeze({ updated_at: 'updated_at_ms' }),
   billing_settings: Object.freeze({ updated_at: 'updated_at_ms' }),
   accounting_services: Object.freeze({ created_at: 'created_at_ms', updated_at: 'updated_at_ms' }),

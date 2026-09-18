@@ -14,6 +14,7 @@ import { handlePetshopCashApiRequest } from './petshopCashApi'
 import { handlePetshopClientsApiRequest } from './petshopClientsApi'
 import { handleCheckoutApiRequest } from './checkoutApi'
 import { handleCompatApiRequest } from './compatApi'
+import { handleCustomerOnboardingApiRequest } from './customerOnboardingApi'
 import { handleFinalReadiness } from './finalReadiness'
 import { handleFiscalApiRequest } from './fiscalApi'
 import { handleInventoryAdjustmentRequest } from './inventoryAdjustment'
@@ -58,6 +59,9 @@ async function dispatch(request: Request, env: EdgeEnv, context: ExecutionContex
 
     const platformBillingResponse = await handlePlatformBillingApiRequest(request, bindings)
     if (platformBillingResponse) return respond(platformBillingResponse)
+
+    const customerOnboardingResponse = await handleCustomerOnboardingApiRequest(request, bindings)
+    if (customerOnboardingResponse) return respond(customerOnboardingResponse)
 
     const authMigrationResponse = await handleAuthMigrationRequest(request, bindings)
     if (authMigrationResponse) return respond(authMigrationResponse)

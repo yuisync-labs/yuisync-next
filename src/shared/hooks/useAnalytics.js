@@ -3,9 +3,45 @@ import { supabase, getTimezoneOffset } from '../../lib/supabase'
 import { useModuleCtx } from '../../context/ModuleContext'
 import { useAuthCtx } from '../../context/AuthContext'
 import { applyTenantFilter, runWithTenantFallback } from '../../lib/tenant'
+import {
+  buildCustomerInsights,
+  compareSalesPeriods,
+  summarizeChatResolution,
+} from '../lib/analyticsMetrics'
 
-function sumSales(data = []) {
-  return data.reduce((acc, row) => acc + (parseFloat(row.total_price) || 0), 0)
+const PAGE_SIZE = 1000
+
+const startOfLocalDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
+const addDays = (date, days) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + days)
+const addMonths = (date, months) => new Date(date.getFullYear(), date.getMonth() + months, 1)
+
+function localBoundary(date, timezoneOffset = getTimezoneOffset()) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}T00:00:00${timezoneOffset}`
+}
+
+function sumSalesBetween(rows, start, end) {
+  const startTime = start.getTime()
+  const endTime = end.getTime()
+  return rows.reduce((total, sale) => {
+    const createdAt = new Date(sale?.created_at).getTime()
+    if (!Number.isFinite(createdAt) || createdAt < startTime || createdAt >= endTime) return total
+    return total + (Number(sale?.total_price) || 0)
+  }, 0)
+}
+
+async function fetchAllPages(buildQuery) {
+  const rows = []
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const response = await buildQuery(from, from + PAGE_SIZE - 1)
+    if (response.error) throw response.error
+    const page = response.data || []
+    rows.push(...page)
+    if (page.length < PAGE_SIZE) break
+  }
+  return rows
 }
 
 export function useAnalytics() {
@@ -14,22 +50,36 @@ export function useAnalytics() {
   const { activeModuleId } = useModuleCtx()
   const { activeTenantId } = useAuthCtx()
 
-  const loadSalesBetween = useCallback(async ({ start, end }) => {
-    const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
+  const loadSalesBetween = useCallback(async ({ start, end } = {}) => (
+    fetchAllPages(async (from, to) => runWithTenantFallback(activeTenantId, async (includeTenant) => {
       let query = supabase
         .from('sales')
-        .select('total_price, discount, created_at')
+        .select('client_id, total_price, discount, created_at')
         .eq('module_id', activeModuleId)
         .eq('status', 'concluido')
+        .order('created_at', { ascending: true })
+        .range(from, to)
 
       query = applyTenantFilter(query, activeTenantId, includeTenant)
       if (start) query = query.gte('created_at', start)
       if (end) query = query.lt('created_at', end)
       return query
-    })
+    }))
+  ), [activeModuleId, activeTenantId])
 
-    return response.data || []
-  }, [activeModuleId, activeTenantId])
+  const loadActiveClients = useCallback(async () => (
+    fetchAllPages(async (from, to) => runWithTenantFallback(activeTenantId, async (includeTenant) => {
+      let query = supabase
+        .from('clients')
+        .select('id, name, phone, details, created_at')
+        .eq('module_id', activeModuleId)
+        .eq('active', true)
+        .order('created_at', { ascending: true })
+        .range(from, to)
+      query = applyTenantFilter(query, activeTenantId, includeTenant)
+      return query
+    }))
+  ), [activeModuleId, activeTenantId])
 
   const getOverviewMetrics = useCallback(async () => {
     if (!activeModuleId) return null
@@ -37,37 +87,32 @@ export function useAnalytics() {
     setError(null)
 
     try {
-      const allSales = await loadSalesBetween({})
-
-      const totalRevenue = sumSales(allSales)
-      const totalDiscount = allSales.reduce((acc, sale) => acc + (parseFloat(sale.discount) || 0), 0)
-      const avgTicket = allSales.length ? totalRevenue / allSales.length : 0
-
       const now = new Date()
-      const tz = getTimezoneOffset()
-      const firstDayThisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01T00:00:00${tz}`
-      const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0] + `T00:00:00${tz}`
+      const timezoneOffset = getTimezoneOffset()
+      const currentStartDate = new Date(now.getFullYear(), now.getMonth(), 1)
+      const currentEndDate = addDays(startOfLocalDay(now), 1)
+      const previousStartDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const previousMonthLastDay = new Date(now.getFullYear(), now.getMonth(), 0).getDate()
+      const comparableDay = Math.min(now.getDate(), previousMonthLastDay)
+      const previousEndDate = new Date(now.getFullYear(), now.getMonth() - 1, comparableDay + 1)
 
-      const thisMonthSales = await loadSalesBetween({ start: firstDayThisMonth })
-      const lastMonthSales = await loadSalesBetween({ start: firstDayLastMonth, end: firstDayThisMonth })
-
-      const thisMonthRevenue = sumSales(thisMonthSales)
-      const lastMonthRevenue = sumSales(lastMonthSales)
-
-      let growth = null
-      if (lastMonthRevenue > 0) {
-        growth = (((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100).toFixed(1)
-      }
+      const [currentRows, previousRows] = await Promise.all([
+        loadSalesBetween({
+          start: localBoundary(currentStartDate, timezoneOffset),
+          end: localBoundary(currentEndDate, timezoneOffset),
+        }),
+        loadSalesBetween({
+          start: localBoundary(previousStartDate, timezoneOffset),
+          end: localBoundary(previousEndDate, timezoneOffset),
+        }),
+      ])
 
       return {
-        totalRevenue,
-        totalDiscount,
-        avgTicket,
-        salesCount: allSales.length,
-        growth,
+        ...compareSalesPeriods(currentRows, previousRows),
+        periodLabel: `1 a ${now.getDate()} deste mês`,
       }
-    } catch (e) {
-      setError(e.message)
+    } catch (loadError) {
+      setError(loadError.message)
       return null
     } finally {
       setLoading(false)
@@ -78,138 +123,98 @@ export function useAnalytics() {
     if (!activeModuleId) return []
 
     try {
-      const tz = getTimezoneOffset()
-      const points = []
-      const now = new Date()
+      const now = startOfLocalDay(new Date())
+      const timezoneOffset = getTimezoneOffset()
+      let currentBuckets = []
+      let previousBuckets = []
 
       if (range === 'diario') {
-        for (let i = 6; i >= 0; i -= 1) {
-          const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i)
-          const start = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T00:00:00${tz}`
-          const endDate = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1)
-          const end = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}T00:00:00${tz}`
-          const rows = await loadSalesBetween({ start, end })
-          points.push({
-            name: date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).toUpperCase(),
-            total: sumSales(rows),
-          })
-        }
-        return points
-      }
-
-      if (range === 'semanal') {
-        for (let i = 3; i >= 0; i -= 1) {
-          const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (i * 7))
-          const startDate = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate() - 7)
-          const rows = await loadSalesBetween({ start: startDate.toISOString(), end: endDate.toISOString() })
-          points.push({ name: `Sem ${4 - i}`, total: sumSales(rows) })
-        }
-        return points
-      }
-
-      for (let i = 5; i >= 0; i -= 1) {
-        const startDate = new Date(now.getFullYear(), now.getMonth() - i, 1)
-        const endDate = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 1)
-        const start = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-01T00:00:00${tz}`
-        const end = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-01T00:00:00${tz}`
-        const rows = await loadSalesBetween({ start, end })
-        points.push({
-          name: startDate.toLocaleString('pt-BR', { month: 'short' }).toUpperCase(),
-          total: sumSales(rows),
+        const currentStart = addDays(now, -6)
+        const previousStart = addDays(currentStart, -7)
+        currentBuckets = Array.from({ length: 7 }, (_, index) => {
+          const start = addDays(currentStart, index)
+          return {
+            name: start.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).toUpperCase(),
+            start,
+            end: addDays(start, 1),
+          }
+        })
+        previousBuckets = Array.from({ length: 7 }, (_, index) => {
+          const start = addDays(previousStart, index)
+          return { start, end: addDays(start, 1) }
+        })
+      } else if (range === 'semanal') {
+        const currentStart = addDays(now, -27)
+        const previousStart = addDays(currentStart, -28)
+        currentBuckets = Array.from({ length: 4 }, (_, index) => {
+          const start = addDays(currentStart, index * 7)
+          return { name: `SEM ${index + 1}`, start, end: addDays(start, 7) }
+        })
+        previousBuckets = Array.from({ length: 4 }, (_, index) => {
+          const start = addDays(previousStart, index * 7)
+          return { start, end: addDays(start, 7) }
+        })
+      } else {
+        const currentStart = new Date(now.getFullYear(), now.getMonth() - 5, 1)
+        const previousStart = addMonths(currentStart, -6)
+        currentBuckets = Array.from({ length: 6 }, (_, index) => {
+          const start = addMonths(currentStart, index)
+          return {
+            name: start.toLocaleString('pt-BR', { month: 'short' }).toUpperCase(),
+            start,
+            end: index === 5 ? addDays(now, 1) : addMonths(start, 1),
+          }
+        })
+        previousBuckets = Array.from({ length: 6 }, (_, index) => {
+          const start = addMonths(previousStart, index)
+          return { start, end: addMonths(start, 1) }
         })
       }
-      return points
-    } catch (e) {
-      console.error(e)
+
+      const rows = await loadSalesBetween({
+        start: localBoundary(previousBuckets[0].start, timezoneOffset),
+        end: localBoundary(currentBuckets[currentBuckets.length - 1].end, timezoneOffset),
+      })
+
+      return currentBuckets.map((bucket, index) => ({
+        name: bucket.name,
+        current: sumSalesBetween(rows, bucket.start, bucket.end),
+        previous: sumSalesBetween(rows, previousBuckets[index].start, previousBuckets[index].end),
+      }))
+    } catch (loadError) {
+      console.error(loadError)
       return []
     }
   }, [activeModuleId, loadSalesBetween])
 
-  const getAtRiskCustomers = useCallback(async () => {
-    if (!activeModuleId) return []
+  const getCustomerInsights = useCallback(async () => {
+    if (!activeModuleId) return { activeCount: 0, atRisk: [] }
     try {
+      const [clients, sales] = await Promise.all([
+        loadActiveClients(),
+        loadSalesBetween({}),
+      ])
       const threshold = new Date()
       threshold.setDate(threshold.getDate() - 30)
-      const isoThreshold = threshold.toISOString()
-
-      const clientsResponse = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
-        let query = supabase
-          .from('clients')
-          .select('id, name, phone, details')
-          .eq('module_id', activeModuleId)
-          .eq('active', true)
-
-        query = applyTenantFilter(query, activeTenantId, includeTenant)
-        return query
-      })
-
-      const customers = clientsResponse.data || []
-      const result = []
-      for (const customer of customers) {
-        const saleResponse = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
-          let query = supabase
-            .from('sales')
-            .select('created_at')
-            .eq('module_id', activeModuleId)
-            .eq('customer_phone', customer.phone)
-            .order('created_at', { ascending: false })
-            .limit(1)
-
-          query = applyTenantFilter(query, activeTenantId, includeTenant)
-          return query
-        })
-
-        const lastDate = saleResponse.data?.[0]?.created_at
-        if (!lastDate || lastDate < isoThreshold) {
-          result.push({
-            id: customer.id,
-            pet_name: customer.details?.pet_name || customer.name,
-            owner_name: customer.name,
-            phone: customer.phone,
-            lastSeen: lastDate || 'Nunca',
-          })
-        }
-      }
-
-      return result
-        .sort((a, b) => (a.lastSeen === 'Nunca' ? -1 : a.lastSeen > b.lastSeen ? 1 : -1))
-        .slice(0, 5)
-    } catch {
-      return []
+      const insights = buildCustomerInsights(clients, sales, threshold)
+      return { ...insights, atRisk: insights.atRisk.slice(0, 5) }
+    } catch (loadError) {
+      console.error(loadError)
+      return { activeCount: 0, atRisk: [] }
     }
-  }, [activeModuleId, activeTenantId])
+  }, [activeModuleId, loadActiveClients, loadSalesBetween])
 
-  const getCustomerCount = useCallback(async () => {
-    if (!activeModuleId) return 0
-    try {
-      const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
-        let query = supabase
-          .from('clients')
-          .select('*', { count: 'exact', head: true })
-          .eq('module_id', activeModuleId)
-          .eq('active', true)
+  const getAtRiskCustomers = useCallback(async () => (
+    (await getCustomerInsights()).atRisk
+  ), [getCustomerInsights])
 
-        query = applyTenantFilter(query, activeTenantId, includeTenant)
-        return query
-      })
-
-      return response.count || 0
-    } catch {
-      return 0
-    }
-  }, [activeModuleId, activeTenantId])
+  const getCustomerCount = useCallback(async () => (
+    (await getCustomerInsights()).activeCount
+  ), [getCustomerInsights])
 
   const getChatResolutionMetrics = useCallback(async () => {
-    if (!activeModuleId) {
-      return {
-        avgCsat: null,
-        csatCount: 0,
-        aiResolved: 0,
-        humanResolved: 0,
-        closedCount: 0,
-        blockedReasons: {},
-      }
-    }
+    const empty = summarizeChatResolution([], [])
+    if (!activeModuleId) return empty
 
     try {
       const sessionsResponse = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
@@ -227,16 +232,7 @@ export function useAnalytics() {
       if (sessionsResponse.error) throw sessionsResponse.error
       const sessions = sessionsResponse.data || []
       const sessionIds = sessions.map((session) => session.id)
-      if (sessionIds.length === 0) {
-        return {
-          avgCsat: null,
-          csatCount: 0,
-          aiResolved: 0,
-          humanResolved: 0,
-          closedCount: 0,
-          blockedReasons: {},
-        }
-      }
+      if (sessionIds.length === 0) return empty
 
       const messagesResponse = await supabase
         .from('chat_messages')
@@ -244,47 +240,10 @@ export function useAnalytics() {
         .in('session_id', sessionIds)
 
       if (messagesResponse.error) throw messagesResponse.error
-
-      const humanHandled = new Set()
-      const assistantHandled = new Set()
-      const blockedReasons = {}
-      for (const message of messagesResponse.data || []) {
-        if (message.role === 'human_agent') humanHandled.add(message.session_id)
-        if (message.role === 'assistant') assistantHandled.add(message.session_id)
-        const reasons = message.metadata?.petbot_guard?.blocked_reasons
-        if (Array.isArray(reasons)) {
-          reasons.forEach((reason) => {
-            const key = String(reason || '').trim()
-            if (key) blockedReasons[key] = (blockedReasons[key] || 0) + 1
-          })
-        }
-      }
-
-      const closedSessions = sessions.filter((session) => (
-        session.status === 'closed' || session.csat_score !== null || session.closed_at
-      ))
-      const ratings = sessions
-        .map((session) => Number(session.csat_score))
-        .filter((score) => Number.isFinite(score))
-
-      return {
-        avgCsat: ratings.length ? ratings.reduce((sum, score) => sum + score, 0) / ratings.length : null,
-        csatCount: ratings.length,
-        aiResolved: closedSessions.filter((session) => assistantHandled.has(session.id) && !humanHandled.has(session.id)).length,
-        humanResolved: closedSessions.filter((session) => humanHandled.has(session.id)).length,
-        closedCount: closedSessions.length,
-        blockedReasons,
-      }
-    } catch (e) {
-      console.error(e)
-      return {
-        avgCsat: null,
-        csatCount: 0,
-        aiResolved: 0,
-        humanResolved: 0,
-        closedCount: 0,
-        blockedReasons: {},
-      }
+      return summarizeChatResolution(sessions, messagesResponse.data || [])
+    } catch (loadError) {
+      console.error(loadError)
+      return empty
     }
   }, [activeModuleId, activeTenantId])
 
@@ -293,6 +252,7 @@ export function useAnalytics() {
     error,
     getOverviewMetrics,
     getDynamicRevenueChart,
+    getCustomerInsights,
     getAtRiskCustomers,
     getCustomerCount,
     getChatResolutionMetrics,

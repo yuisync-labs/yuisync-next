@@ -24,6 +24,7 @@ const LauncherPage = lazy(() => import('../shared/pages/LauncherPage'))
 const PublicHomePage = lazy(() => import('../public/pages/PublicHomePage'))
 const PublicSalesPage = lazy(() => import('../public/pages/PublicSalesPage'))
 const PublicCheckoutPage = lazy(() => import('../public/pages/PublicCheckoutPage'))
+const PublicWelcomePage = lazy(() => import('../public/pages/PublicWelcomePage'))
 const PublicBookingPage = lazy(() => import('../public/pages/PublicBookingPage'))
 const PublicClientPortalPage = lazy(() => import('../public/pages/PublicClientPortalPage'))
 const PublicLegalPage = lazy(() => import('../public/pages/PublicLegalPage'))
@@ -195,6 +196,7 @@ function PublicRoutes({ authenticated = false }) {
       <Route path="/site" element={<PublicHomePage isAuthenticated={authenticated || undefined} />} />
       <Route path="/vendas" element={<PublicSalesPage isAuthenticated={authenticated || undefined} />} />
       <Route path="/vendas/contratar" element={<PublicCheckoutPage isAuthenticated={authenticated || undefined} />} />
+      <Route path="/boas-vindas" element={<PublicWelcomePage />} />
       <Route path="/agendar/:slug" element={<PublicBookingPage />} />
       <Route path="/portal/:token" element={<PublicClientPortalPage />} />
     </>

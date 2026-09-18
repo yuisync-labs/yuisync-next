@@ -131,7 +131,7 @@ export default function DashboardPage({ setPage }) {
 
   const [critical, setCritical] = useState([])
   const [stats, setStats] = useState({ revenue: 0, count: 0, upsells: 0, salesMix: [] })
-  const [chatQuality, setChatQuality] = useState({ avgCsat: null, csatCount: 0, aiResolved: 0, humanResolved: 0, closedCount: 0, blockedReasons: {} })
+  const [chatQuality, setChatQuality] = useState({ avgCsat: null, csatCount: 0, aiResolved: 0, humanResolved: 0, unclassifiedResolved: 0, closedCount: 0, blockedReasons: {} })
   const [loading, setLoading] = useState(true)
   const [secondaryLoading, setSecondaryLoading] = useState(true)
   const refreshInFlightRef = useRef(false)
@@ -306,9 +306,9 @@ export default function DashboardPage({ setPage }) {
         <div className="xl:col-span-4 h-full">
           <MetricCard
             icon={UserCheck}
-            label="Resolução de chat"
-            value={`${chatQuality.aiResolved}/${chatQuality.humanResolved}`}
-            description={`IA / humano em ${chatQuality.closedCount} encerrado${chatQuality.closedCount !== 1 ? 's' : ''}`}
+            label="Chats encerrados"
+            value={chatQuality.closedCount}
+            description={`${chatQuality.aiResolved} IA • ${chatQuality.humanResolved} humano${chatQuality.unclassifiedResolved ? ` • ${chatQuality.unclassifiedResolved} sem autoria` : ''}`}
             onClick={() => setPage('chat')}
           />
         </div>
