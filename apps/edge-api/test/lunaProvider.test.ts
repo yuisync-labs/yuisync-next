@@ -77,7 +77,11 @@ describe('Luna Groq provider and budget', () => {
     const provider = new GroqProvider({ apiKey: 'test-key', model: 'test-model', fetchFn })
     await provider.complete({ messages: [], tools: [] })
     const init = fetchFn.mock.calls[0]?.[1]
-    expect(JSON.parse(String(init?.body))).toMatchObject({ max_completion_tokens: 1_200 })
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      max_completion_tokens: 1_200,
+      reasoning_format: 'hidden',
+      reasoning_effort: 'low',
+    })
   })
 
   it('preserva margem de vinte por cento da cota de requests', () => {
