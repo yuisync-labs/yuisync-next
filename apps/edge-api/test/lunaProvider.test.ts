@@ -52,6 +52,16 @@ describe('Luna Groq provider and budget', () => {
     await expect(provider.complete({ messages: [], tools: [] })).rejects.toMatchObject({ code })
   })
 
+  it('classifica timeout por nome sem depender da classe DOMException do runtime', async () => {
+    const timeout = new Error('provider detail must stay private')
+    timeout.name = 'AbortError'
+    const provider = new GroqProvider({
+      apiKey: 'test-key', model: 'test-model',
+      fetchFn: vi.fn(async () => { throw timeout }),
+    })
+    await expect(provider.complete({ messages: [], tools: [] })).rejects.toMatchObject({ code: 'GROQ_TIMEOUT' })
+  })
+
   it('preserva margem de vinte por cento da cota de requests', () => {
     const budget = createLunaBudget({ minimumRemainingPercent: 20 })
     budget.beforeModel()

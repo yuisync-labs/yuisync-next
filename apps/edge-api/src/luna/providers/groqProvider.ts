@@ -60,7 +60,10 @@ export class GroqProvider {
     this.apiKey = String(options.apiKey || '').trim()
     this.model = String(options.model || '').trim()
     this.timeoutMs = Math.max(1_000, Math.min(60_000, options.timeoutMs ?? 30_000))
-    this.fetchFn = options.fetchFn ?? fetch
+    // Keep the Workers global fetch receiver intact. Storing `fetch` directly
+    // and later invoking it as `this.fetchFn(...)` binds the provider instance
+    // as its receiver and can fail before an HTTP response is produced.
+    this.fetchFn = options.fetchFn ?? ((input, init) => globalThis.fetch(input, init))
     if (!this.apiKey || !this.model) throw new GroqProviderError('GROQ_NOT_CONFIGURED')
   }
 
@@ -98,7 +101,7 @@ export class GroqProvider {
         signal: controller.signal,
       })
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
+      if (error instanceof Error && error.name === 'AbortError') {
         throw new GroqProviderError('GROQ_TIMEOUT')
       }
       throw new GroqProviderError('GROQ_REQUEST_FAILED')
