@@ -115,11 +115,10 @@ export function buildProductionWranglerConfig(baseConfig, resources, { attachDom
   if (!baseConfig?.env?.staging) throw new Error('STAGING_WRANGLER_ENV_REQUIRED')
   const config = structuredClone(baseConfig)
   const staging = config.env.staging
+  // keep_vars applies to the Worker config, not to an individual environment.
+  config.keep_vars = true
   const production = {
     name: PRODUCTION.worker,
-    // Preserve dashboard-managed runtime variables (including Stripe price
-    // IDs) when the production config is regenerated for a release.
-    keep_vars: true,
     // Make the isolated canary endpoint explicit. Once the Custom Domain is
     // attached, disable workers.dev so business traffic only uses yuisync.app.
     workers_dev: !attachDomain,
@@ -135,6 +134,13 @@ export function buildProductionWranglerConfig(baseConfig, resources, { attachDom
       EDGE_OPERATIONAL_MIGRATION_ENABLED: 'false',
       EDGE_AUTH_MIGRATION_ENABLED: 'false',
       EDGE_AUTH_TRUSTED_ORIGINS: `https://${PRODUCTION.domain}`,
+      LUNA_ENABLED: 'false',
+      LUNA_PROVIDER: String(config.vars?.LUNA_PROVIDER || 'groq'),
+      LUNA_MODEL: String(config.vars?.LUNA_MODEL || 'openai/gpt-oss-20b'),
+      LUNA_PLAYGROUND_ENABLED: 'false',
+      LUNA_MAX_MODEL_CALLS_PER_TURN: String(config.vars?.LUNA_MAX_MODEL_CALLS_PER_TURN || '6'),
+      LUNA_MAX_TOOL_CALLS_PER_TURN: String(config.vars?.LUNA_MAX_TOOL_CALLS_PER_TURN || '10'),
+      LUNA_MAX_TOKENS_PER_TURN: String(config.vars?.LUNA_MAX_TOKENS_PER_TURN || '12000'),
     },
     d1_databases: [
       {

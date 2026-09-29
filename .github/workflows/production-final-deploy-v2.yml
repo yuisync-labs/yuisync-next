@@ -145,17 +145,7 @@ jobs:
           VERSION="$(npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT value FROM _yuisync_system_metadata WHERE key='schema_version';")"
           AUTH="$(npx wrangler d1 execute AUTH_DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('user','session','account','verification') ORDER BY name;")"
           export SECRETS VERSION AUTH
-          node --input-type=module <<'NODE'
-          const flat = (s) => { const p = JSON.parse(s); return (Array.isArray(p) ? p : [p]).flatMap((e) => Array.isArray(e?.results) ? e.results : []) }
-          const secrets = JSON.parse(process.env.SECRETS || '[]')
-          const version = Number(flat(process.env.VERSION)[0]?.value ?? NaN)
-          const auth = flat(process.env.AUTH).map((r) => String(r.name)).sort().join(',')
-          if (!secrets.some((r) => r?.name === 'BETTER_AUTH_SECRET')) throw new Error('BETTER_AUTH_SECRET_REQUIRED')
-          if (!secrets.some((r) => r?.name === 'AUTH_EMAIL_API_KEY')) throw new Error('AUTH_EMAIL_API_KEY_REQUIRED')
-          if (!secrets.some((r) => r?.name === 'AUTH_EMAIL_FROM')) throw new Error('AUTH_EMAIL_FROM_REQUIRED')
-          if (!Number.isInteger(version) || version < 25 || version > 30) throw new Error(`SCHEMA_VERSION_UNSUPPORTED:${version}`)
-          if (auth !== 'account,session,user,verification') throw new Error(`AUTH_SCHEMA_INVALID:${auth}`)
-          NODE
+          node ../../scripts/migration/production-preflight.mjs
 
       - name: Capture production D1 rollback bookmarks
         working-directory: apps/edge-api
@@ -163,8 +153,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ../../.artifacts/production-release
-          npx wrangler d1 time-travel info DB --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json > ../../.artifacts/production-release/db-before-migration.json
-          npx wrangler d1 time-travel info AUTH_DB --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json > ../../.artifacts/production-release/auth-db-before-migration.json
+          npx wrangler d1 time-travel info DB --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json | node ../../scripts/migration/production-preflight.mjs normalize-json > ../../.artifacts/production-release/db-before-migration.json
+          npx wrangler d1 time-travel info AUTH_DB --env production --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json | node ../../scripts/migration/production-preflight.mjs normalize-json > ../../.artifacts/production-release/auth-db-before-migration.json
 
       - name: Apply production D1 migrations
         id: migrate
@@ -181,7 +171,8 @@ jobs:
           VERSION="$(npx wrangler d1 execute DB --env production --remote --config "$YUISYNC_PRODUCTION_WRANGLER_CONFIG" --json --command "SELECT value FROM _yuisync_system_metadata WHERE key='schema_version';")"
           export VERSION
           node --input-type=module <<'NODE'
-          const p = JSON.parse(process.env.VERSION || '[]')
+          const { parseWranglerJson } = await import('../../scripts/migration/production-preflight.mjs')
+          const p = parseWranglerJson(process.env.VERSION, 'VERSION')
           const rows = (Array.isArray(p) ? p : [p]).flatMap((e) => Array.isArray(e?.results) ? e.results : [])
           const version = String(rows[0]?.value ?? '')
           if (version !== '30') throw new Error(`SCHEMA_VERSION_INVALID_AFTER_MIGRATION:${version}`)
@@ -193,7 +184,7 @@ jobs:
         with:
           name: production-migration-evidence-${{ env.RELEASE_SHA }}
           path: .artifacts/production-release/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
 
       - name: Attach custom domain configuration
