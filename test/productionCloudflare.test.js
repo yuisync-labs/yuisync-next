@@ -31,11 +31,15 @@ describe('production Cloudflare config', () => {
     expect(production.routes).toBeUndefined()
     expect(production.workers_dev).toBe(true)
     expect(production.preview_urls).toBe(false)
+    expect(config.keep_vars).toBe(true)
+    expect(production.keep_vars).toBeUndefined()
     expect(production.vars).toMatchObject({
       APP_ENV: 'production',
       RELEASE_CHANNEL: 'production',
       EDGE_BETTER_AUTH_ENABLED: 'true',
       EDGE_AUTH_TRUSTED_ORIGINS: 'https://yuisync.app',
+      LUNA_ENABLED: 'false',
+      LUNA_PLAYGROUND_ENABLED: 'false',
     })
     expect(production.d1_databases.map((binding) => [binding.binding, binding.database_name, binding.database_id])).toEqual([
       ['DB', 'yuisync-next-production', resources.database.id],
