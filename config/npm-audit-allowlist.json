@@ -3,61 +3,28 @@
   "policy": "Known high-severity dependency debt is time-boxed. New or expired findings fail CI.",
   "entries": [
     {
-      "package": "body-parser",
-      "review_by": "2026-08-31",
-      "reason": "Pre-existing advisory in main; update separately from the Luna foundation PR."
-    },
-    {
-      "package": "express",
-      "review_by": "2026-08-31",
-      "reason": "Transitive exposure through the pre-existing body-parser advisory."
-    },
-    {
-      "package": "react-router",
-      "review_by": "2026-08-31",
-      "reason": "Pre-existing advisory in main; requires a dedicated dependency upgrade PR."
-    },
-    {
-      "package": "react-router-dom",
-      "review_by": "2026-08-31",
-      "reason": "Transitive exposure through the pre-existing react-router advisory."
-    },
-    {
-      "package": "concurrently",
-      "via_only": [
-        "shell-quote"
-      ],
-      "review_by": "2026-08-31",
-      "reason": "Transitive exposure only through the allowlisted shell-quote advisory; concurrently has no separately accepted direct advisory."
-    },
-    {
-      "package": "shell-quote",
-      "review_by": "2026-08-31",
-      "reason": "Pre-existing development dependency advisory; update in a dedicated PR."
-    },
-    {
       "package": "sharp",
       "advisories_only": [1193725],
-      "review_by": "2026-09-24",
-      "reason": "Development-only dependency still pinned by the latest Cloudflare vitest pool 0.22.0; rechecked on 2026-09-17 and remove as soon as the pool publishes a fixed Miniflare."
+      "review_by": "2026-10-13",
+      "reason": "Development-only dependency remains pinned at 0.35.2 by the latest Cloudflare vitest pool 0.22.0; rechecked on 2026-09-29 and remove as soon as the pool publishes a fixed Miniflare. Production dependencies are clean under npm audit --omit=dev."
     },
     {
       "package": "miniflare",
-      "via_only": ["sharp"],
-      "review_by": "2026-09-24",
-      "reason": "Development-only transitive exposure through the exact time-boxed sharp advisory."
+      "via_only": ["sharp", "undici"],
+      "review_by": "2026-10-13",
+      "reason": "Development-only transitive exposure through the exact time-boxed sharp advisory and a moderate undici advisory; the latest Cloudflare test pool still pins both versions."
     },
     {
       "package": "wrangler",
       "via_only": ["miniflare"],
-      "review_by": "2026-09-24",
-      "reason": "Development-only transitive exposure through the exact time-boxed miniflare chain."
+      "review_by": "2026-10-13",
+      "reason": "Development-only transitive exposure through the exact time-boxed miniflare chain; no deploy/runtime package is affected."
     },
     {
       "package": "@cloudflare/vitest-pool-workers",
       "via_only": ["miniflare", "wrangler"],
-      "review_by": "2026-09-24",
-      "reason": "Development-only transitive exposure through the exact time-boxed Cloudflare toolchain chain."
+      "review_by": "2026-10-13",
+      "reason": "Development-only transitive exposure through the exact time-boxed Cloudflare toolchain chain; 0.22.0 remains the latest release as of 2026-09-29."
     }
   ]
 }

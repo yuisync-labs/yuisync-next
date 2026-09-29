@@ -39,6 +39,12 @@ const MIGRATION_CONTROL_TABLES = new Set([
   'migration_table_checkpoints',
   'migration_reconciliation',
 ])
+export const COMMERCIAL_CONTROL_TABLES = new Set([
+  'platform_checkout_orders',
+  'platform_billing_subscriptions',
+  'platform_stripe_webhook_events',
+  'platform_onboarding_invitations',
+])
 
 if (!/^[A-Za-z0-9_-]+$/.test(WRANGLER_ENV)) throw new Error(`INVALID_WRANGLER_ENV:${WRANGLER_ENV}`)
 
@@ -124,7 +130,7 @@ function referencedTables(createSql) {
   return [...new Set(references)]
 }
 
-function tenantScopedDeleteOrder(schemaRows) {
+export function tenantScopedDeleteOrder(schemaRows) {
   const definitions = schemaRows
     .map((row) => ({ name: String(row?.name || ''), sql: String(row?.sql || '') }))
     .filter((row) => SAFE_TABLE_NAME.test(row.name) && row.sql)
@@ -133,6 +139,12 @@ function tenantScopedDeleteOrder(schemaRows) {
     // control subgraph also prevents its run_id children from being mistaken
     // for unscoped tenant children of migration_runs/source_records.
     .filter((row) => !MIGRATION_CONTROL_TABLES.has(row.name))
+    // Commercial checkout is control-plane state, not data created by the
+    // operational E2E tenant fixture. Never sweep orders, subscriptions,
+    // webhook receipts or onboarding invitations while cleaning a fixture.
+    // If a fixture is ever linked to a real checkout row, the tenant FK will
+    // fail closed instead of deleting commercial history.
+    .filter((row) => !COMMERCIAL_CONTROL_TABLES.has(row.name))
 
   const scoped = definitions
     .filter((row) => row.name !== 'tenants' && row.name !== 'identity_principals' && /\btenant_id\b/i.test(row.sql))
@@ -332,11 +344,18 @@ async function cleanup() {
   console.log(JSON.stringify({ status: 'cleaned', run_id: manifest.runId || null, tenant_ids: tenantIds, wrangler_env: WRANGLER_ENV }))
 }
 
-if (!['setup', 'cleanup', 'sweep'].includes(COMMAND)) {
-  console.error('Usage: node scripts/migration/staging-e2e-fixtures.mjs <setup|cleanup|sweep>')
-  process.exit(2)
+async function main() {
+  if (!['setup', 'cleanup', 'sweep'].includes(COMMAND)) {
+    console.error('Usage: node scripts/migration/staging-e2e-fixtures.mjs <setup|cleanup|sweep>')
+    process.exitCode = 2
+    return
+  }
+
+  if (COMMAND === 'setup') await setup()
+  else if (COMMAND === 'cleanup') await cleanup()
+  else sweepStaleFixtures()
 }
 
-if (COMMAND === 'setup') await setup()
-else if (COMMAND === 'cleanup') await cleanup()
-else sweepStaleFixtures()
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main()
+}
