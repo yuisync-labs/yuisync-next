@@ -45,7 +45,6 @@ function AgendaWithClientHistory(props) {
   return (
     <>
       <AgendaPage {...props} />
-      <DashboardServiceKpiEnhancer />
       <ClientHistoryGroomingEnhancer />
     </>
   )
