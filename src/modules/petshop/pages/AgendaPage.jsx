@@ -51,6 +51,7 @@ import { AgendaBillingLabel } from '../components/AgendaBillingLabel'
 import { AgendaAppointmentPanel } from '../components/AgendaAppointmentPanel'
 import { appointmentPackagePresentation } from '../lib/appointmentBillingPresentation'
 import { appointmentRequiresGroomingMachineNumber } from '../lib/groomingMachinePolicy'
+import { buildAgendaStats } from '../lib/agendaStats'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const asAgendaServices = (services = []) =>
@@ -169,19 +170,6 @@ const serviceLabelFallbackLegacy = (type = '') =>
 
 const serviceLabelFallback = (type = '', services = SERVICES) =>
   (services || SERVICES).find((service) => service.value === type)?.label || serviceLabelFallbackLegacy(type)
-
-const buildStatsForDate = (items, selectedDate) => {
-  const day = isoDate(selectedDate)
-  const list = items.filter((appt) => appt.scheduled_at?.startsWith(day))
-  return {
-    total: list.length,
-    agendado: list.filter((appt) => appt.status === 'agendado').length,
-    confirmado: list.filter((appt) => appt.status === 'confirmado').length,
-    em_andamento: list.filter((appt) => appt.status === 'em_andamento').length,
-    concluido: list.filter((appt) => appt.status === 'concluido').length,
-    cancelado: list.filter((appt) => appt.status === 'cancelado').length,
-  }
-}
 
 const STATUSES = [
   { value: 'agendado',      label: 'Agendado'      },
@@ -1525,7 +1513,6 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
   const tabbedAppointments = appointments.filter((appointment) =>
     getAppointmentServiceGroup(appointment, agendaServices) === activeAgendaTab
   )
-  const stats = buildStatsForDate(tabbedAppointments, selectedDate)
   const tabCounts = AGENDA_TABS.reduce((acc, tab) => ({
     ...acc,
     [tab.id]: appointments.filter((appointment) => getAppointmentServiceGroup(appointment, agendaServices) === tab.id).length,
@@ -1545,6 +1532,7 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
       (staffById.get(a.responsible_staff_key)?.name || a.responsible_staff_name || '').toLowerCase().includes(q)
     )
   })
+  const stats = buildAgendaStats(displayed, selectedDate, agendaServices)
 
   const isToday = isoDate(selectedDate) === todayISO()
   const reloadCurrentView = () => {
@@ -1623,8 +1611,8 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
         {[
           { label: 'Total',        value: stats.total,        cls: 'text-text'       },
           { label: 'Agendados',    value: stats.agendado,     cls: 'text-[var(--ui-warning-fg)]' },
-          { label: 'Confirmados',  value: stats.confirmado,   cls: 'text-[var(--ui-info-fg)]' },
-          { label: 'Em andamento', value: stats.em_andamento, cls: 'text-[var(--ui-progress-fg)]' },
+          { label: 'Banhos',       value: stats.baths,        cls: 'text-[var(--ui-info-fg)]' },
+          { label: 'Tosas',        value: stats.grooming,     cls: 'text-[var(--ui-progress-fg)]' },
           { label: 'Concluídos',   value: stats.concluido,    cls: 'text-[var(--ui-success-fg)]' },
           { label: 'Cancelados',   value: stats.cancelado,    cls: 'text-[var(--ui-danger-fg)]' },
         ].map(s => (
