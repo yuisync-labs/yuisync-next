@@ -13,6 +13,10 @@ export function renderProposalSummary(row: PresentableProposal): string {
   if (payload.fulfillment_type) lines.push(`Modalidade: ${payload.fulfillment_type === 'counter' ? 'retirada' : 'entrega'}`)
   if (payload.notes) lines.push(`Observações: ${String(payload.notes)}`)
   if (payload.reason) lines.push(`Motivo: ${String(payload.reason)}`)
+  if (Array.isArray(payload.benefit_allocations)) for (const raw of payload.benefit_allocations) {
+    const allocation = raw as Record<string, unknown>
+    lines.push(`Benefício de pacote: ${String(allocation.planName)} — ${String(allocation.serviceCode)}. Sujeito à revalidação na confirmação.`)
+  }
   if (payload.total_cents !== undefined) lines.push(`Total: ${money(payload.total_cents)}`)
   else if (payload.subtotal_cents !== undefined) lines.push(`Serviços: ${money(payload.subtotal_cents)}`)
   if (payload.operation_kind === 'product_order_create' || row.operation_kind === 'product_order_create') lines.push('O pedido ficará pendente; isto não confirma pagamento.')

@@ -72,7 +72,7 @@ describe('Luna Groq provider and budget', () => {
 
   it('reserva 1.200 tokens por padrão para modelos com raciocínio', async () => {
     const fetchFn = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => (
-      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 })
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { status: 200 })
     ))
     const provider = new GroqProvider({ apiKey: 'test-key', model: 'test-model', fetchFn })
     await provider.complete({ messages: [], tools: [] })
@@ -82,6 +82,22 @@ describe('Luna Groq provider and budget', () => {
       reasoning_format: 'hidden',
       reasoning_effort: 'low',
     })
+  })
+
+  it('não trata headers ausentes como cota zero nem envia tools vazias na reformulação', async () => {
+    const fetchFn = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { status: 200, headers: { 'x-ratelimit-limit-requests': '1000' } }))
+    const provider = new GroqProvider({ apiKey: 'test-key', model: 'test-model', fetchFn })
+    const response = await provider.complete({ messages: [], tools: [] })
+    expect(response.rateLimit.remainingRequests).toBeNull()
+    expect(response.tokenLimit).toBeNull()
+    const body = JSON.parse(String(fetchFn.mock.calls[0][1]?.body))
+    expect(body).not.toHaveProperty('tools')
+    expect(body).not.toHaveProperty('tool_choice')
+  })
+
+  it.each([undefined, { prompt_tokens: -1, completion_tokens: 10 }, { prompt_tokens: 10, completion_tokens: 0.5 }])('não certifica consumo desconhecido ou inválido como zero', async usage => {
+    const provider = new GroqProvider({ apiKey: 'test-key', model: 'test-model', fetchFn: async () => new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage }), { status: 200 }) })
+    await expect(provider.complete({ messages: [], tools: [] })).rejects.toMatchObject({ code: 'GROQ_USAGE_UNAVAILABLE' })
   })
 
   it('preserva margem de vinte por cento da cota de requests', () => {

@@ -3,13 +3,16 @@ import type {
   LunaToolDefinition,
   LunaToolResult,
 } from './contracts'
-import { commitConfirmedProposal } from './commitProposal'
+import { commitConfirmedProposal, getProposalOperationStatus } from './commitProposal'
 import { validateScheduleAvailability } from './schedulePolicy'
 import { loadBenefitCandidates } from '../subscriptionBenefitCandidates'
 import { matchesToolSchema } from './toolSchema'
 import { isConversationCustomer } from './customerIdentity'
 import { LunaConversationRepository } from './conversationRepository'
 import type { DraftEvent } from './operationalState'
+import { executeInformationTool, informationToolDefinitions } from './informationTools'
+import { resolveBillingCatalog } from '../appointmentBillingCatalog'
+import { automaticAllocations } from '../subscriptionBenefitAuto'
 
 type JsonRecord = Record<string, unknown>
 type ToolHandler = (args: JsonRecord, context: LunaExecutionContext) => Promise<LunaToolResult>
@@ -26,6 +29,11 @@ const objectSchema = (properties: JsonRecord, required: string[] = []) => ({
 const stringProperty = (description: string) => ({ type: 'string', description })
 
 const DEFINITIONS: readonly LunaToolDefinition[] = [
+  ...informationToolDefinitions,
+  {
+    name: 'get_operation_status', description: 'Consulta e reconcilia uma operação pelo ID da proposta após resposta perdida. Não repete gravações. Estado incerto requer humano.',
+    parameters: objectSchema({ proposal_id: stringProperty('ID da proposta desta conversa.') }, ['proposal_id']),
+  },
   {
     name: 'present_proposal', description: 'Reapresenta uma proposta após interrupção/pergunta paralela. Se há várias propostas, apresente uma por vez para confirmação inequívoca.',
     parameters: objectSchema({ proposal_id: stringProperty('ID da proposta persistida.') }, ['proposal_id']),
@@ -186,6 +194,8 @@ async function createProposal(database: D1Database, context: LunaExecutionContex
 
 export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
   const handlers = new Map<string, ToolHandler>()
+  for (const definition of informationToolDefinitions) handlers.set(definition.name, (args, context) => executeInformationTool(definition.name, args, context, database))
+  handlers.set('get_operation_status', (args, context) => getProposalOperationStatus(database, context, clean(args.proposal_id, 160)))
   handlers.set('present_proposal', async (args, context) => {
     const row = await database.prepare(`SELECT id,version,payload_json FROM luna_proposals WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4 AND status='awaiting_confirmation' AND expires_at_ms>=?5`)
       .bind(context.tenantId, context.moduleId, context.conversationId, args.proposal_id, Date.now()).first<{ id: string; version: number; payload_json: string }>()
@@ -312,16 +322,21 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     const petId = clean(args.pet_id, 160)
     const serviceIds = Array.isArray(args.service_ids) ? args.service_ids.map((item) => clean(item, 160)).filter(Boolean).slice(0, 6) : []
     const scheduledAt = Date.parse(clean(args.scheduled_at, 80))
+    if (!/(?:Z|[+-]\d\d:\d\d)$/.test(clean(args.scheduled_at, 80))) return { ok: false, code: 'SCHEDULE_TIMEZONE_REQUIRED', retryable: false }
+    if (new Set(serviceIds).size !== serviceIds.length) return { ok: false, code: 'SERVICE_IDS_DUPLICATED', retryable: false }
     if (!customerId || !petId || !serviceIds.length || !Number.isFinite(scheduledAt)) {
       return { ok: false, code: 'APPOINTMENT_FIELDS_REQUIRED', retryable: false, missing_fields: ['customer_id', 'pet_id', 'service_ids', 'scheduled_at'] }
     }
-    const pet = await database.prepare(`SELECT id,name FROM pets WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND client_id=?4 AND status='active' LIMIT 1`)
+    const pet = await database.prepare(`SELECT id,name,species,weight_kg FROM pets WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND client_id=?4 AND status='active' LIMIT 1`)
       .bind(context.tenantId, context.moduleId, petId, customerId).first<Record<string, unknown>>()
     if (!pet) return { ok: false, code: 'PET_NOT_FOUND', retryable: false }
     const placeholders = serviceIds.map((_, index) => `?${index + 3}`).join(',')
     const services = await database.prepare(`SELECT id,code,name,group_type,default_price_cents,default_duration_min FROM services WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND id IN (${placeholders}) ORDER BY sort_order,id`)
       .bind(context.tenantId, context.moduleId, ...serviceIds).all<Record<string, unknown>>()
     if (services.results.length !== new Set(serviceIds).size) return { ok: false, code: 'SERVICE_NOT_FOUND', retryable: false }
+    const catalog = await resolveBillingCatalog({ db: database, tenantId: context.tenantId, moduleId: context.moduleId, species: String(pet.species), weightGrams: pet.weight_kg == null ? null : Math.round(Number(pet.weight_kg) * 1000), payload: { services: services.results.map(service => ({ code: service.code })) } })
+    if (catalog.code || !catalog.items?.length) return { ok: false, code: catalog.code || 'SERVICE_NOT_FOUND', retryable: false }
+    const allocations = await automaticAllocations(database, { tenantId: context.tenantId, moduleId: context.moduleId, clientId: customerId }, catalog.items)
     const durationMinutes = services.results.reduce((sum, service) => sum + Number(service.default_duration_min || 0), 0)
     const availability = await validateScheduleAvailability({
       database, tenantId: context.tenantId, moduleId: context.moduleId,
@@ -336,6 +351,8 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
       duration_minutes: durationMinutes,
       services: services.results,
       subtotal_cents: services.results.reduce((sum, service) => sum + Number(service.default_price_cents || 0), 0),
+      benefit_allocations: allocations,
+      total_cents: services.results.reduce((sum, service, position) => sum + (allocations.some(allocation => allocation.position === position) ? 0 : Number(service.default_price_cents || 0)), 0),
       notes: clean(args.notes, 1000) || null,
     }
     return createProposal(database, context, 'appointment_create', payload, clean(args.operation_id, 100))
@@ -346,6 +363,9 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     const requested = Array.isArray(args.items) ? args.items.map(record).slice(0, 12) : []
     const fulfillmentType = args.fulfillment_type === 'delivery' ? 'delivery' : args.fulfillment_type === 'counter' ? 'counter' : ''
     if (!customerId || !requested.length || !fulfillmentType) return { ok: false, code: 'ORDER_FIELDS_REQUIRED', retryable: false }
+    // Delivery commit still lacks an atomic address/quote snapshot. Never
+    // prepare a fictitious zero-fee delivery while that contract is unfinished.
+    if (fulfillmentType === 'delivery') return { ok: false, code: 'DELIVERY_COMMIT_NOT_SUPPORTED', retryable: false }
     if (new Set(requested.map((item) => item.product_id)).size !== requested.length) return { ok: false, code: 'DUPLICATE_PRODUCT_LINES', retryable: false }
     const customer = await database.prepare(`SELECT id,name FROM clients WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`)
       .bind(context.tenantId, context.moduleId, customerId).first<Record<string, unknown>>()
@@ -372,6 +392,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     const customerId = clean(args.customer_id, 160)
     const appointmentId = clean(args.appointment_id, 160)
     const scheduledAt = Date.parse(clean(args.scheduled_at, 80))
+    if (!/(?:Z|[+-]\d\d:\d\d)$/.test(clean(args.scheduled_at, 80))) return { ok: false, code: 'SCHEDULE_TIMEZONE_REQUIRED', retryable: false }
     if (!customerId || !appointmentId || !Number.isFinite(scheduledAt)) {
       return { ok: false, code: 'RESCHEDULE_FIELDS_REQUIRED', retryable: false }
     }

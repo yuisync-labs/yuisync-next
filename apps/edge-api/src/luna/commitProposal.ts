@@ -6,6 +6,7 @@ import type { LunaExecutionContext, LunaToolResult } from './contracts'
 import { validateScheduleAvailability } from './schedulePolicy'
 import { isConversationCustomer } from './customerIdentity'
 import { LunaConversationRepository } from './conversationRepository'
+import { canonicalJson } from './canonicalJson'
 
 type ProposalRow = {
   id: string
@@ -23,9 +24,21 @@ type JsonRecord = Record<string, unknown>
 const record = (value: unknown): JsonRecord => value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : {}
 const text = (value: unknown) => String(value ?? '').trim()
 
-function explicitConfirmation(value: string): boolean {
+export function explicitConfirmation(value: string, operationKind: string): boolean {
   const normalized = value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase()
-  return /^(sim|confirmo|confirmado|ok|certo|fechado|pode confirmar|pode agendar|pode fechar)[.! ]*$/.test(normalized)
+  if (/^(sim|confirmo|confirmado|ok|certo|fechado|pode confirmar|pode agendar|pode fechar)[.! ]*$/.test(normalized)) return true
+  // This is a narrow authorization grammar, not a conversational classifier.
+  // Named confirmations must match the operation actually presented. Any
+  // correction, qualification or negation stays outside this grammar.
+  const subjects: Record<string, string[]> = {
+    appointment_create: ['o horario', 'o agendamento', 'o banho', 'o resumo do banho', 'o resumo do agendamento'],
+    appointment_reschedule: ['a mudanca', 'o reagendamento'],
+    appointment_cancel: ['o cancelamento'],
+    product_order_create: ['o pedido', 'a compra', 'o resumo do pedido'],
+    customer_registration: ['o cadastro'], pet_registration: ['o cadastro'],
+  }
+  const phrase = normalized.replace(/[.! ]+$/, '')
+  return (subjects[operationKind] ?? []).some(subject => phrase === `confirmo ${subject}`)
 }
 
 async function latestConfirmation(database: D1Database, context: LunaExecutionContext, proposal: ProposalRow): Promise<boolean> {
@@ -36,7 +49,7 @@ async function latestConfirmation(database: D1Database, context: LunaExecutionCo
       AND direction='inbound' AND actor_type='customer' LIMIT 1
   `).bind(context.tenantId, context.moduleId, context.conversationId, context.sourceMessageId)
     .first<{ id: string; content_text: string; created_at_ms: number }>()
-  if (!message || !explicitConfirmation(message.content_text)) return false
+  if (!message || !explicitConfirmation(message.content_text, proposal.operation_kind)) return false
   const presentation = await database.prepare(`SELECT outbound_message_id,presented_at_ms FROM luna_proposal_presentations
     WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND proposal_id=?4 AND proposal_version=?5 AND fingerprint=?6`)
     .bind(context.tenantId, context.moduleId, context.conversationId, proposal.id, proposal.version, proposal.fingerprint)
@@ -57,6 +70,38 @@ async function markProposal(database: D1Database, context: LunaExecutionContext,
     UPDATE luna_proposals SET status=?5,committed_operation_id=?6,updated_at_ms=?7
     WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4
   `).bind(context.tenantId, context.moduleId, context.conversationId, proposalId, status, operationId, Date.now()).run()
+}
+
+// Reconcile before revalidating availability/price: the previous request may
+// have committed and lost its response. Never issue a second write merely
+// because the proposal's completion marker was not persisted.
+export async function reconcileProposalOperation(database: D1Database, context: LunaExecutionContext, proposal: ProposalRow): Promise<LunaToolResult> {
+  if (proposal.status === 'completed' && proposal.committed_operation_id) {
+    return { ok: true, data: { operation_id: proposal.committed_operation_id, operation_kind: proposal.operation_kind, idempotent: true } }
+  }
+  if (proposal.status !== 'executing') return { ok: true, data: { proposal_id: proposal.id, status: proposal.status, committed: false } }
+  const operationKey = `luna-proposal:${proposal.id}`
+  let existing: { id: string } | null = null
+  if (proposal.operation_kind === 'appointment_create') {
+    existing = await database.prepare(`SELECT id FROM appointments WHERE tenant_id=?1 AND module_id=?2 AND operation_key=?3 AND operation_fingerprint=?4 LIMIT 1`)
+      .bind(context.tenantId, context.moduleId, operationKey, proposal.fingerprint).first<{ id: string }>()
+  } else if (proposal.operation_kind === 'product_order_create') {
+    existing = await database.prepare(`SELECT id FROM sales WHERE tenant_id=?1 AND module_id=?2 AND operation_key=?3 LIMIT 1`)
+      .bind(context.tenantId, context.moduleId, operationKey).first<{ id: string }>()
+  }
+  if (!existing) return { ok: false, code: 'COMMIT_STATE_UNCERTAIN', retryable: false }
+  await markProposal(database, context, proposal.id, 'completed', existing.id)
+  return { ok: true, data: { operation_id: existing.id, operation_kind: proposal.operation_kind, idempotent: true } }
+}
+
+export async function getProposalOperationStatus(database: D1Database, context: LunaExecutionContext, proposalId: string): Promise<LunaToolResult> {
+  const proposal = await database.prepare(`SELECT id,operation_kind,status,version,payload_json,fingerprint,source_message_id,expires_at_ms,committed_operation_id FROM luna_proposals WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4 LIMIT 1`)
+    .bind(context.tenantId, context.moduleId, context.conversationId, proposalId).first<ProposalRow>()
+  if (!proposal) return { ok: false, code: 'PROPOSAL_NOT_FOUND', retryable: false }
+  let payload: JsonRecord
+  try { payload = record(JSON.parse(proposal.payload_json)) } catch { return { ok: false, code: 'PROPOSAL_PAYLOAD_INVALID', retryable: false } }
+  if (!await isConversationCustomer(database, context, text(payload.customer_id))) return { ok: false, code: 'CUSTOMER_SCOPE_DENIED', retryable: false }
+  return reconcileProposalOperation(database, context, proposal)
 }
 
 async function commitAppointment(database: D1Database, context: LunaExecutionContext, proposal: ProposalRow, payload: JsonRecord): Promise<LunaToolResult> {
@@ -101,6 +146,7 @@ async function commitAppointment(database: D1Database, context: LunaExecutionCon
   const allocations = await automaticAllocations(database, {
     tenantId: context.tenantId, moduleId: context.moduleId, clientId: customerId,
   }, items)
+  if (canonicalJson(allocations) !== canonicalJson(payload.benefit_allocations ?? [])) return { ok: false, code: 'PACKAGE_BENEFITS_CHANGED', retryable: false }
   const intent: BillingIntent = { type: 'auto', allocations: [] }
   const appointmentId = crypto.randomUUID()
   const response = await executeBillingBooking({ DB: database }, commandPayload, {
@@ -261,6 +307,8 @@ export async function commitConfirmedProposal(database: D1Database, context: Lun
   try { identityPayload = record(JSON.parse(proposal.payload_json)) }
   catch { return { ok: false, code: 'PROPOSAL_PAYLOAD_INVALID', retryable: false } }
   if (!await isConversationCustomer(database, context, text(identityPayload.customer_id))) return { ok: false, code: 'CUSTOMER_SCOPE_DENIED', retryable: false }
+  if (proposal.version !== proposalVersion) return { ok: false, code: 'PROPOSAL_STALE', retryable: false }
+  if (proposal.status === 'executing' || proposal.status === 'completed') return reconcileProposalOperation(database, context, proposal)
   if (identityPayload.draft_operation_id) {
     const { state } = await new LunaConversationRepository(database).loadState(context)
     const draft = state.operations[text(identityPayload.draft_operation_id)]
@@ -276,7 +324,9 @@ export async function commitConfirmedProposal(database: D1Database, context: Lun
     return { ok: false, code: 'PROPOSAL_EXPIRED', retryable: false }
   }
   if (!await latestConfirmation(database, context, proposal)) return { ok: false, code: 'CONFIRMATION_REQUIRED', retryable: false }
-  await markProposal(database, context, proposal.id, 'executing')
+  const claimed = await database.prepare(`UPDATE luna_proposals SET status='executing',updated_at_ms=?6 WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4 AND version=?5 AND status='awaiting_confirmation' RETURNING id`)
+    .bind(context.tenantId, context.moduleId, context.conversationId, proposal.id, proposalVersion, Date.now()).first()
+  if (!claimed) return getProposalOperationStatus(database, context, proposal.id)
   let payload: JsonRecord
   try { payload = record(JSON.parse(proposal.payload_json)) }
   catch {

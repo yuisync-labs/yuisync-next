@@ -14,6 +14,7 @@ export class GroqProviderError extends Error {
     | 'GROQ_UNAVAILABLE'
     | 'GROQ_REQUEST_FAILED'
     | 'GROQ_RESPONSE_INVALID'
+    | 'GROQ_USAGE_UNAVAILABLE'
   readonly retryAfter: string | null
 
   constructor(code: GroqProviderError['code'], retryAfter: string | null = null) {
@@ -46,8 +47,10 @@ type GroqResponseBody = {
 }
 
 function integerHeader(headers: Headers, name: string): number | null {
-  const value = Number(headers.get(name))
-  return Number.isFinite(value) && value >= 0 ? value : null
+  const raw = headers.get(name)
+  if (raw == null || !raw.trim()) return null
+  const value = Number(raw)
+  return Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
 export class GroqProvider {
@@ -96,15 +99,14 @@ export class GroqProvider {
           max_completion_tokens: Math.max(128, Math.min(1_200, input.maxCompletionTokens ?? 1_200)),
           parallel_tool_calls: false,
           messages: input.messages,
-          tools: input.tools.map((tool) => ({
+          ...(input.tools.length ? { tools: input.tools.map((tool) => ({
             type: 'function',
             function: {
               name: tool.name,
               description: tool.description,
               parameters: tool.parameters,
             },
-          })),
-          tool_choice: 'auto',
+          })), tool_choice: 'auto' } : {}),
         }),
         signal: controller.signal,
       })
@@ -139,13 +141,16 @@ export class GroqProvider {
     })).filter((call) => call.id && call.function.name)
     const content = typeof message.content === 'string' ? message.content.trim() || null : null
     if (!content && toolCalls.length === 0) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
+    if (new Set(toolCalls.map(call => call.id)).size !== toolCalls.length) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
+    const promptTokens = body.usage?.prompt_tokens, completionTokens = body.usage?.completion_tokens
+    if (!Number.isSafeInteger(promptTokens) || Number(promptTokens) < 0 || !Number.isSafeInteger(completionTokens) || Number(completionTokens) < 0) throw new GroqProviderError('GROQ_USAGE_UNAVAILABLE')
 
     return {
       content,
       toolCalls,
       usage: {
-        promptTokens: Math.max(0, Number(body.usage?.prompt_tokens || 0)),
-        completionTokens: Math.max(0, Number(body.usage?.completion_tokens || 0)),
+        promptTokens: promptTokens!,
+        completionTokens: completionTokens!,
       },
       rateLimit: {
         remainingRequests: integerHeader(response.headers, 'x-ratelimit-remaining-requests'),

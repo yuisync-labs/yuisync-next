@@ -36,16 +36,6 @@ function enabled(value: string | undefined): boolean {
   return value?.trim().toLowerCase() === 'true'
 }
 
-async function setHandoff(database: D1Database, event: LunaMessageReceivedEventV1, reason: string): Promise<void> {
-  const now = Date.now()
-  await database.batch([
-    database.prepare(`UPDATE chat_threads SET status='handoff',updated_at_ms=?4 WHERE tenant_id=?1 AND module_id=?2 AND id=?3`)
-      .bind(event.tenant_id, event.payload.module_id, event.payload.conversation_id, now),
-    database.prepare(`UPDATE luna_conversations SET status='handoff',state_json=json_set(state_json,'$.handoff_reason',?4),updated_at_ms=?5,version=version+1 WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3`)
-      .bind(event.tenant_id, event.payload.module_id, event.payload.conversation_id, reason, now),
-  ])
-}
-
 export async function executeLunaMessageEvent(
   eventInput: unknown,
   env: LunaRuntimeBindings,
@@ -78,11 +68,11 @@ export async function executeLunaMessageEvent(
 
   let reply = result.reply
   if (result.status === 'quota_paused') {
-    await setHandoff(env.DB, event, 'LUNA_PROVIDER_QUOTA_PAUSED')
-    reply = 'Nosso atendimento automático atingiu o limite de testes. Vou encaminhar sua conversa para a equipe.'
+    // The persisted drafts/proposals remain resumable. A temporary quota is
+    // not a user request for permanent handoff, and must not mutate state.
+    reply = 'O atendimento automático está temporariamente indisponível. Podemos retomar esta conversa em seguida.'
   } else if (result.status === 'failed') {
-    await setHandoff(env.DB, event, 'LUNA_EXECUTION_FAILED')
-    reply = 'Não consegui concluir esta etapa com segurança. Vou encaminhar sua conversa para a equipe.'
+    reply = 'Não consegui concluir esta etapa com segurança. Podemos retomar ou chamar uma pessoa da equipe.'
   }
 
   if (reply) {

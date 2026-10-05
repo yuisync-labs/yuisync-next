@@ -14,6 +14,7 @@ const NOW = 1_789_000_000_000
 beforeAll(async () => {
   await testEnv.DB.batch([
     testEnv.DB.prepare(`INSERT OR REPLACE INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(?1,?1,'Luna Test','active',?2,?2)`).bind(TENANT, NOW),
+    testEnv.DB.prepare(`INSERT OR REPLACE INTO module_settings_extensions(tenant_id,module_id,data_json,updated_at_ms) VALUES(?1,'petshop',?2,?3)`).bind(TENANT, JSON.stringify({ petbot_timezone: 'America/Sao_Paulo', petbot_business_hours: Object.fromEntries(Array.from({ length: 7 }, (_, i) => [String(i + 1), [{ open: '00:00', close: '23:59' }]])) }), NOW),
     testEnv.DB.prepare(`INSERT OR REPLACE INTO clients(tenant_id,module_id,id,name,phone,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop','client-1','Maria','5532999990000','active',?2,?2)`).bind(TENANT, NOW),
     testEnv.DB.prepare(`INSERT OR REPLACE INTO pets(tenant_id,module_id,id,client_id,name,species,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop','pet-1','client-1','Mel','dog','active',?2,?2)`).bind(TENANT, NOW),
     testEnv.DB.prepare(`INSERT OR REPLACE INTO services(tenant_id,module_id,id,code,name,group_type,default_price_cents,default_duration_min,sort_order,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop','service-1','banho','Banho','banho_tosa',5500,60,1,'active',?2,?2)`).bind(TENANT, NOW),
@@ -105,7 +106,7 @@ describe('Luna operational foundation', () => {
               requestLimit: 1000,
             }
           : {
-              content: 'Encontrei a Mel. Qual dia você prefere?', toolCalls: [],
+              content: '{"opening":"none","facts":["tool-1:pet.0"],"question":"date"}', toolCalls: [],
               usage: { promptTokens: 140, completionTokens: 15 },
               rateLimit: { remainingRequests: 899, remainingTokens: 6900, resetRequests: null, resetTokens: null },
               requestLimit: 1000,
@@ -113,7 +114,7 @@ describe('Luna operational foundation', () => {
       },
     }
     const result = await runLunaTurn({ database: testEnv.DB, provider, context })
-    expect(result).toMatchObject({ status: 'replied', reply: 'Encontrei a Mel. Qual dia você prefere?', usage: { modelCalls: 2, toolCalls: 1 } })
+    expect(result).toMatchObject({ status: 'replied', reply: 'Pet cadastrado: Mel.\nQual dia você prefere?', usage: { modelCalls: 2, toolCalls: 1 } })
     const toolRun = await testEnv.DB.prepare(`SELECT tool_name,status FROM luna_tool_runs WHERE tenant_id=?1 AND trace_id=?2 LIMIT 1`).bind(TENANT, context.traceId).first<{ tool_name: string; status: string }>()
     expect(toolRun).toEqual({ tool_name: 'get_customer_context', status: 'succeeded' })
   })
@@ -190,7 +191,7 @@ describe('Luna operational foundation', () => {
           }
         }
         return {
-          content: 'Pedido registrado e aguardando pagamento.', toolCalls: [],
+          content: '{"opening":"none","facts":["tool-confirm:result"],"question":"none"}', toolCalls: [],
           usage: { promptTokens: 140, completionTokens: 18 },
           rateLimit: { remainingRequests: 899, remainingTokens: 6900, resetRequests: null, resetTokens: null },
           requestLimit: 1000,
@@ -198,7 +199,7 @@ describe('Luna operational foundation', () => {
       },
     }
     const result = await runLunaTurn({ database: testEnv.DB, provider, context: { ...context, sourceMessageId: confirmationSource, traceId: crypto.randomUUID() } })
-    expect(result).toMatchObject({ status: 'replied', reply: 'Pedido registrado e aguardando pagamento.' })
+    expect(result).toMatchObject({ status: 'replied', reply: 'Pedido registrado. Isso não significa que o pagamento foi recebido.', usage: { modelCalls: 2 } })
     expect(result.committedOperationIds).toHaveLength(1)
   })
 

@@ -1,6 +1,7 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 import { isPlatformAdmin } from './platformAuthorization'
 import { extensionMergeStatement } from './moduleSettingsExtensions'
+import { normalizeBusinessHours, type BusinessHours } from './businessHours'
 
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 type SessionResolver = typeof getBetterAuthSession
@@ -24,7 +25,6 @@ type AdminRow = {
 type ExtensionRow = { data_json: string }
 type CountRow = { count: number }
 type StaffRow = { key: string; name: string; active: boolean }
-type BusinessHours = Record<string, Array<{ open: string; close: string }>>
 
 type ResolvedScope =
   | { ok: true; principalId: string; tenantId: string; tenantName: string; tenantSlug: string }
@@ -32,7 +32,6 @@ type ResolvedScope =
 
 const OPERATIONAL_STAFF_TEMPLATE_KEY = '__petshop_operational_staff'
 const COMMISSION_RESET_TEMPLATE_KEY = '__petshop_commission_reset_at'
-const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/
 const STAFF_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
@@ -85,29 +84,6 @@ function mergeStaff(existing: StaffRow[], incoming: StaffRow[]): StaffRow[] {
   const merged = new Map(existing.map((row) => [row.key, row]))
   for (const row of incoming) merged.set(row.key, row)
   return [...merged.values()]
-}
-
-function normalizeBusinessHours(value: unknown): BusinessHours | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const source = value as Record<string, unknown>
-  const result: BusinessHours = {}
-  let openDays = 0
-  for (let weekday = 1; weekday <= 7; weekday += 1) {
-    const rows = source[String(weekday)]
-    if (!Array.isArray(rows) || rows.length > 4) return null
-    const normalizedRows: Array<{ open: string; close: string }> = []
-    for (const raw of rows) {
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
-      const row = raw as Record<string, unknown>
-      const open = String(row.open ?? '').trim()
-      const close = String(row.close ?? '').trim()
-      if (!TIME.test(open) || !TIME.test(close) || open >= close) return null
-      normalizedRows.push({ open, close })
-    }
-    if (normalizedRows.length) openDays += 1
-    result[String(weekday)] = normalizedRows
-  }
-  return openDays ? result : null
 }
 
 function hoursFromExtensions(extensions: Record<string, unknown>): BusinessHours | null {

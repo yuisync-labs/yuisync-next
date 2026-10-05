@@ -7,6 +7,7 @@ import { createLunaToolRegistry } from './toolRegistry'
 import type { LunaExecutionContext, LunaToolDefinition } from './contracts'
 import { loadPresentableProposals, renderProposalSummary } from './proposalPresentation'
 import { canonicalJson } from './canonicalJson'
+import { buildVerifiedFacts, responseContractInstruction, safeFactualFallback, validateFactualResponse, type FactualEvidence } from './factualResponse'
 
 type Provider = Readonly<{
   model: string
@@ -54,6 +55,10 @@ export async function runLunaTurn(input: {
   const proposals: string[] = []
   const committed: string[] = []
   const callSignatures = new Set<string>()
+  const evidence: FactualEvidence[] = []
+  let responseMode = 'none'
+  let queryRecoveryUsed = false
+  const retryableQueries = new Set(['get_customer_context', 'search_services', 'search_products', 'get_customer_appointments', 'get_package_eligibility', 'get_store_information', 'get_transport_quote', 'get_delivery_quote', 'get_available_slots'])
   let finalStatus: LunaTurnResult['status'] = 'failed'
   let reply: string | null = null
   let errorCode: string | null = null
@@ -61,7 +66,8 @@ export async function runLunaTurn(input: {
   try {
     for (;;) {
       budget.beforeModel()
-      const response = await input.provider.complete({ messages, tools: registry.definitions })
+      const facts = buildVerifiedFacts(evidence)
+      const response = await input.provider.complete({ messages: [...messages, { role: 'system', content: responseContractInstruction(facts) }], tools: registry.definitions })
       budget.afterModel({
         promptTokens: response.usage.promptTokens,
         completionTokens: response.usage.completionTokens,
@@ -72,7 +78,23 @@ export async function runLunaTurn(input: {
       })
 
       if (response.toolCalls.length === 0) {
-        reply = response.content
+        reply = validateFactualResponse(response.content, facts)
+        responseMode = 'verified'
+        if (!reply) {
+          // One rewrite only, no tools, and inside the same turn budget. If
+          // quota/provider fails here, existing verified results still win.
+          responseMode = 'rewritten'
+          try {
+            budget.beforeModel()
+            const rewritten = await input.provider.complete({
+              messages: [...messages, { role: 'system', content: `${responseContractInstruction(facts)} A resposta anterior não seguiu o contrato. Reformule uma única vez sem chamar ferramentas.` }],
+              tools: [],
+            })
+            budget.afterModel({ promptTokens: rewritten.usage.promptTokens, completionTokens: rewritten.usage.completionTokens, remainingRequests: rewritten.rateLimit.remainingRequests, requestLimit: rewritten.requestLimit, remainingTokens: rewritten.rateLimit.remainingTokens, tokenLimit: rewritten.tokenLimit })
+            reply = rewritten.toolCalls.length ? null : validateFactualResponse(rewritten.content, facts)
+          } catch { reply = null }
+          if (!reply) { responseMode = 'factual_fallback'; reply = safeFactualFallback(facts) }
+        }
         const summaries = await loadPresentableProposals(input.database, input.context, proposals)
         if (summaries.length) reply = [reply, ...summaries.map(renderProposalSummary)].filter(Boolean).join('\n\n')
         finalStatus = proposals.length > 0 ? 'awaiting_confirmation' : reply ? 'replied' : 'failed'
@@ -92,8 +114,16 @@ export async function runLunaTurn(input: {
           callSignatures.add(signature)
           try { result = await registry.execute(call.function.name, args, { ...input.context, actionIndex: budget.snapshot().toolCalls - 1 }) }
           catch { result = { ok: false as const, code: 'TOOL_EXECUTION_FAILED', retryable: true } }
+          if (!result.ok && result.retryable && retryableQueries.has(call.function.name) && !queryRecoveryUsed) {
+            queryRecoveryUsed = true
+            await repository.recordToolRun({ context: input.context, name: call.function.name, args, result, durationMs: Date.now() - started })
+            budget.beforeTool()
+            try { result = await registry.execute(call.function.name, args, { ...input.context, actionIndex: budget.snapshot().toolCalls - 1 }) }
+            catch { result = { ok: false as const, code: 'TOOL_EXECUTION_FAILED', retryable: true } }
+          }
         }
         await repository.recordToolRun({ context: input.context, name: call.function.name, args: args || {}, result, durationMs: Date.now() - started })
+        evidence.push({ callId: call.id, tool: call.function.name, result })
         if (result.ok && result.data && typeof result.data === 'object') {
           const data = result.data as Record<string, unknown>
           if (typeof data.proposal_id === 'string') proposals.push(data.proposal_id)
@@ -120,7 +150,7 @@ export async function runLunaTurn(input: {
   }
 
   const usage = budget.snapshot()
-  const outcome = errorCode ? `${finalStatus}:${errorCode}` : finalStatus
+  const outcome = errorCode ? `${finalStatus}:${errorCode}` : `${finalStatus}:${responseMode}`
   try { await repository.recordUsage({ context: input.context, model: input.provider.model, usage, outcome }) } catch { /* operational result wins over telemetry */ }
   return { status: finalStatus, reply, proposalIds: proposals, committedOperationIds: committed, traceId: input.context.traceId, errorCode, usage }
 }
