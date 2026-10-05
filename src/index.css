@@ -301,6 +301,14 @@ body {
 
 #root { height: 100vh; display: flex; flex-direction: column; }
 
+/* Native controls follow the operational typography and browser theme. */
+.theme-petshop :where(button, input, select, textarea),
+.theme-petshop-modal :where(button, input, select, textarea) { font-family: inherit; }
+.theme-petshop, .theme-petshop-modal { color-scheme: light; }
+.theme-petshop.theme-dark,
+body.yuisync-dark .theme-petshop-modal { color-scheme: dark; }
+.theme-petshop-modal { font-family: 'Nunito', sans-serif; }
+
 .public-home :where(a, button, summary):focus-visible {
   outline: 2px solid #38bdf8;
   outline-offset: 3px;

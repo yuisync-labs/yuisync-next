@@ -8,6 +8,17 @@ import {
 } from './teamCommissionSummary'
 
 describe('teamCommissionSummary service categories', () => {
+  it('uses the captured package base, including zero, without current catalog fallback', () => {
+    for (const base of [0, 50]) {
+      const [line] = appointmentCommissionLines({
+        id: 'package-snapshot', service_group: 'banho_tosa',
+        subscription_benefits: [{ kind: 'service', service_code: 'banho', package_unit_price: base, commission_rate: 10 }],
+        service_items: [{ code: 'banho', name: 'Banho', group_type: 'banho_tosa', unit_price: 0, catalog_price: 80 }],
+      })
+      expect(line.revenue).toBe(base)
+      expect(line.commission).toBe(base * 0.1)
+    }
+  })
   it('contabiliza corte de unha avulso em outros servicos quando a regra foi registrada', () => {
     const appointment = {
       id: 'nail-trim',

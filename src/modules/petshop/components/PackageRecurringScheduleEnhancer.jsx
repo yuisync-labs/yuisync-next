@@ -242,7 +242,7 @@ export function PackageRecurringScheduleEnhancer() {
 
       window.sessionStorage.removeItem(STORAGE_KEY)
       window.dispatchEvent(new CustomEvent(PACKAGE_SCHEDULE_SAVED_EVENT, {
-        detail: { subscriptionId, firstAppointmentAt: firstAt },
+        detail: { subscriptionId, firstAppointmentAt: firstAt, pendingPayment: true },
       }))
       setNotice(`Quatro semanas preparadas: ${preview(firstAt)}.`)
     }

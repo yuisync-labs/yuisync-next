@@ -115,10 +115,10 @@ export async function reschedulePackageAppointmentCommand({ tenantId, moduleId =
   } })
 }
 
-export function publishPackageScheduleHint({ subscriptionId, firstAppointmentAt }) {
+export function publishPackageScheduleHint({ subscriptionId, firstAppointmentAt, pendingPayment = false }) {
   if (typeof window === 'undefined') return
   window.sessionStorage.removeItem('yuisync:package-first-appointment-at')
   window.dispatchEvent(new CustomEvent('yuisync:subscription-schedule-saved', {
-    detail: { subscriptionId, firstAppointmentAt },
+    detail: { subscriptionId, firstAppointmentAt, pendingPayment },
   }))
 }

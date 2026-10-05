@@ -78,6 +78,7 @@ describe('package checkout D1 integration', () => {
         .bind(tenantId, subscriptionId, planId, clientId, petId, now, firstAppointmentAt),
     ])
 
+    await database.prepare("UPDATE services SET commission_basis_points=1000 WHERE tenant_id=?1 AND module_id='petshop' AND id=?2").bind(tenantId, serviceId).run()
     try {
       const cookie = await signIn(email, password)
       const response = await handleCompatApiRequest(new Request('https://edge.test/api/compat/rpc', {
@@ -125,6 +126,9 @@ describe('package checkout D1 integration', () => {
         .bind(tenantId, subscriptionId).all<Record<string, unknown>>()
       expect(allocations.results).toHaveLength(4)
       expect(allocations.results.every((row) => row.state === 'reserved' && row.benefit_key === serviceCode)).toBe(true)
+      const snapshots = await database.prepare("SELECT commission_basis_points FROM appointment_services WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).all<{ commission_basis_points: number }>()
+      expect(snapshots.results).toHaveLength(4)
+      expect(snapshots.results.every((item) => item.commission_basis_points === 1000)).toBe(true)
 
       const appointmentListResponse = await handlePetshopPlansApiRequest(new Request(
         `https://edge.test/api/petshop/subscriptions/${encodeURIComponent(subscriptionId)}/appointments`,
@@ -162,6 +166,37 @@ describe('package checkout D1 integration', () => {
       const repaired = await database.prepare("SELECT id FROM appointments WHERE tenant_id=?1 AND module_id='petshop' AND subscription_id=?2")
         .bind(tenantId, subscriptionId).all()
       expect(repaired.results).toHaveLength(4)
+      await database.prepare("UPDATE services SET commission_basis_points=2000,default_price_cents=8000 WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
+      await database.prepare("UPDATE subscription_plans SET price_cents=30000 WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
+      const recorded = await database.prepare("SELECT subscription_benefits_json FROM appointments WHERE tenant_id=?1 AND module_id='petshop' AND subscription_id=?2").bind(tenantId, subscriptionId).all<{ subscription_benefits_json: string }>()
+      expect(recorded.results.every((row) => {
+        const benefit = JSON.parse(row.subscription_benefits_json)[0]
+        return benefit.commission_rate === 10 && benefit.package_unit_price === 50
+      })).toBe(true)
+      const ids = repaired.results.map((row: any) => row.id)
+      await database.prepare("UPDATE appointments SET status='completed',subscription_benefit_status='consumed' WHERE tenant_id=?1 AND module_id='petshop' AND id=?2").bind(tenantId, ids[0]).run()
+      await database.prepare("UPDATE appointments SET status='in_progress' WHERE tenant_id=?1 AND module_id='petshop' AND id=?2").bind(tenantId, ids[1]).run()
+      const cancel = () => handlePetshopPlansApiRequest(new Request(`https://edge.test/api/petshop/subscriptions/${subscriptionId}/cancel`, {
+        method: 'POST', headers: { cookie, 'x-tenant-id': tenantId, 'x-module-id': 'petshop' },
+      }), runtime)
+      expect((await cancel())?.status).toBe(409)
+      await database.prepare("UPDATE appointments SET status='scheduled' WHERE tenant_id=?1 AND module_id='petshop' AND id=?2").bind(tenantId, ids[1]).run()
+      expect((await cancel())?.status).toBe(200)
+      expect((await cancel())?.status).toBe(200)
+      const patchCancellation = await handlePetshopPlansApiRequest(new Request(`https://edge.test/api/petshop/subscriptions/${subscriptionId}`, {
+        method: 'PATCH', headers: { cookie, 'content-type': 'application/json', 'x-tenant-id': tenantId, 'x-module-id': 'petshop' },
+        body: JSON.stringify({ status: 'cancelled' }),
+      }), runtime)
+      expect(patchCancellation?.status).toBe(200)
+      const states = await database.prepare("SELECT status FROM appointments WHERE tenant_id=?1 AND module_id='petshop' AND subscription_id=?2").bind(tenantId, subscriptionId).all<{ status: string }>()
+      expect(states.results.filter((row) => row.status === 'completed')).toHaveLength(1)
+      expect(states.results.filter((row) => row.status === 'cancelled')).toHaveLength(3)
+      const ledger = await database.prepare("SELECT state FROM subscription_benefit_allocations WHERE tenant_id=?1 AND module_id='petshop' AND subscription_id=?2").bind(tenantId, subscriptionId).all<{ state: string }>()
+      expect(ledger.results.filter((row) => row.state === 'reserved')).toHaveLength(0)
+      expect(ledger.results.filter((row) => row.state === 'consumed')).toHaveLength(1)
+      expect(ledger.results.filter((row) => row.state === 'released')).toHaveLength(3)
+      const paymentCount = await database.prepare("SELECT COUNT(*) AS n FROM payments WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).first<{ n: number }>()
+      expect(paymentCount?.n).toBe(1)
     } finally {
       await database.prepare("DELETE FROM payments WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
       await database.prepare("DELETE FROM subscription_benefit_allocations WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
