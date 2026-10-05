@@ -34,6 +34,10 @@ async function dropVersion30() {
   // Fixtures start from the fully migrated DB. Remove additive Luna objects
   // before replay so 0037 does not repeat ALTER TABLE against a current column.
   await db.exec(`
+    DROP TABLE IF EXISTS sale_delivery_addresses;
+    DROP TRIGGER IF EXISTS pending_order_cancel_release;
+    DROP TABLE IF EXISTS pending_order_stock_reservations;
+    DROP TABLE IF EXISTS luna_registration_receipts;
     DROP TABLE IF EXISTS luna_proposal_presentations;
     DROP TABLE IF EXISTS luna_operation_events;
     DROP INDEX IF EXISTS luna_proposals_operation;

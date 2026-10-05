@@ -1,4 +1,5 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import { clientRegistrationStatements } from './clientRegistrationCommand'
 
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 type Scope = { tenantId: string; moduleId: string }
@@ -169,19 +170,7 @@ async function createClient(request: Request, bindings: Bindings): Promise<Respo
     clientId = crypto.randomUUID()
   }
   const petId = crypto.randomUUID()
-  const statements: D1PreparedStatement[] = []
-  if (!requestedClientId) statements.push(bindings.DB!.prepare(`
-    INSERT INTO clients(tenant_id,module_id,id,name,document,phone,email,birth_date,address,address_number,address_complement,
-      address_reference,neighborhood,city,postal_code,notes,status,created_at_ms,updated_at_ms)
-    VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,'active',?17,?17)
-  `).bind(scope.tenantId, scope.moduleId, clientId, ownerName, nullable(body.owner_cpf), nullable(body.phone), nullable(body.email),
-    nullable(body.tutor_birth_date), nullable(body.owner_address), nullable(body.address_number), nullable(body.address_complement),
-    nullable(body.address_reference), nullable(body.owner_neighborhood), nullable(body.owner_city), nullable(body.zip_code), nullable(body.client_notes), now))
-  statements.push(bindings.DB!.prepare(`
-    INSERT INTO pets(tenant_id,module_id,id,client_id,name,species,breed,birth_date,weight_kg,color,notes,status,created_at_ms,updated_at_ms)
-    VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'active',?12,?12)
-  `).bind(scope.tenantId, scope.moduleId, petId, clientId, petName, species(body.species), nullable(body.breed), nullable(body.birth_date),
-    body.weight_kg === '' || body.weight_kg === null || body.weight_kg === undefined ? null : Number(body.weight_kg), nullable(body.color), nullable(body.notes), now))
+  const statements = clientRegistrationStatements(bindings.DB!, { tenantId: scope.tenantId, moduleId: scope.moduleId, clientId, petId, existingClient: Boolean(requestedClientId), fields: body, now })
   await bindings.DB!.batch(statements)
   return listClients(new Request(new URL(`/api/petshop/clients/${petId}`, request.url), { headers: request.headers }), bindings, petId)
 }

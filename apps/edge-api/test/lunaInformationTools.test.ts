@@ -57,12 +57,12 @@ describe('Luna native information tools', () => {
     expect(await createLunaToolRegistry(db).execute('get_available_slots', { service_ids: ['bath'], starts_at: start.toISOString(), ends_at: new Date(start.getTime() + 48 * 3600000).toISOString() }, ctx)).toMatchObject({ ok: false, code: 'SCHEDULE_WINDOW_INVALID' })
   })
 
-  it('bloqueia agendamento fora do expediente e entrega ainda sem contrato de commit', async () => {
+  it('bloqueia agendamento fora do expediente e entrega sem endereço estruturado', async () => {
     const date = new Date(Date.now() + 30 * 86400000)
     while (date.getUTCDay() !== 0) date.setUTCDate(date.getUTCDate() + 1)
     date.setUTCHours(15, 0, 0, 0)
     const registry = createLunaToolRegistry(db)
     expect(await registry.execute('prepare_appointment', { customer_id: 'customer', pet_id: 'pet', service_ids: ['bath'], scheduled_at: date.toISOString(), notes: null }, ctx)).toMatchObject({ ok: false, code: 'OUTSIDE_BUSINESS_HOURS' })
-    expect(await registry.execute('prepare_product_order', { customer_id: 'customer', items: [{ product_id: 'nonexistent', quantity: 1 }], fulfillment_type: 'delivery' }, ctx)).toMatchObject({ ok: false, code: 'DELIVERY_COMMIT_NOT_SUPPORTED' })
+    expect(await registry.execute('prepare_product_order', { customer_id: 'customer', items: [{ product_id: 'nonexistent', quantity: 1 }], fulfillment_type: 'delivery' }, ctx)).toMatchObject({ ok: false, code: 'DELIVERY_ADDRESS_REQUIRED' })
   })
 })

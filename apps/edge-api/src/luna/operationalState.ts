@@ -17,7 +17,7 @@ export type DraftEvent = {
 const fields: Record<DraftKind, Set<string>> = {
   cart: new Set(['fulfillment_type', 'address', 'reference', 'payment_preference']),
   booking: new Set(['pet_id', 'scheduled_at', 'period', 'transport_mode', 'address', 'reference', 'notes', 'machine_number']),
-  registration: new Set(['customer_name', 'pet_name', 'species', 'breed']),
+  registration: new Set(['customer_name', 'pet_name', 'species', 'breed', 'weight_kg']),
 }
 export function loadOperationalState(raw: string): OperationalState {
   const value = JSON.parse(raw) as Record<string, unknown>

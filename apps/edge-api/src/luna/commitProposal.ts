@@ -4,9 +4,12 @@ import { automaticAllocations } from '../subscriptionBenefitAuto'
 import type { BillingIntent } from '../subscriptionBenefitLedger'
 import type { LunaExecutionContext, LunaToolResult } from './contracts'
 import { validateScheduleAvailability } from './schedulePolicy'
-import { isConversationCustomer } from './customerIdentity'
+import { reservePendingOrderStock } from '../pendingOrderStockReservation'
 import { LunaConversationRepository } from './conversationRepository'
 import { canonicalJson } from './canonicalJson'
+import { commitRegistration, proposalCustomerAuthorized } from './registrationCommands'
+import { resolveDeliverySnapshot } from './deliveryContract'
+import { saleDeliveryAddressStatement } from '../saleDeliveryAddress'
 
 type ProposalRow = {
   id: string
@@ -88,6 +91,9 @@ export async function reconcileProposalOperation(database: D1Database, context: 
   } else if (proposal.operation_kind === 'product_order_create') {
     existing = await database.prepare(`SELECT id FROM sales WHERE tenant_id=?1 AND module_id=?2 AND operation_key=?3 LIMIT 1`)
       .bind(context.tenantId, context.moduleId, operationKey).first<{ id: string }>()
+  } else if (proposal.operation_kind.endsWith('_registration')) {
+    const receipt = await database.prepare(`SELECT pet_id AS id FROM luna_registration_receipts WHERE tenant_id=?1 AND module_id=?2 AND proposal_id=?3`).bind(context.tenantId,context.moduleId,proposal.id).first<{ id: string }>()
+    existing = receipt
   }
   if (!existing) return { ok: false, code: 'COMMIT_STATE_UNCERTAIN', retryable: false }
   await markProposal(database, context, proposal.id, 'completed', existing.id)
@@ -100,7 +106,7 @@ export async function getProposalOperationStatus(database: D1Database, context: 
   if (!proposal) return { ok: false, code: 'PROPOSAL_NOT_FOUND', retryable: false }
   let payload: JsonRecord
   try { payload = record(JSON.parse(proposal.payload_json)) } catch { return { ok: false, code: 'PROPOSAL_PAYLOAD_INVALID', retryable: false } }
-  if (!await isConversationCustomer(database, context, text(payload.customer_id))) return { ok: false, code: 'CUSTOMER_SCOPE_DENIED', retryable: false }
+  if (!await proposalCustomerAuthorized(database, context, proposal.operation_kind, payload)) return { ok: false, code: 'CUSTOMER_SCOPE_DENIED', retryable: false }
   return reconcileProposalOperation(database, context, proposal)
 }
 
@@ -196,7 +202,12 @@ async function commitProductOrder(database: D1Database, context: LunaExecutionCo
     if (product.price_cents !== Number(proposed.unit_price_cents)) return { ok: false, code: 'PROPOSAL_STALE', retryable: false }
     resolved.push({ productId, name: product.name, quantity, quantityMilliunits, priceCents: product.price_cents, subtotalCents: product.price_cents * quantity })
   }
-  const totalCents = resolved.reduce((sum, item) => sum + item.subtotalCents, 0)
+  const delivery = fulfillment==='delivery'?await resolveDeliverySnapshot(database,context,payload.delivery):null
+  if(delivery && !delivery.ok)return delivery
+  if(delivery?.ok && canonicalJson(delivery.data)!==canonicalJson(payload.delivery))return{ok:false,code:'DELIVERY_QUOTE_CHANGED',retryable:false}
+  const subtotalCents = resolved.reduce((sum, item) => sum + item.subtotalCents, 0)
+  const deliveryFeeCents = delivery?.ok?delivery.data.fee_cents:0
+  const totalCents = subtotalCents+deliveryFeeCents
   if (totalCents !== Number(payload.total_cents)) return { ok: false, code: 'PROPOSAL_STALE', retryable: false }
   const saleId = crypto.randomUUID()
   const now = Date.now()
@@ -204,18 +215,27 @@ async function commitProductOrder(database: D1Database, context: LunaExecutionCo
     INSERT INTO sales(
       tenant_id,module_id,id,operation_key,client_id,appointment_id,source,fulfillment_type,
       subtotal_cents,discount_cents,transport_fee_cents,total_cents,status,notes,created_at_ms,updated_at_ms
-    ) VALUES(?1,?2,?3,?4,?5,NULL,'whatsapp',?6,?7,0,0,?7,'pending',?8,?9,?9)
-  `).bind(context.tenantId, context.moduleId, saleId, operationKey, customerId, fulfillment, totalCents, 'Pedido criado pela Luna; pagamento ainda não recebido.', now)]
+    ) VALUES(?1,?2,?3,?4,?5,NULL,'whatsapp',?6,?7,0,?8,?9,'pending',?10,?11,?11)
+  `).bind(context.tenantId, context.moduleId, saleId, operationKey, customerId, fulfillment, subtotalCents,deliveryFeeCents,totalCents, 'Pedido criado pela Luna; pagamento ainda não recebido.', now)]
+  if(delivery?.ok)statements.push(saleDeliveryAddressStatement(database,{tenantId:context.tenantId,moduleId:context.moduleId,saleId,address:delivery.data,now}))
   resolved.forEach((item, index) => statements.push(database.prepare(`
     INSERT INTO sale_items(
       tenant_id,module_id,sale_id,position,item_type,product_id,service_id,item_name,
       quantity_milliunits,unit_price_cents,subtotal_cents,upsell
     ) VALUES(?1,?2,?3,?4,'product',?5,NULL,?6,?7,?8,?9,0)
   `).bind(context.tenantId, context.moduleId, saleId, index + 1, item.productId, item.name, item.quantityMilliunits, item.priceCents, item.subtotalCents)))
-  try { await database.batch(statements) } catch {
+  for (const item of resolved) statements.push(reservePendingOrderStock(database, {
+    tenantId: context.tenantId, moduleId: context.moduleId, saleId,
+    productId: item.productId, quantityMilliunits: item.quantityMilliunits,
+    unitPriceCents: item.priceCents, now,
+  }))
+  try { await database.batch(statements) } catch (error) {
     const raced = await database.prepare(`SELECT id FROM sales WHERE tenant_id=?1 AND module_id=?2 AND operation_key=?3 LIMIT 1`)
       .bind(context.tenantId, context.moduleId, operationKey).first<{ id: string }>()
-    if (!raced) return { ok: false, code: 'ORDER_COMMIT_FAILED', retryable: true }
+    if (!raced) {
+      const known=String(error).includes('PENDING_ORDER_STOCK_CHANGED')?'ORDER_STOCK_OR_PRICE_CHANGED':String(error).includes('DELIVERY_QUOTE_CHANGED')?'DELIVERY_QUOTE_CHANGED':null
+      return{ok:false,code:known??'ORDER_COMMIT_FAILED',retryable:!known}
+    }
     await markProposal(database, context, proposal.id, 'completed', raced.id)
     return { ok: true, data: { operation_id: raced.id, operation_kind: 'product_order_create', idempotent: true, status: 'pending' } }
   }
@@ -306,7 +326,7 @@ export async function commitConfirmedProposal(database: D1Database, context: Lun
   let identityPayload: JsonRecord
   try { identityPayload = record(JSON.parse(proposal.payload_json)) }
   catch { return { ok: false, code: 'PROPOSAL_PAYLOAD_INVALID', retryable: false } }
-  if (!await isConversationCustomer(database, context, text(identityPayload.customer_id))) return { ok: false, code: 'CUSTOMER_SCOPE_DENIED', retryable: false }
+  if (!await proposalCustomerAuthorized(database, context, proposal.operation_kind, identityPayload)) return { ok: false, code: 'CUSTOMER_SCOPE_DENIED', retryable: false }
   if (proposal.version !== proposalVersion) return { ok: false, code: 'PROPOSAL_STALE', retryable: false }
   if (proposal.status === 'executing' || proposal.status === 'completed') return reconcileProposalOperation(database, context, proposal)
   if (identityPayload.draft_operation_id) {
@@ -333,7 +353,9 @@ export async function commitConfirmedProposal(database: D1Database, context: Lun
     await markProposal(database, context, proposal.id, 'failed')
     return { ok: false, code: 'PROPOSAL_PAYLOAD_INVALID', retryable: false }
   }
-  const result = proposal.operation_kind === 'appointment_create'
+  const result = proposal.operation_kind.endsWith('_registration')
+    ? await commitRegistration(database, context, proposal.id, proposal.operation_kind, payload)
+    : proposal.operation_kind === 'appointment_create'
     ? await commitAppointment(database, context, proposal, payload)
     : proposal.operation_kind === 'product_order_create'
       ? await commitProductOrder(database, context, proposal, payload)

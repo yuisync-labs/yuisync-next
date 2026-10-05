@@ -53,6 +53,7 @@ export async function runLunaTurn(input: {
     ...await repository.loadHistory(input.context),
   ]
   const proposals: string[] = []
+  const presented: string[] = []
   const committed: string[] = []
   const callSignatures = new Set<string>()
   const evidence: FactualEvidence[] = []
@@ -96,8 +97,9 @@ export async function runLunaTurn(input: {
           if (!reply) { responseMode = 'factual_fallback'; reply = safeFactualFallback(facts) }
         }
         const summaries = await loadPresentableProposals(input.database, input.context, proposals)
+        presented.push(...summaries.map(summary=>summary.id))
         if (summaries.length) reply = [reply, ...summaries.map(renderProposalSummary)].filter(Boolean).join('\n\n')
-        finalStatus = proposals.length > 0 ? 'awaiting_confirmation' : reply ? 'replied' : 'failed'
+        finalStatus = summaries.length > 0 ? 'awaiting_confirmation' : reply ? 'replied' : 'failed'
         break
       }
 
@@ -152,5 +154,5 @@ export async function runLunaTurn(input: {
   const usage = budget.snapshot()
   const outcome = errorCode ? `${finalStatus}:${errorCode}` : `${finalStatus}:${responseMode}`
   try { await repository.recordUsage({ context: input.context, model: input.provider.model, usage, outcome }) } catch { /* operational result wins over telemetry */ }
-  return { status: finalStatus, reply, proposalIds: proposals, committedOperationIds: committed, traceId: input.context.traceId, errorCode, usage }
+  return { status: finalStatus, reply, proposalIds: presented, committedOperationIds: committed, traceId: input.context.traceId, errorCode, usage }
 }

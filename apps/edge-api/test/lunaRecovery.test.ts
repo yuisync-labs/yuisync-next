@@ -20,6 +20,21 @@ beforeAll(async () => {
 })
 
 describe('Luna recovery on real local D1', () => {
+  it('não anuncia confirmação de uma proposta invalidada dentro do mesmo turno', async () => {
+    let calls=0
+    const commands=[
+      {name:'update_operation_draft',args:{operationId:'presentation',kind:'cart',expectedVersion:0,action:'set_field',field:'fulfillment_type',value:'counter'}},
+      {name:'prepare_product_order',args:{customer_id:'customer',items:[{product_id:'product',quantity:1}],fulfillment_type:'counter',operation_id:'presentation'}},
+      {name:'update_operation_draft',args:{operationId:'presentation',kind:'cart',expectedVersion:1,action:'add_item',itemId:'product',quantity:1}},
+    ]
+    const result=await runLunaTurn({database:db,context:{...ctx,sourceMessageId:'presentation-only'},provider:{model:'fixture',complete:async()=>{
+      const command=commands[calls++]
+      return{content:command?null:JSON.stringify({opening:'acknowledge',facts:[],question:'none'}),toolCalls:command?[{id:`presentation-${calls}`,type:'function' as const,function:{name:command.name,arguments:JSON.stringify(command.args)}}]:[],usage:{promptTokens:10,completionTokens:10},rateLimit:{remainingRequests:900,remainingTokens:7000,resetRequests:null,resetTokens:null},requestLimit:1000}
+    }}})
+    expect(result).toMatchObject({status:'replied',proposalIds:[],committedOperationIds:[]})
+    expect(result.reply).not.toContain('Você confirma este resumo?')
+    expect(await db.prepare(`SELECT status FROM luna_proposals WHERE tenant_id=?1 AND operation_id='presentation'`).bind(tenant).first()).toEqual({status:'invalidated'})
+  })
   it('reformula no máximo uma vez e nunca envia fato inventado', async () => {
     let calls = 0
     const provider = { model: 'fixture', complete: async (input: { tools: readonly unknown[] }) => {

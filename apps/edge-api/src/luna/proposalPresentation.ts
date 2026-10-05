@@ -5,12 +5,18 @@ export function renderProposalSummary(row: PresentableProposal): string {
   const payload = JSON.parse(row.payload_json) as Record<string, unknown>
   const lines = [`Resumo para confirmação — ${row.operation_kind}`, `Cliente: ${String(payload.customer_name ?? payload.customer_id)}`]
   if (payload.pet_name) lines.push(`Pet: ${String(payload.pet_name)}`)
+  if (row.operation_kind.endsWith('_registration')) {
+    lines.push(`Espécie: ${String(payload.species)}`)
+    if (payload.breed) lines.push(`Raça: ${String(payload.breed)}`)
+    if (payload.weight_kg != null) lines.push(`Peso: ${String(payload.weight_kg)} kg`)
+  }
   if (payload.scheduled_at_ms) lines.push(`Data/hora: ${new Date(Number(payload.scheduled_at_ms)).toISOString()}`)
   for (const raw of (Array.isArray(payload.items) ? payload.items : Array.isArray(payload.services) ? payload.services : [])) {
     const item = raw as Record<string, unknown>
     lines.push(`${String(item.name ?? item.code)}${item.quantity ? ` × ${String(item.quantity)}` : ''}: ${money(item.subtotal_cents ?? item.price_cents ?? item.unit_price_cents ?? item.default_price_cents)}`)
   }
   if (payload.fulfillment_type) lines.push(`Modalidade: ${payload.fulfillment_type === 'counter' ? 'retirada' : 'entrega'}`)
+  if(payload.fulfillment_type==='delivery' && payload.delivery){const a=payload.delivery as Record<string,unknown>;lines.push(`Entrega: ${String(a.street)}, ${String(a.number)} — ${String(a.neighborhood)}, ${String(a.city)}`);if(a.reference)lines.push(`Referência: ${String(a.reference)}`);if(a.complement)lines.push(`Complemento: ${String(a.complement)}`);lines.push(`Taxa de entrega: ${money(a.fee_cents)}`)}
   if (payload.notes) lines.push(`Observações: ${String(payload.notes)}`)
   if (payload.reason) lines.push(`Motivo: ${String(payload.reason)}`)
   if (Array.isArray(payload.benefit_allocations)) for (const raw of payload.benefit_allocations) {

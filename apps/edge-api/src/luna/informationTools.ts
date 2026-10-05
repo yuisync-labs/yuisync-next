@@ -93,7 +93,7 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
     if (matches.length !== 1) return { ok: false, code: matches.length ? 'DELIVERY_COVERAGE_AMBIGUOUS' : 'DELIVERY_OUTSIDE_COVERAGE', retryable: false }
     const area = matches[0]
     if (!Number.isSafeInteger(area.fee_cents) || Number(area.fee_cents) < 0) return { ok: false, code: 'DELIVERY_FEE_UNAVAILABLE', retryable: false }
-    return { ok: true, data: { city: area.city, neighborhood: area.neighborhood, fee_cents: area.fee_cents, observed_at_ms: Date.now(), source: 'module_settings_extensions.delivery_coverage' } }
+    return { ok: true, data: { city: area.city, neighborhood: area.neighborhood, fee_cents: area.fee_cents, coverage_snapshot_json: JSON.stringify(areas), observed_at_ms: Date.now(), source: 'module_settings_extensions.delivery_coverage' } }
   }
   return { ok: false, code: 'TOOL_NOT_ALLOWED', retryable: false }
 }

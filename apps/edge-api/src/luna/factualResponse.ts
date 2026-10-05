@@ -83,6 +83,7 @@ export function buildVerifiedFacts(evidence: readonly FactualEvidence[]): Fact[]
         else if (kind === 'appointment_create') add(e, 'result', 'Agendamento registrado.')
         else if (kind === 'appointment_reschedule') add(e, 'result', 'Agendamento reagendado.')
         else if (kind === 'appointment_cancel') add(e, 'result', 'Agendamento cancelado.')
+        else if (kind === 'customer_registration' || kind === 'pet_registration') add(e, 'result', 'Cadastro registrado.')
       }
     }
   }

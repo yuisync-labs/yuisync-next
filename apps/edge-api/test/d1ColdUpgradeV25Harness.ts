@@ -24,6 +24,10 @@ async function resetMigrationHistoryTo(db: D1Database, migrations: Parameters<ty
 
 async function removePostV25Schema(db: D1Database) {
   await db.exec(`
+    DROP TABLE IF EXISTS sale_delivery_addresses;
+    DROP TRIGGER IF EXISTS pending_order_cancel_release;
+    DROP TABLE IF EXISTS pending_order_stock_reservations;
+    DROP TABLE IF EXISTS luna_registration_receipts;
     DROP TABLE IF EXISTS luna_proposal_presentations;
     DROP TABLE IF EXISTS luna_operation_events;
     DROP INDEX IF EXISTS luna_proposals_operation;
