@@ -1,7 +1,9 @@
-/** @type {import('tailwindcss').Config} */
+import legacyTheme from './src/styles/tailwind3-theme-compat.js'
+/** Keeps v3 palette and small radius/shadow/blur scales while upgrading the compiler. */
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
+    ...legacyTheme,
     extend: {
       colors: {
         bg:      'var(--bg)',

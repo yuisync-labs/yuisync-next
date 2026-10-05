@@ -10,9 +10,9 @@
     },
     {
       "package": "miniflare",
-      "via_only": ["sharp", "undici"],
+      "via_only": ["sharp"],
       "review_by": "2026-10-13",
-      "reason": "Development-only transitive exposure through the exact time-boxed sharp advisory and a moderate undici advisory; the latest Cloudflare test pool still pins both versions."
+      "reason": "Development-only exposure through the existing exact time-boxed sharp advisory. Undici was fixed at 7.29.1 on 2026-10-05 and is no longer an accepted part of this chain."
     },
     {
       "package": "wrangler",

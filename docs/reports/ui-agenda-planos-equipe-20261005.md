@@ -99,3 +99,17 @@ Validação local: typecheck frontend/Worker, build, quatro arquivos de regress�
 - Quality recente da main falha no audit de segurança, não em SHA ou credencial. Novos advisories de Axios, Undici e cadeia Tailwind 3 foram confirmados pelo npm. Atualizados Axios para 1.20.0 e override Undici para 7.29.1; algumas cópias transitivas do toolchain Cloudflare ainda exigem tratamento específico.
 - `braces` 3.0.3 e `micromatch` 4.0.8, ambos últimas versões consultadas, continuam nas faixas vulneráveis. O npm aponta Tailwind 4.3.3 como mudança maior para retirar a cadeia. Não alterar o motor CSS inteiro nesta correção pontual sem revisão visual específica, nem liberar através de exceção nova de segurança.
 - Publicação continua bloqueada por esse audit. Nenhum deploy deste lote foi feito e nenhum histórico de comissão foi recalculado.
+
+### Avaliação autorizada do Tailwind 4 — prévia local
+
+- Atualizado o compilador para Tailwind 4.3.3 e plugin PostCSS correspondente, sem conversão automática em massa dos componentes. Preservados tokens próprios, paleta v3, fontes, escalas de sombras/arredondamentos/blur, defaults de bordas/placeholder/ring e aliases flex antigos. Dados de compatibilidade estão em `src/styles/tailwind3-theme-compat.js`.
+- Build e typecheck frontend/Worker passaram, assim como 11 testes de regressão frontend. Agenda, Planos (incluindo modal/Esc/foco) e Equipe/Comissões (incluindo histórico) foram inspecionados na prévia DEV local. Conferidos temas claro/escuro e Comissões em viewport de 390 px. Nenhuma gravação ou carga no D1 nesta avaliação.
+- Isso não certifica todas as telas, arraste com dados reais, impressão nem navegadores antigos. Tailwind 4 exige navegadores modernos; revisar clientes anteriores a Chrome 111, Safari 16.4 e Firefox 128 antes de liberar.
+- A cadeia vulnerável de Tailwind 3 foi retirada. Wrangler passou a resolver Undici corrigido, mas o test pool Cloudflare 0.22.0 continua trazendo Undici 7.29.0 via seu Miniflare. Audit real com acesso ao npm continua bloqueando essa dependência de desenvolvimento. Nenhuma exceção nova foi adicionada e não houve deploy.
+- Corrigida uma aprovação falsa possível no script de audit: erro de rede/execução ou JSON sem relatório completo agora falha fechado. Cinco testes da política de CI passaram, incluindo o novo caso de falha de consulta.
+
+### Resolução do bloqueio de dependências para publicação
+
+- O npm não aplicava o override ao test pool acessado apenas pela dependência do workspace. Declarar o toolchain de testes também na raiz e recalcular Undici corrigiu todas as cópias para 7.29.1, sem downgrade do test pool.
+- A allowlist existente foi restringida: Miniflare aceita somente a cadeia Sharp já documentada, com o mesmo vencimento de 13/10. Undici não recebe exceção nova. A dívida Sharp continua sendo exclusiva de desenvolvimento e precisa ser removida quando o fornecedor atualizar o test pool.
+- Integração local D1 de reconciliação passou novamente após a resolução do toolchain. Publicação depende das verificações da PR/main e da certificação do mesmo commit em staging.
