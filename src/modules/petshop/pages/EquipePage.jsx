@@ -575,8 +575,8 @@ export default function EquipePage() {
 
       {(activeTab === 'fechamento' || activeTab === 'motoboy') && (
         <div className="flex items-end gap-3 flex-wrap">
-          <div><label className="inp-label">Inicio</label><input className="inp" type="date" value={range.startDate} onChange={(event) => setRange((prev) => ({ ...prev, startDate: event.target.value }))}/></div>
-          <div><label className="inp-label">Fim</label><input className="inp" type="date" value={range.endDate} onChange={(event) => setRange((prev) => ({ ...prev, endDate: event.target.value }))}/></div>
+          <div><label htmlFor="commission-start" className="inp-label">Inicio</label><input id="commission-start" className="inp" type="date" value={range.startDate} onChange={(event) => setRange((prev) => ({ ...prev, startDate: event.target.value }))}/></div>
+          <div><label htmlFor="commission-end" className="inp-label">Fim</label><input id="commission-end" className="inp" type="date" value={range.endDate} onChange={(event) => setRange((prev) => ({ ...prev, endDate: event.target.value }))}/></div>
           <button onClick={() => reload(range)} className="btn btn-primary"><RefreshCw size={15}/> Recalcular</button>
           <button onClick={resetRangeToMonth} className="btn btn-secondary">Periodo do mes</button>
           {activeTab === 'fechamento' && (

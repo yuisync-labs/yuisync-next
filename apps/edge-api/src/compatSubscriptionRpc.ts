@@ -2,6 +2,7 @@ import {
   handleCompatApiRequest as handleBaseCompatApiRequest,
   type CompatRuntimeBindings,
 } from './compatApiRuntime.js'
+import { buildPackageCommissionAllocation } from '../../../shared/packageCommissionAllocation.js'
 
 const SUBSCRIPTION_RPC_NAMES = new Set([
   'reconcile_petshop_completed_appointment_package',
@@ -60,6 +61,7 @@ type CatalogServiceRow = {
   group_type: string
   default_price_cents: number
   default_duration_min: number
+  commission_basis_points: number
 }
 
 type ExistingSaleRow = {
@@ -292,7 +294,7 @@ async function packageScheduleStatements(
   const catalog = new Map<string, CatalogServiceRow>()
   for (const entry of planServices) {
     const row = await env.DB.prepare(`
-      SELECT id,code,name,group_type,default_price_cents,default_duration_min
+      SELECT id,code,name,group_type,default_price_cents,default_duration_min,commission_basis_points
       FROM services
       WHERE tenant_id=?1 AND module_id=?2 AND code=?3 AND status='active'
       LIMIT 1
@@ -301,6 +303,16 @@ async function packageScheduleStatements(
   }
   const schedulable = planServices.filter((entry) => catalog.has(String(entry.code)))
   if (!schedulable.length) return json({ code: 'SUBSCRIPTION_CATALOG_SERVICES_REQUIRED' }, 409)
+  const extension = await env.DB.prepare(`
+    SELECT data_json FROM module_settings_extensions WHERE tenant_id=?1 AND module_id=?2 LIMIT 1
+  `).bind(scope.tenantId, scope.moduleId).first<{ data_json: string }>()
+  let settings: JsonRecord = {}
+  try { settings = JSON.parse(extension?.data_json || '{}') } catch { /* No extension configured. */ }
+  const allocation = buildPackageCommissionAllocation({
+    plan: { price: Number(subscription.plan_price_cents || 0) / 100, services: parseArray(subscription.plan_services_json) },
+    catalogServices: [...catalog.values()].map((item) => ({ ...item, default_price: Number(item.default_price_cents || 0) / 100 })),
+    settings,
+  })
 
   const existing = await env.DB.prepare(`
     SELECT id,operation_key,scheduled_at_ms
@@ -338,6 +350,8 @@ async function packageScheduleStatements(
       service_code: item.code,
       label: item.name,
       catalog_price: Number(item.default_price_cents || 0) / 100,
+      commission_rate: Number(item.commission_basis_points || 0) / 100,
+      package_unit_price: allocation.unit_values.get(item.code) ?? 0,
       status: 'reserved',
     }))
     const operationKey = `package:${subscription.id}:${occurrence + 1}`
@@ -377,7 +391,7 @@ async function packageScheduleStatements(
           tenant_id,module_id,appointment_id,position,service_id,service_code,service_name,service_group,
           unit_price_cents,duration_min,benefit_used,catalog_price_cents,commission_basis_points,
           min_weight_kg,max_weight_kg,min_weight_grams,max_weight_grams,species_target
-        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,1,?9,NULL,NULL,NULL,NULL,NULL,NULL)
+        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,1,?9,?11,NULL,NULL,NULL,NULL,NULL)
       `).bind(
         scope.tenantId,
         scope.moduleId,
@@ -389,6 +403,7 @@ async function packageScheduleStatements(
         item.group_type,
         Math.max(0, Number(item.default_price_cents || 0)),
         Math.max(15, Number(item.default_duration_min || 60)),
+        Number(item.commission_basis_points || 0),
       ))
       statements.push(env.DB!.prepare(`
         INSERT INTO subscription_benefit_allocations(

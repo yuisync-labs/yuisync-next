@@ -7,10 +7,19 @@ const module_id = 'petshop'
 const scoped = (row) => ({ tenant_id, module_id, ...row })
 
 describe('legacy canonical projection v2', () => {
+  it('preserves staff from legacy templates even without store hours', () => {
+    const result = projectLegacyCanonicalSnapshot({ tables: { settings: [scoped({
+      message_templates: { __petshop_operational_staff: [{ key: 'esteticista-2', name: 'Outra responsável', active: true }] },
+    })] } }, { tenantId: tenant_id, moduleId: module_id })
+    expect(JSON.parse(result.collections.module_settings_extensions[0].data_json).petshop_operational_staff).toEqual([
+      { key: 'esteticista-2', name: 'Outra responsável', active: true },
+    ])
+  })
   it('preserves store hours, service policy, appointment snapshots and grooming machine', () => {
     const result = projectLegacyCanonicalSnapshot({ tables: {
       products: [], stock_movements: [], sales: [], sale_items: [], sale_payment_splits: [], chat_sessions: [], chat_messages: [], fiscal_documents: [],
       settings: [scoped({
+        petshop_operational_staff: [{ key: 'esteticista-1', name: 'Responsável legado', active: true }],
         petbot_business_hours: { '1': [{ open: '08:00', close: '17:00' }] },
         store_business_hours: { '1': [{ open: '08:00', close: '18:00' }] },
         updated_at: '2026-08-19T10:00:00Z',
@@ -31,6 +40,9 @@ describe('legacy canonical projection v2', () => {
     } }, { tenantId: tenant_id, moduleId: module_id })
 
     const extension = result.collections.module_settings_extensions[0]
+    expect(JSON.parse(extension.data_json).petshop_operational_staff).toEqual([
+      { key: 'esteticista-1', name: 'Responsável legado', active: true },
+    ])
     expect(JSON.parse(extension.data_json).store_business_hours['1'][0]).toEqual({ open: '08:00', close: '18:00' })
 
     expect(result.collections.services[0]).toMatchObject({
@@ -48,7 +60,7 @@ describe('legacy canonical projection v2', () => {
 
   it('turns legacy package usage into canonical base usage plus allocation ledger', () => {
     const result = projectLegacyCanonicalSnapshot({ tables: {
-      products: [], petshop_services: [], stock_movements: [], settings: [], sales: [], sale_items: [], sale_payment_splits: [], chat_sessions: [], chat_messages: [], fiscal_documents: [],
+      products: [], petshop_services: [scoped({ id: 'service-bath', code: 'banho', name: 'Banho', group_type: 'banho_tosa', default_price: 55, active: true })], stock_movements: [], settings: [], sales: [], sale_items: [], sale_payment_splits: [], chat_sessions: [], chat_messages: [], fiscal_documents: [],
       subscription_plans: [scoped({
         id: 'plan-1', name: '4 Banhos', price: 180, billing_cycle: 'monthly', active: true,
         services: [{ service_type: 'banho', qty_per_cycle: 4 }], created_at: '2026-01-01T00:00:00Z', updated_at: '2026-08-19T10:00:00Z',

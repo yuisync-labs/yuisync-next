@@ -297,6 +297,11 @@ async function saveSubscription(request: Request, bindings: Bindings, subscripti
   const requestedClientId = text(body.client_id)
   const requestedPetId = text(body.pet_id)
   const status = text(body.status) || 'pending_payment'
+  // Every cancellation must release future reservations through the same lifecycle.
+  if (status === 'cancelled') {
+    if (!subscriptionId) return json({ code: 'CANCELLED_SUBSCRIPTION_CREATION_NOT_ALLOWED' }, 400)
+    return cancelSubscription(request, bindings, subscriptionId)
+  }
   const startedAt = validDate(body.started_at)
   const nextBillingDate = validDate(body.next_billing_date)
   if (!planId || (!requestedClientId && !requestedPetId)) return json({ code: 'PLAN_AND_CLIENT_REQUIRED' }, 400)
@@ -449,11 +454,33 @@ async function cancelSubscription(request: Request, bindings: Bindings, subscrip
   if (resolved.error) return resolved.error
   const { tenantId, moduleId } = resolved.scope!
   const now = Date.now()
-  const result = await bindings.DB!.prepare(`
-    UPDATE client_subscriptions SET status='cancelled',cancelled_at_ms=?4,updated_at_ms=?4
-    WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status<>'cancelled'
-  `).bind(tenantId, moduleId, subscriptionId, now).run()
-  if (!result.meta.changes) return json({ code: 'SUBSCRIPTION_NOT_CANCELLABLE' }, 409)
+  const current = await bindings.DB!.prepare(`
+    SELECT status FROM client_subscriptions WHERE tenant_id=?1 AND module_id=?2 AND id=?3
+  `).bind(tenantId, moduleId, subscriptionId).first<{ status: string }>()
+  if (!current) return json({ code: 'SUBSCRIPTION_NOT_FOUND' }, 404)
+  const results = await bindings.DB!.batch([
+    bindings.DB!.prepare(`
+      UPDATE client_subscriptions SET status='cancelled',cancelled_at_ms=COALESCE(cancelled_at_ms,?4),updated_at_ms=?4
+      WHERE tenant_id=?1 AND module_id=?2 AND id=?3
+        AND NOT EXISTS (SELECT 1 FROM appointments WHERE tenant_id=?1 AND module_id=?2
+          AND subscription_id=?3 AND status='in_progress')
+    `).bind(tenantId, moduleId, subscriptionId, now),
+    bindings.DB!.prepare(`
+      UPDATE appointments SET status='cancelled',updated_at_ms=?4,version=version+1
+      WHERE tenant_id=?1 AND module_id=?2 AND subscription_id=?3
+        AND status IN ('available','scheduled','confirmed','blocked')
+        AND EXISTS (SELECT 1 FROM client_subscriptions WHERE tenant_id=?1 AND module_id=?2
+          AND id=?3 AND status='cancelled')
+        AND NOT EXISTS (SELECT 1 FROM appointments WHERE tenant_id=?1 AND module_id=?2
+          AND subscription_id=?3 AND status='in_progress')
+    `).bind(tenantId, moduleId, subscriptionId, now),
+  ])
+  if (!results[0].meta.changes) return json({
+    code: 'SUBSCRIPTION_HAS_IN_PROGRESS_APPOINTMENTS',
+    message: 'Conclua ou cancele o atendimento em andamento antes de cancelar o pacote.',
+  }, 409)
+  // The appointment lifecycle trigger releases reserved allocations atomically.
+  // Completed appointments, consumed allocations, payments and manual adjustments stay untouched.
   const row = await bindings.DB!.prepare(`SELECT * FROM client_subscriptions WHERE tenant_id=?1 AND module_id=?2 AND id=?3 LIMIT 1`)
     .bind(tenantId, moduleId, subscriptionId).first()
   return json({ subscription: subscriptionPayload(row) })

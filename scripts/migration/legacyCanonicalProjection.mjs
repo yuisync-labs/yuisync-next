@@ -138,11 +138,17 @@ function enrichCatalog(base, source, scope) {
 function projectSettingsExtension(source, scope) {
   const setting = first(source, 'settings', scope)
   const storeHours = parseJson(setting?.store_business_hours, null)
-  if (storeHours == null) return []
+  const templates = parseJson(setting?.message_templates, {})
+  const staff = parseJson(setting?.petshop_operational_staff, null)
+    ?? parseJson(templates?.__petshop_operational_staff, null)
+  const data = {}
+  if (storeHours != null) data.store_business_hours = storeHours
+  if (Array.isArray(staff)) data.petshop_operational_staff = staff
+  if (!Object.keys(data).length) return []
   return [{
     tenant_id: scope.tenant_id,
     module_id: scope.module_id,
-    data_json: json({ store_business_hours: storeHours }),
+    data_json: json(data),
     version: 1,
     updated_at_ms: ms(setting.updated_at, ms(setting.created_at, 0)) ?? 0,
   }]

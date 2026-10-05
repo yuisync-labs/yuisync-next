@@ -1,7 +1,23 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Nunito:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+@config '../tailwind.config.js';
+
+@theme {
+  --default-ring-width: 3px;
+  --default-ring-color: #3b82f6;
+}
+
+/* Preserve v3 defaults rather than redesigning controls during the compiler upgrade. */
+@layer base {
+  *, ::before, ::after, ::backdrop, ::file-selector-button { border-color: #e5e7eb; }
+  input::placeholder, textarea::placeholder { color: #9ca3af; opacity: 1; }
+  button:not(:disabled), [role='button']:not(:disabled) { cursor: pointer; }
+}
+@utility outline-none { outline: 2px solid transparent; outline-offset: 2px; }
+@utility flex-shrink-0 { flex-shrink: 0; }
+@utility flex-shrink { flex-shrink: 1; }
+@utility flex-grow-0 { flex-grow: 0; }
+@utility flex-grow { flex-grow: 1; }
 
 /* ── Design Tokens ─────────────────────────────────────────────────────────── */
 
@@ -300,6 +316,14 @@ body {
 }
 
 #root { height: 100vh; display: flex; flex-direction: column; }
+
+/* Native controls follow the operational typography and browser theme. */
+.theme-petshop :where(button, input, select, textarea),
+.theme-petshop-modal :where(button, input, select, textarea) { font-family: inherit; }
+.theme-petshop, .theme-petshop-modal { color-scheme: light; }
+.theme-petshop.theme-dark,
+body.yuisync-dark .theme-petshop-modal { color-scheme: dark; }
+.theme-petshop-modal { font-family: 'Nunito', sans-serif; }
 
 .public-home :where(a, button, summary):focus-visible {
   outline: 2px solid #38bdf8;

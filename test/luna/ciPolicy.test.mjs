@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { evaluateAuditReport } from '../../scripts/check-npm-audit.mjs'
+import { assertCompleteAuditReport, evaluateAuditReport } from '../../scripts/check-npm-audit.mjs'
+
+test('audit fails closed on network errors, incomplete JSON and process failure', () => {
+  const valid = { auditReportVersion: 2, vulnerabilities: {}, metadata: { vulnerabilities: { total: 0 } } }
+  assert.doesNotThrow(() => assertCompleteAuditReport(valid, { status: 0 }))
+  assert.doesNotThrow(() => assertCompleteAuditReport(valid, { status: 1 }))
+  for (const report of [{}, { error: { code: 'EACCES' } }, { ...valid, metadata: {} }]) {
+    assert.throws(() => assertCompleteAuditReport(report, { status: 1 }))
+  }
+  assert.throws(() => assertCompleteAuditReport(valid, { status: null, error: new Error('spawn failed') }))
+  assert.throws(() => assertCompleteAuditReport(valid, { status: 2 }))
+})
 
 const allowlist = {
   entries: [

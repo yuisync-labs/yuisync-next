@@ -25,6 +25,7 @@ import { useModuleCtx } from '../../../context/ModuleContext'
 import { fmtCurrency } from '../../../lib/supabase'
 import { useClients } from '../../../shared/hooks/useClients'
 import { Card } from '../../../components/ui'
+import { useModalDialog } from '../../../components/ui/useModalDialog'
 import { groupPetsByTutor } from '../../../shared/lib/petTutorGroups'
 import { useCatalogPlans } from '../hooks/useCatalogPlans'
 import {
@@ -182,6 +183,7 @@ function packageAppointmentStatus(status) {
 }
 
 function PlanModal({ plan, catalogServices, onClose, onSave }) {
+  const dialogRef = useModalDialog(onClose)
   const catalog = useMemo(() => catalogServiceMap(catalogServices), [catalogServices])
   const [form, setForm] = useState(() => {
     const existing = enrichPlanServices(plan?.services || [], catalogServices)
@@ -258,7 +260,7 @@ function PlanModal({ plan, catalogServices, onClose, onSave }) {
 
   return createPortal(
     <div className="modal-overlay theme-petshop-modal" onClick={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="modal-box max-w-3xl">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={plan ? 'Editar pacote' : 'Novo pacote'} tabIndex={-1} className="modal-box max-w-3xl">
         <div className="modal-header">
           <div>
             <h2 className="font-display text-xl font-bold text-text">{plan ? 'Editar pacote' : 'Novo pacote'}</h2>
@@ -270,16 +272,16 @@ function PlanModal({ plan, catalogServices, onClose, onSave }) {
         <div className="modal-body space-y-5">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
-              <label className="inp-label">Nome de identificação</label>
-              <input className="inp" value={form.name} onChange={(event) => set('name', event.target.value)} placeholder="Ex.: Pacote Banho Básico"/>
+              <label className="inp-label" htmlFor="plan-name">Nome de identificação</label>
+              <input id="plan-name" className="inp" value={form.name} onChange={(event) => set('name', event.target.value)} placeholder="Ex.: Pacote Banho Básico"/>
             </div>
             <div>
-              <label className="inp-label">Preço do pacote</label>
-              <input className="inp" type="number" min="0" step="0.01" value={form.price} onChange={(event) => set('price', event.target.value)}/>
+              <label className="inp-label" htmlFor="plan-price">Preço do pacote</label>
+              <input id="plan-price" className="inp" type="number" min="0" step="0.01" value={form.price} onChange={(event) => set('price', event.target.value)}/>
             </div>
             <div>
-              <label className="inp-label">Ciclo</label>
-              <select className="inp" value={form.billing_cycle} onChange={(event) => set('billing_cycle', event.target.value)}>
+              <label className="inp-label" htmlFor="plan-cycle">Ciclo</label>
+              <select id="plan-cycle" className="inp" value={form.billing_cycle} onChange={(event) => set('billing_cycle', event.target.value)}>
                 {Object.entries(BILLING_CYCLES).map(([value, metadata]) => <option key={value} value={value}>{metadata.label}</option>)}
               </select>
             </div>
@@ -305,8 +307,8 @@ function PlanModal({ plan, catalogServices, onClose, onSave }) {
                   <div key={`${service.service_type}-${index}`} className={`rounded-xl border p-3 ${legacy ? 'border-amber-500/35 bg-amber-500/8' : 'border-[var(--border2)] bg-surface/70'}`}>
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_120px_44px]">
                       <div>
-                        <label className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-muted">Serviço real</label>
-                        <select className="inp" value={service.service_type} onChange={(event) => updateServiceType(index, event.target.value)}>
+                        <label htmlFor={`plan-service-${index}`} className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-muted">Serviço real</label>
+                        <select id={`plan-service-${index}`} className="inp" value={service.service_type} onChange={(event) => updateServiceType(index, event.target.value)}>
                           {legacy && <option value={service.service_type}>Legado: {service.service_name || service.service_type}</option>}
                           <optgroup label="Catálogo de serviços">
                             {catalogServices.map((catalogService) => (
@@ -317,8 +319,8 @@ function PlanModal({ plan, catalogServices, onClose, onSave }) {
                         </select>
                       </div>
                       <div>
-                        <label className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-muted">Por ciclo</label>
-                        <input className="inp" type="number" min="1" step="1" value={service.qty_per_cycle} onChange={(event) => updateQuantity(index, event.target.value)}/>
+                        <label htmlFor={`plan-quantity-${index}`} className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-muted">Por ciclo</label>
+                        <input id={`plan-quantity-${index}`} className="inp" type="number" min="1" step="1" value={service.qty_per_cycle} onChange={(event) => updateQuantity(index, event.target.value)}/>
                       </div>
                       <button type="button" title="Remover serviço" onClick={() => setForm((current) => ({ ...current, services: current.services.filter((_, itemIndex) => itemIndex !== index) }))} className="btn btn-danger btn-sm mt-5 justify-center"><Trash2 size={13}/></button>
                     </div>
@@ -421,6 +423,7 @@ function ClientPicker({ clients, selectedId, onSelect, onManagePets }) {
 }
 
 function SubscriptionModal({ plans, clients, catalogServices, context, onClose, onSave, onManagePets }) {
+  const dialogRef = useModalDialog(onClose)
   const renewalOf = context?.renewalOf || null
   const pendingSubscription = context?.pendingSubscription || null
   const renewal = Boolean(renewalOf)
@@ -467,7 +470,7 @@ function SubscriptionModal({ plans, clients, catalogServices, context, onClose, 
 
   return createPortal(
     <div className="modal-overlay theme-petshop-modal" onClick={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="modal-box max-w-xl">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Vender pacote ao cliente" tabIndex={-1} className="modal-box max-w-xl">
         <div className="modal-header">
           <div>
             <h2 className="font-display text-xl font-bold text-text">Vender pacote ao cliente</h2>
@@ -485,10 +488,11 @@ function SubscriptionModal({ plans, clients, catalogServices, context, onClose, 
               : 'Ao continuar, o pacote irá para Ordens / Entrega → Banho & Tosa. Os benefícios serão liberados somente após o recebimento no caixa.'}
           </div>
           <div>
-            <label className="inp-label">Pacote</label>
-            <select className="inp" disabled={renewal} value={form.plan_id} onChange={(event) => setForm((current) => ({ ...current, plan_id: event.target.value }))}>
+            <label className="inp-label" htmlFor="subscription-plan">Pacote</label>
+            <select id="subscription-plan" className="inp" disabled={renewal || !plans.length} value={form.plan_id} onChange={(event) => setForm((current) => ({ ...current, plan_id: event.target.value }))}>
               {plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} - {fmtCurrency(plan.price)}</option>)}
             </select>
+            {!plans.length && <p className="mt-2 text-sm text-muted">Nenhum pacote ativo disponível. Feche esta janela e cadastre um novo pacote primeiro.</p>}
           </div>
           {renewal ? (
             <div>
@@ -514,8 +518,8 @@ function SubscriptionModal({ plans, clients, catalogServices, context, onClose, 
             />
           )}
           <div>
-            <label className="inp-label">{renewal ? 'Primeiro atendimento do novo ciclo' : 'Início previsto do ciclo'}</label>
-            <input className="inp" type="date" value={form.started_at} onChange={(event) => setForm((current) => ({ ...current, started_at: event.target.value }))}/>
+            <label className="inp-label" htmlFor="subscription-start">{renewal ? 'Primeiro atendimento do novo ciclo' : 'Início previsto do ciclo'}</label>
+            <input id="subscription-start" className="inp" type="date" value={form.started_at} onChange={(event) => setForm((current) => ({ ...current, started_at: event.target.value }))}/>
           </div>
 
           {selectedPlan && (
@@ -548,6 +552,7 @@ function SubscriptionModal({ plans, clients, catalogServices, context, onClose, 
 }
 
 function PackageAppointmentsModal({ subscription, activeTenantId, moduleId, onClose, onChanged }) {
+  const dialogRef = useModalDialog(onClose)
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -636,7 +641,7 @@ function PackageAppointmentsModal({ subscription, activeTenantId, moduleId, onCl
 
   return createPortal(
     <div className="modal-overlay theme-petshop-modal" onClick={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="modal-box max-w-4xl">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Agendamentos do pacote" tabIndex={-1} className="modal-box max-w-4xl">
         <div className="modal-header">
           <div>
             <h2 className="font-display text-xl font-bold text-text">Agendamentos do pacote</h2>
@@ -667,12 +672,12 @@ function PackageAppointmentsModal({ subscription, activeTenantId, moduleId, onCl
                     </div>
                     <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="inp-label">Data</label>
-                        <input type="date" className="inp" value={row.date} onChange={(event) => updateRow(row.id, 'date', event.target.value)}/>
+                        <label className="inp-label" htmlFor={`package-date-${row.id}`}>Data</label>
+                        <input id={`package-date-${row.id}`} type="date" className="inp" value={row.date} onChange={(event) => updateRow(row.id, 'date', event.target.value)}/>
                       </div>
                       <div>
-                        <label className="inp-label">Horário</label>
-                        <input type="time" className="inp" value={row.time} onChange={(event) => updateRow(row.id, 'time', event.target.value)}/>
+                        <label className="inp-label" htmlFor={`package-time-${row.id}`}>Horário</label>
+                        <input id={`package-time-${row.id}`} type="time" className="inp" value={row.time} onChange={(event) => updateRow(row.id, 'time', event.target.value)}/>
                       </div>
                     </div>
                     <p className="mt-2 text-[10px] text-muted">Data e horário disponíveis para conferência ou ajuste manual, independentemente do status.</p>
@@ -697,6 +702,7 @@ function PackageAppointmentsModal({ subscription, activeTenantId, moduleId, onCl
 }
 
 function UsageEditModal({ subscription, onClose, onSave }) {
+  const dialogRef = useModalDialog(onClose)
   const items = useMemo(() => buildEditableUsage(subscription), [subscription])
   const [values, setValues] = useState(() => Object.fromEntries(items.map((item) => [item.service_type, item.used])))
   const [saving, setSaving] = useState(false)
@@ -717,13 +723,13 @@ function UsageEditModal({ subscription, onClose, onSave }) {
 
   return createPortal(
     <div className="modal-overlay theme-petshop-modal" onClick={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="modal-box max-w-xl">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Editar consumo do pacote" tabIndex={-1} className="modal-box max-w-xl">
         <div className="modal-header">
           <div>
             <h2 className="font-display text-xl font-bold text-text">Editar consumo do pacote</h2>
             <p className="mt-1 text-sm text-muted">{subscription.client?.pet_name || subscription.client?.owner_name} · {subscription.subscription_plans?.name}</p>
           </div>
-          <button type="button" onClick={onClose} className="text-muted hover:text-text"><X size={18}/></button>
+          <button type="button" aria-label="Fechar consumo" onClick={onClose} className="text-muted hover:text-text"><X size={18}/></button>
         </div>
         <div className="modal-body space-y-4">
           <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm font-medium text-text">
@@ -739,7 +745,7 @@ function UsageEditModal({ subscription, onClose, onSave }) {
                 </div>
                 <div>
                   <label className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-muted">Utilizados</label>
-                  <input className="inp" type="number" min="0" max={item.total} step="1" value={values[item.service_type] ?? 0} onChange={(event) => setValues((current) => ({ ...current, [item.service_type]: event.target.value }))}/>
+                  <input aria-label={`Utilizados: ${item.service_type}`} className="inp" type="number" min="0" max={item.total} step="1" value={values[item.service_type] ?? 0} onChange={(event) => setValues((current) => ({ ...current, [item.service_type]: event.target.value }))}/>
                 </div>
               </div>
             ))}
@@ -757,6 +763,7 @@ function UsageEditModal({ subscription, onClose, onSave }) {
 }
 
 function BenefitLedgerModal({ subscription, activeTenantId, moduleId, onClose }) {
+  const dialogRef = useModalDialog(onClose)
   const [benefits, setBenefits] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -780,7 +787,7 @@ function BenefitLedgerModal({ subscription, activeTenantId, moduleId, onClose })
 
   return createPortal(
     <div className="modal-overlay theme-petshop-modal" onClick={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="modal-box max-w-5xl">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Saldo e origem do pacote" tabIndex={-1} className="modal-box max-w-5xl">
         <div className="modal-header">
           <div>
             <h2 className="font-display text-xl font-bold text-text">Saldo e origem do pacote</h2>
@@ -834,6 +841,7 @@ function BenefitLedgerModal({ subscription, activeTenantId, moduleId, onClose })
 }
 
 function CancelSubscriptionModal({ subscription, onClose, onConfirm }) {
+  const dialogRef = useModalDialog(onClose)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -852,14 +860,14 @@ function CancelSubscriptionModal({ subscription, onClose, onConfirm }) {
 
   return createPortal(
     <div className="modal-overlay theme-petshop-modal" onClick={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="modal-box max-w-md">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Cancelar assinatura" tabIndex={-1} className="modal-box max-w-md">
         <div className="modal-header">
           <h2 className="font-display text-xl font-bold text-text">Cancelar assinatura</h2>
-          <button type="button" onClick={onClose} className="text-muted hover:text-text"><X size={18}/></button>
+          <button type="button" aria-label="Fechar cancelamento" onClick={onClose} className="text-muted hover:text-text"><X size={18}/></button>
         </div>
         <div className="modal-body space-y-4">
           <div className="rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-            O pacote de <strong>{subscription.client?.pet_name || subscription.client?.owner_name}</strong> deixará de aparecer na Agenda. O histórico e os consumos atuais serão preservados.
+            Os agendamentos ainda não iniciados do pacote de <strong>{subscription.client?.pet_name || subscription.client?.owner_name}</strong> serão cancelados e suas reservas liberadas. Atendimentos concluídos, consumos e pagamentos serão preservados; este cancelamento não gera estorno. Finalize qualquer atendimento em andamento primeiro.
           </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
           <div className="flex gap-3">
@@ -950,7 +958,7 @@ export default function PlanosNativePage({ setPage }) {
   async function persistPendingSchedule(subscription) {
     if (subscription?.status !== 'pending_payment') return subscription
     const firstAt = window.sessionStorage.getItem(PACKAGE_FIRST_APPOINTMENT_STORAGE_KEY)
-    if (firstAt) publishPackageScheduleHint({ subscriptionId: subscription.id, firstAppointmentAt: firstAt })
+    if (firstAt) publishPackageScheduleHint({ subscriptionId: subscription.id, firstAppointmentAt: firstAt, pendingPayment: true })
     return subscription
   }
 

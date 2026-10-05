@@ -177,12 +177,16 @@ export function appointmentCommissionLines(appointment = {}) {
     )
     const packageRevenue = Number(
       item.package_unit_price
+      ?? matchingBenefit?.package_unit_price
       ?? appointment.package_commission_unit_value
       ?? 0
     )
     const netRevenue = Number(item.unit_price ?? item.price ?? 0)
+    const recordedPackageBase = item.package_unit_price ?? matchingBenefit?.package_unit_price
+    const hasPackageBase = recordedPackageBase != null && recordedPackageBase !== ''
+      && Number.isFinite(Number(recordedPackageBase)) && Number(recordedPackageBase) >= 0
     const revenue = packageCovered
-      ? packageRevenue > 0 ? packageRevenue : catalogRevenue
+      ? hasPackageBase || packageRevenue > 0 ? packageRevenue : catalogRevenue
       : netRevenue > 0
         ? netRevenue
         : eligible.length === 1
@@ -198,7 +202,9 @@ export function appointmentCommissionLines(appointment = {}) {
     const rawLabel = item.name || item.label || item.code || item.value || appointment.service_type || 'Servico estetico'
     const legacyGeneric = genericBathTosaPattern.test(normalizeText(item.service_type || item.code || appointment.service_type || ''))
     const baseLabel = legacyGeneric && category === 'bath' ? 'Banho (registro antigo)' : rawLabel
-    const packageBaseSource = String(item.package_base_source || appointment.package_commission_base_source || '')
+    const packageBaseSource = String(item.package_base_source
+      || (matchingBenefit?.package_unit_price != null ? 'appointment_snapshot' : '')
+      || appointment.package_commission_base_source || '')
     const baseSource = packageCovered
       ? packageBaseSource === 'current_plan_allocation'
         ? 'package_current_plan_allocation'

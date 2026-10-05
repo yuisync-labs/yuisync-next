@@ -30,9 +30,9 @@ export default function PlanosCheckoutIntegratedPage({ setPage }) {
       setCheckoutVersion((current) => current + 1)
       setActiveTab('pagamentos')
     }
-    const onScheduleSaved = () => {
+    const onScheduleSaved = (event) => {
       setCheckoutVersion((current) => current + 1)
-      setActiveTab('pagamentos')
+      if (event.detail?.pendingPayment === true) setActiveTab('pagamentos')
     }
     window.addEventListener('yuisync:subscription-pending-payment', onPendingPayment)
     window.addEventListener(PACKAGE_SCHEDULE_SAVED_EVENT, onScheduleSaved)

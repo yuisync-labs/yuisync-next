@@ -137,6 +137,15 @@ function annotationEscape(value) {
   return String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')
 }
 
+export function assertCompleteAuditReport(report, result = {}) {
+  if (result.error || result.signal || ![0, 1].includes(result.status)
+    || report?.error || report?.auditReportVersion !== 2
+    || !report.vulnerabilities || typeof report.vulnerabilities !== 'object'
+    || Array.isArray(report.vulnerabilities) || !report.metadata?.vulnerabilities) {
+    throw new Error('npm audit failed or returned an incomplete report; security approval is unavailable.')
+  }
+}
+
 async function main() {
   const allowlistPath = path.resolve('config/npm-audit-allowlist.json')
   const allowlist = JSON.parse(await readFile(allowlistPath, 'utf8'))
@@ -151,8 +160,9 @@ async function main() {
   let report
   try {
     report = JSON.parse(result.stdout)
+    assertCompleteAuditReport(report, result)
   } catch {
-    console.error(result.stdout)
+    console.error('npm audit failed or returned an incomplete report; refusing security approval.')
     process.exit(1)
   }
 
