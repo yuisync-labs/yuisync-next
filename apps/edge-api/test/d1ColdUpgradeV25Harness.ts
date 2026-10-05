@@ -24,6 +24,10 @@ async function resetMigrationHistoryTo(db: D1Database, migrations: Parameters<ty
 
 async function removePostV25Schema(db: D1Database) {
   await db.exec(`
+    DROP TABLE IF EXISTS luna_proposal_presentations;
+    DROP TABLE IF EXISTS luna_operation_events;
+    DROP INDEX IF EXISTS luna_proposals_operation;
+    ALTER TABLE luna_proposals DROP COLUMN operation_id;
     DROP TRIGGER IF EXISTS cash_register_single_open_insert_guard;
     DROP TRIGGER IF EXISTS cash_register_single_open_reopen_guard;
     DROP VIEW IF EXISTS compat_chat_sessions;
@@ -65,6 +69,8 @@ async function removePostV25Schema(db: D1Database) {
 }
 
 async function assertV30(db: D1Database) {
+  const lunaColumns = await db.prepare('PRAGMA table_info(luna_proposals)').all<{ name: string }>()
+  expect(lunaColumns.results.some((row) => row.name === 'operation_id')).toBe(true)
   const version = await db.prepare("SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'")
     .first<{ value: string }>()
   expect(version?.value).toBe('30')

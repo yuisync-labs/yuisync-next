@@ -8,6 +8,8 @@ import { defineConfig } from 'vitest/config'
 
 const migrationsPath = fileURLToPath(new URL('./migrations', import.meta.url))
 const authMigrationsPath = fileURLToPath(new URL('./auth-migrations', import.meta.url))
+// Keep local test logs in the ignored workspace, not the user's roaming profile.
+process.env.WRANGLER_LOG_PATH ??= fileURLToPath(new URL('../../.wrangler/test-logs/', import.meta.url))
 
 export default defineConfig({
   plugins: [

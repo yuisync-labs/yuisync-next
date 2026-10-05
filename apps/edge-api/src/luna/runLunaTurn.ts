@@ -5,6 +5,8 @@ import { GroqProviderError } from './providers/groqProvider'
 import { LUNA_OPERATIONAL_SYSTEM_PROMPT } from './systemPrompt'
 import { createLunaToolRegistry } from './toolRegistry'
 import type { LunaExecutionContext, LunaToolDefinition } from './contracts'
+import { loadPresentableProposals, renderProposalSummary } from './proposalPresentation'
+import { canonicalJson } from './canonicalJson'
 
 type Provider = Readonly<{
   model: string
@@ -40,8 +42,12 @@ export async function runLunaTurn(input: {
   })
   const registry = createLunaToolRegistry(input.database)
   const pendingProposal = await repository.loadPendingProposalState(input.context)
+  let operational
+  try { operational = await repository.loadState(input.context) }
+  catch { return { status: 'failed', reply: null, proposalIds: [], committedOperationIds: [], traceId: input.context.traceId, errorCode: 'OPERATION_STATE_UNKNOWN', usage: emptyUsage } }
   const messages: LunaMessage[] = [
     { role: 'system', content: LUNA_OPERATIONAL_SYSTEM_PROMPT },
+    { role: 'system', content: `MEMÓRIA OPERACIONAL D1: ${JSON.stringify(operational.state)}\nResumo conversacional (não autoriza operações): ${operational.summary ?? ''}` },
     ...(pendingProposal ? [pendingProposal] : []),
     ...await repository.loadHistory(input.context),
   ]
@@ -67,6 +73,8 @@ export async function runLunaTurn(input: {
 
       if (response.toolCalls.length === 0) {
         reply = response.content
+        const summaries = await loadPresentableProposals(input.database, input.context, proposals)
+        if (summaries.length) reply = [reply, ...summaries.map(renderProposalSummary)].filter(Boolean).join('\n\n')
         finalStatus = proposals.length > 0 ? 'awaiting_confirmation' : reply ? 'replied' : 'failed'
         break
       }
@@ -76,13 +84,13 @@ export async function runLunaTurn(input: {
         budget.beforeTool()
         const args = parseArguments(call.function.arguments)
         let result
-        const signature = `${call.function.name}:${call.function.arguments}`
+        const signature = `${call.function.name}:${canonicalJson(args)}`
         const started = Date.now()
         if (!args) result = { ok: false as const, code: 'TOOL_ARGUMENTS_INVALID', retryable: false }
         else if (callSignatures.has(signature)) result = { ok: false as const, code: 'TOOL_CALL_REPEATED', retryable: false }
         else {
           callSignatures.add(signature)
-          try { result = await registry.execute(call.function.name, args, input.context) }
+          try { result = await registry.execute(call.function.name, args, { ...input.context, actionIndex: budget.snapshot().toolCalls - 1 }) }
           catch { result = { ok: false as const, code: 'TOOL_EXECUTION_FAILED', retryable: true } }
         }
         await repository.recordToolRun({ context: input.context, name: call.function.name, args: args || {}, result, durationMs: Date.now() - started })

@@ -4,6 +4,8 @@ import { automaticAllocations } from '../subscriptionBenefitAuto'
 import type { BillingIntent } from '../subscriptionBenefitLedger'
 import type { LunaExecutionContext, LunaToolResult } from './contracts'
 import { validateScheduleAvailability } from './schedulePolicy'
+import { isConversationCustomer } from './customerIdentity'
+import { LunaConversationRepository } from './conversationRepository'
 
 type ProposalRow = {
   id: string
@@ -29,12 +31,25 @@ function explicitConfirmation(value: string): boolean {
 async function latestConfirmation(database: D1Database, context: LunaExecutionContext, proposal: ProposalRow): Promise<boolean> {
   if (proposal.source_message_id === context.sourceMessageId) return false
   const message = await database.prepare(`
-    SELECT content_text FROM chat_messages
+    SELECT id,content_text,created_at_ms FROM chat_messages
     WHERE tenant_id=?1 AND module_id=?2 AND thread_id=?3 AND external_message_id=?4
       AND direction='inbound' AND actor_type='customer' LIMIT 1
   `).bind(context.tenantId, context.moduleId, context.conversationId, context.sourceMessageId)
-    .first<{ content_text: string }>()
-  return Boolean(message && explicitConfirmation(message.content_text))
+    .first<{ id: string; content_text: string; created_at_ms: number }>()
+  if (!message || !explicitConfirmation(message.content_text)) return false
+  const presentation = await database.prepare(`SELECT outbound_message_id,presented_at_ms FROM luna_proposal_presentations
+    WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND proposal_id=?4 AND proposal_version=?5 AND fingerprint=?6`)
+    .bind(context.tenantId, context.moduleId, context.conversationId, proposal.id, proposal.version, proposal.fingerprint)
+    .first<{ outbound_message_id: string; presented_at_ms: number }>()
+  if (!presentation || message.created_at_ms <= presentation.presented_at_ms) return false
+  // Any intervening question/answer suspends the target. Multiple summaries in
+  // one message are deliberately ambiguous: a bare "sim" cannot select one.
+  const intervening = await database.prepare(`SELECT id FROM chat_messages WHERE tenant_id=?1 AND module_id=?2 AND thread_id=?3
+    AND id<>?4 AND id<>?5 AND created_at_ms>=?6 AND created_at_ms<=?7 LIMIT 1`)
+    .bind(context.tenantId, context.moduleId, context.conversationId, message.id, presentation.outbound_message_id, presentation.presented_at_ms, message.created_at_ms).first()
+  const other = await database.prepare(`SELECT proposal_id FROM luna_proposal_presentations WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND outbound_message_id=?4 AND proposal_id<>?5 LIMIT 1`)
+    .bind(context.tenantId, context.moduleId, context.conversationId, presentation.outbound_message_id, proposal.id).first()
+  return !intervening && !other
 }
 
 async function markProposal(database: D1Database, context: LunaExecutionContext, proposalId: string, status: string, operationId: string | null = null): Promise<void> {
@@ -242,6 +257,15 @@ export async function commitConfirmedProposal(database: D1Database, context: Lun
     FROM luna_proposals WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4 LIMIT 1
   `).bind(context.tenantId, context.moduleId, context.conversationId, proposalId).first<ProposalRow>()
   if (!proposal) return { ok: false, code: 'PROPOSAL_NOT_FOUND', retryable: false }
+  let identityPayload: JsonRecord
+  try { identityPayload = record(JSON.parse(proposal.payload_json)) }
+  catch { return { ok: false, code: 'PROPOSAL_PAYLOAD_INVALID', retryable: false } }
+  if (!await isConversationCustomer(database, context, text(identityPayload.customer_id))) return { ok: false, code: 'CUSTOMER_SCOPE_DENIED', retryable: false }
+  if (identityPayload.draft_operation_id) {
+    const { state } = await new LunaConversationRepository(database).loadState(context)
+    const draft = state.operations[text(identityPayload.draft_operation_id)]
+    if (!draft || draft.version !== identityPayload.draft_version || draft.status !== 'active') return { ok: false, code: 'PROPOSAL_STALE', retryable: false }
+  }
   if (proposal.version !== proposalVersion) return { ok: false, code: 'PROPOSAL_STALE', retryable: false }
   if (proposal.status === 'completed' && proposal.committed_operation_id) {
     return { ok: true, data: { operation_id: proposal.committed_operation_id, operation_kind: proposal.operation_kind, idempotent: true } }

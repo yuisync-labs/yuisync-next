@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { runLunaTurn } from '../src/luna/runLunaTurn'
 import type { LunaMessage, LunaProviderResponse, LunaToolDefinition } from '../src/luna/contracts'
 import { createLunaToolRegistry } from '../src/luna/toolRegistry'
+import { loadPresentableProposals, recordProposalPresentation, renderProposalSummary } from '../src/luna/proposalPresentation'
 
 const testEnv = env as EdgeEnv & { DB: D1Database }
 const TENANT = 'tenant-luna-agent-test'
@@ -34,7 +35,48 @@ const context = {
   executionMode: 'fixture' as const,
 }
 
+async function present(proposalId: string): Promise<string> {
+  const rows = await loadPresentableProposals(testEnv.DB, context, [proposalId])
+  expect(rows).toHaveLength(1)
+  const id = crypto.randomUUID()
+  await testEnv.DB.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,'outbound','assistant',?4,?5)`)
+    .bind(TENANT, id, THREAD, renderProposalSummary(rows[0]), Date.now()).run()
+  await recordProposalPresentation(testEnv.DB, context, [proposalId], id)
+  return id
+}
+
 describe('Luna operational foundation', () => {
+  it('não aceita confirmação sem resumo apresentado nem para uma pergunta paralela', async () => {
+    const registry = createLunaToolRegistry(testEnv.DB)
+    const prepared = await registry.execute('prepare_product_order', { customer_id: 'client-1', items: [{ product_id: 'product-1', quantity: 1 }], fulfillment_type: 'counter' }, { ...context, sourceMessageId: 'unpresented-source' })
+    expect(prepared.ok).toBe(true)
+    const proposal = prepared.ok ? prepared.data as { proposal_id: string; proposal_version: number } : null
+    const args = { proposal_id: proposal!.proposal_id, proposal_version: proposal!.proposal_version }
+    const inbound = async (id: string, at: number) => testEnv.DB.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?2,'inbound','customer','sim',?4)`)
+      .bind(TENANT, id, THREAD, at).run()
+    await inbound('unpresented-yes', Date.now())
+    expect(await registry.execute('commit_confirmed_proposal', args, { ...context, sourceMessageId: 'unpresented-yes' })).toMatchObject({ ok: false, code: 'CONFIRMATION_REQUIRED' })
+    await present(proposal!.proposal_id)
+    await testEnv.DB.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,'outbound','assistant','Você quer saber nosso horário?',?4)`)
+      .bind(TENANT, crypto.randomUUID(), THREAD, Date.now() + 1).run()
+    await inbound('parallel-question-yes', Date.now() + 2)
+    expect(await registry.execute('commit_confirmed_proposal', args, { ...context, sourceMessageId: 'parallel-question-yes' })).toMatchObject({ ok: false, code: 'CONFIRMATION_REQUIRED' })
+  })
+
+  it('preserva proposta de compra ao preparar um banho independente', async () => {
+    const registry = createLunaToolRegistry(testEnv.DB)
+    const order = await registry.execute('prepare_product_order', { customer_id: 'client-1', items: [{ product_id: 'product-1', quantity: 1 }], fulfillment_type: 'counter' }, context)
+    const appointment = await registry.execute('prepare_appointment', { customer_id: 'client-1', pet_id: 'pet-1', service_ids: ['service-1'], scheduled_at: new Date(Date.now() + 40 * 86400000).toISOString(), notes: null }, context)
+    expect(order.ok && appointment.ok).toBe(true)
+    const id = order.ok ? (order.data as { proposal_id: string }).proposal_id : ''
+    const row = await testEnv.DB.prepare(`SELECT status FROM luna_proposals WHERE tenant_id=?1 AND id=?2`).bind(TENANT, id).first<{ status: string }>()
+    expect(row?.status).toBe('awaiting_confirmation')
+  })
+
+  it('rejeita produtos duplicados em vez de verificar estoque individual insuficiente', async () => {
+    const result = await createLunaToolRegistry(testEnv.DB).execute('prepare_product_order', { customer_id: 'client-1', items: [{ product_id: 'product-1', quantity: 6 }, { product_id: 'product-1', quantity: 6 }], fulfillment_type: 'counter' }, context)
+    expect(result).toMatchObject({ ok: false, code: 'DUPLICATE_PRODUCT_LINES' })
+  })
   it('consulta contexto e prepara pedido sem executar venda', async () => {
     const registry = createLunaToolRegistry(testEnv.DB)
     const customer = await registry.execute('get_customer_context', {}, context)
@@ -90,8 +132,10 @@ describe('Luna operational foundation', () => {
     }, { ...context, sourceMessageId: 'wamid.order-proposal' })
     expect(withoutConfirmation).toMatchObject({ ok: false, code: 'CONFIRMATION_REQUIRED' })
 
+    await present(data!.proposal_id)
+
     await testEnv.DB.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?4,'inbound','customer','sim',?5)`)
-      .bind(TENANT, crypto.randomUUID(), THREAD, 'wamid.order-confirm', Date.now()).run()
+      .bind(TENANT, crypto.randomUUID(), THREAD, 'wamid.order-confirm', Date.now() + 1).run()
     const committed = await registry.execute('commit_confirmed_proposal', {
       proposal_id: data!.proposal_id, proposal_version: data!.proposal_version,
     }, { ...context, sourceMessageId: 'wamid.order-confirm' })
@@ -127,8 +171,9 @@ describe('Luna operational foundation', () => {
       customer_id: 'client-1', items: [{ product_id: 'product-1', quantity: 1 }], fulfillment_type: 'counter',
     }, { ...context, sourceMessageId: proposalSource })
     const proposal = prepared.ok ? prepared.data as { proposal_id: string; proposal_version: number } : null
+    await present(proposal!.proposal_id)
     await testEnv.DB.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?4,'inbound','customer','confirmo',?5)`)
-      .bind(TENANT, crypto.randomUUID(), THREAD, confirmationSource, Date.now()).run()
+      .bind(TENANT, crypto.randomUUID(), THREAD, confirmationSource, Date.now() + 1).run()
     let call = 0
     const provider = {
       model: 'groq-test-model',
@@ -138,7 +183,7 @@ describe('Luna operational foundation', () => {
           expect(input.messages.some((message) => message.role === 'system' && message.content?.includes(proposal!.proposal_id))).toBe(true)
           return {
             content: null,
-            toolCalls: [{ id: 'tool-confirm', type: 'function', function: { name: 'commit_confirmed_proposal', arguments: JSON.stringify(proposal) } }],
+            toolCalls: [{ id: 'tool-confirm', type: 'function', function: { name: 'commit_confirmed_proposal', arguments: JSON.stringify({ proposal_id: proposal!.proposal_id, proposal_version: proposal!.proposal_version }) } }],
             usage: { promptTokens: 120, completionTokens: 20 },
             rateLimit: { remainingRequests: 900, remainingTokens: 7000, resetRequests: null, resetTokens: null },
             requestLimit: 1000,
@@ -165,8 +210,9 @@ describe('Luna operational foundation', () => {
     }, { ...context, sourceMessageId: 'wamid.appointment-proposal' })
     const data = prepared.ok ? prepared.data as { proposal_id: string; proposal_version: number } : null
     expect(data).toBeTruthy()
+    await present(data!.proposal_id)
     await testEnv.DB.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?4,'inbound','customer','pode agendar',?5)`)
-      .bind(TENANT, crypto.randomUUID(), THREAD, 'wamid.appointment-confirm', Date.now()).run()
+      .bind(TENANT, crypto.randomUUID(), THREAD, 'wamid.appointment-confirm', Date.now() + 1).run()
     const committed = await registry.execute('commit_confirmed_proposal', {
       proposal_id: data!.proposal_id, proposal_version: data!.proposal_version,
     }, { ...context, sourceMessageId: 'wamid.appointment-confirm' })
@@ -190,8 +236,9 @@ describe('Luna operational foundation', () => {
     }, { ...context, sourceMessageId: 'wamid.reschedule-proposal' })
     const data = prepared.ok ? prepared.data as { proposal_id: string; proposal_version: number } : null
     expect(data).toBeTruthy()
+    await present(data!.proposal_id)
     await testEnv.DB.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?4,'inbound','customer','confirmo',?5)`)
-      .bind(TENANT, crypto.randomUUID(), THREAD, 'wamid.reschedule-confirm', Date.now()).run()
+      .bind(TENANT, crypto.randomUUID(), THREAD, 'wamid.reschedule-confirm', Date.now() + 1).run()
     const committed = await registry.execute('commit_confirmed_proposal', {
       proposal_id: data!.proposal_id, proposal_version: data!.proposal_version,
     }, { ...context, sourceMessageId: 'wamid.reschedule-confirm' })
@@ -213,8 +260,9 @@ describe('Luna operational foundation', () => {
     }, { ...context, sourceMessageId: 'wamid.cancel-proposal' })
     const data = prepared.ok ? prepared.data as { proposal_id: string; proposal_version: number } : null
     expect(data).toBeTruthy()
+    await present(data!.proposal_id)
     await testEnv.DB.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?4,'inbound','customer','sim',?5)`)
-      .bind(TENANT, crypto.randomUUID(), THREAD, 'wamid.cancel-confirm', Date.now()).run()
+      .bind(TENANT, crypto.randomUUID(), THREAD, 'wamid.cancel-confirm', Date.now() + 1).run()
     const committed = await registry.execute('commit_confirmed_proposal', {
       proposal_id: data!.proposal_id, proposal_version: data!.proposal_version,
     }, { ...context, sourceMessageId: 'wamid.cancel-confirm' })

@@ -31,7 +31,13 @@ async function setSchemaSnapshot(version: number) {
 }
 
 async function dropVersion30() {
+  // Fixtures start from the fully migrated DB. Remove additive Luna objects
+  // before replay so 0037 does not repeat ALTER TABLE against a current column.
   await db.exec(`
+    DROP TABLE IF EXISTS luna_proposal_presentations;
+    DROP TABLE IF EXISTS luna_operation_events;
+    DROP INDEX IF EXISTS luna_proposals_operation;
+    ALTER TABLE luna_proposals DROP COLUMN operation_id;
     DROP TRIGGER IF EXISTS cash_register_single_open_insert_guard;
     DROP TRIGGER IF EXISTS cash_register_single_open_reopen_guard;
     DROP VIEW IF EXISTS compat_chat_sessions;
@@ -93,6 +99,10 @@ async function dropVersion26() {
 }
 
 async function assertLatestSchema() {
+  const lunaColumns = await db.prepare('PRAGMA table_info(luna_proposals)').all<{ name: string }>()
+  expect(lunaColumns.results.some((row) => row.name === 'operation_id')).toBe(true)
+  const lunaTables = await db.prepare(`SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('luna_operation_events','luna_proposal_presentations')`).all<{ name: string }>()
+  expect(lunaTables.results).toHaveLength(2)
   const version = await db.prepare("SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'")
     .first<{ value: string }>()
   expect(version?.value).toBe('30')

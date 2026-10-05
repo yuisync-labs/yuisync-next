@@ -1,6 +1,7 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 import { GroqProvider } from './luna/providers/groqProvider'
 import { runLunaTurn } from './luna/runLunaTurn'
+import { recordProposalPresentation } from './luna/proposalPresentation'
 import type { LunaExecutionContext } from './luna/contracts'
 
 type AiLabBindings = BetterAuthRuntimeBindings & {
@@ -175,10 +176,12 @@ async function lunaPlayground(request: Request, bindings: AiLabBindings): Promis
     maxTokens: positive(bindings.LUNA_MAX_TOKENS_PER_TURN, 12_000),
   })
   if (result.reply) {
+    const outboundId = crypto.randomUUID()
     await bindings.DB!.prepare(`
       INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,content_json,created_at_ms)
       VALUES(?1,?2,?3,?4,'outbound','assistant',?5,?6,?7)
-    `).bind(resolved.scope.tenantId, resolved.scope.moduleId, crypto.randomUUID(), conversationId, result.reply, JSON.stringify({ trace_id: traceId, playground: true }), Date.now()).run()
+    `).bind(resolved.scope.tenantId, resolved.scope.moduleId, outboundId, conversationId, result.reply, JSON.stringify({ trace_id: traceId, playground: true }), Date.now()).run()
+    await recordProposalPresentation(bindings.DB!, context, result.proposalIds, outboundId)
   }
   const runId = crypto.randomUUID()
   await bindings.DB!.prepare(`

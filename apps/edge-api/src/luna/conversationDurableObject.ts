@@ -7,6 +7,7 @@ import {
 import { sendWhatsAppOutboundText } from '../whatsappOutboundService'
 import { GroqProvider } from './providers/groqProvider'
 import { runLunaTurn } from './runLunaTurn'
+import { recordProposalPresentation } from './proposalPresentation'
 
 export type LunaRuntimeBindings = Readonly<{
   DB?: D1Database
@@ -85,7 +86,7 @@ export async function executeLunaMessageEvent(
   }
 
   if (reply) {
-    await sendWhatsAppOutboundText(env, {
+    const sent = await sendWhatsAppOutboundText(env, {
       tenantId: event.tenant_id,
       moduleId: event.payload.module_id,
       conversationId: event.payload.conversation_id,
@@ -96,6 +97,12 @@ export async function executeLunaMessageEvent(
       phoneNumberId: event.payload.phone_number_id,
       correlationId: event.correlation_id,
     })
+    if (sent.provider_message_id && result.proposalIds.length && ['submitted', 'sent', 'delivered', 'read'].includes(sent.status)) {
+      const message = await env.DB.prepare(`SELECT id FROM chat_messages WHERE tenant_id=?1 AND module_id=?2 AND thread_id=?3 AND external_message_id=?4 LIMIT 1`)
+        .bind(event.tenant_id, event.payload.module_id, event.payload.conversation_id, sent.provider_message_id).first<{ id: string }>()
+      if (!message) throw new Error('PRESENTATION_MESSAGE_MISSING')
+      await recordProposalPresentation(env.DB, { tenantId: event.tenant_id, moduleId: 'petshop', conversationId: event.payload.conversation_id, customerAddress: event.payload.customer_address, phoneNumberId: event.payload.phone_number_id, sourceMessageId: event.payload.source_message_id, traceId, executionMode: mode }, result.proposalIds, message.id)
+    }
   }
 
   return { accepted: true, status: result.status, trace_id: traceId }
