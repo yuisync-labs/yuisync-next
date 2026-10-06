@@ -84,6 +84,13 @@ describe('Luna Groq provider and budget', () => {
     })
   })
 
+  it('preserva diagnóstico técnico limitado sem mensagem, geração ou credencial', async () => {
+    const provider = new GroqProvider({apiKey:'test-key',model:'test-model',fetchFn:async()=>new Response(JSON.stringify({error:{type:'invalid_request_error',code:'tool_use_failed',param:'tools[0].function',message:'private prompt',failed_generation:'private generation'}}),{status:400})})
+    await expect(provider.complete({messages:[],tools:[]})).rejects.toMatchObject({code:'GROQ_REQUEST_INVALID',diagnostic:{status:400,type:'invalid_request_error',code:'tool_use_failed',param:'tools[0].function'}})
+    const unsafe = new GroqProvider({apiKey:'test-key',model:'test-model',fetchFn:async()=>new Response(JSON.stringify({error:{type:'user@example.com',code:'gsk_private',param:'customer information'}}),{status:400})})
+    await expect(unsafe.complete({messages:[],tools:[]})).rejects.toMatchObject({diagnostic:{status:400,type:null,code:null,param:null}})
+  })
+
   it('não trata headers ausentes como cota zero nem envia tools vazias na reformulação', async () => {
     const fetchFn = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { status: 200, headers: { 'x-ratelimit-limit-requests': '1000' } }))
     const provider = new GroqProvider({ apiKey: 'test-key', model: 'test-model', fetchFn })

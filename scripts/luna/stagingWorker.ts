@@ -126,7 +126,7 @@ async function certification(request:Request,env:Env){
    const upper=new TextEncoder().encode(JSON.stringify(input)).length+4096+1200
    await ledger.reserveModel(upper)
    let response
-   try{response=await groq.complete(input)}catch(error){meter.modelUncertain();throw error}
+   try{response=await groq.complete(input)}catch(error){meter.modelUncertain();responses.push({providerError:error instanceof Error?error.message:'GROQ_REQUEST_FAILED',diagnostic:(error as {diagnostic?:unknown})?.diagnostic??null});throw error}
    // Known usage stays known even if it reveals a budget violation.
    meter.afterModel(response.usage)
    await ledger.settleModel(upper,response.usage)

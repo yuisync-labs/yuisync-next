@@ -67,8 +67,11 @@ if(process.argv.includes('--run')){
  if(adapter.provider!=='groq'||adapter.model!=='openai/gpt-oss-20b'||!adapter.configurationFingerprint)throw new Error('CERTIFICATION_PROVIDER_CONFIGURATION_MISMATCH')
  let result,error=null
  try{result=await runRealCertification({sha,roundId,gates,offline:gates.offline,scenarios,adapter,store})}catch(failure){error=failure.message;result=await store.load(roundId)}
+ // Read the persisted receipt, never replay the model/commit, when accounting
+ // fails before the orchestrator can append the diagnostic to its transcript.
+ const diagnosticReceipt=result?.pending?await adapter.reconcileTurn(result.pending.key):null
  const budget=await adapter.budget()
- const report={sha,release,provider:adapter.provider,model:adapter.model,manifestHash,configurationFingerprint:adapter.configurationFingerprint,budget,result,error,transcriptsReviewed:0,certified:false}
+ const report={sha,release,provider:adapter.provider,model:adapter.model,manifestHash,configurationFingerprint:adapter.configurationFingerprint,budget,result,error,diagnosticReceipt,transcriptsReviewed:0,certified:false}
  await writeFile(resolve(out,`round-${sha.slice(0,12)}.json`),JSON.stringify(report,null,2))
  console.log(JSON.stringify({sha,roundId,status:result?.status,error,budget,completed:Object.values(result?.scenarios??{}).filter(s=>s.status==='complete').length}))
 }

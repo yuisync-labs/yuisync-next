@@ -5,6 +5,7 @@ import type {
 } from '../contracts'
 
 export class GroqProviderError extends Error {
+  readonly diagnostic: { status: number; type: string | null; code: string | null; param: string | null } | null
   readonly code:
     | 'GROQ_NOT_CONFIGURED'
     | 'GROQ_RATE_LIMITED'
@@ -17,11 +18,12 @@ export class GroqProviderError extends Error {
     | 'GROQ_USAGE_UNAVAILABLE'
   readonly retryAfter: string | null
 
-  constructor(code: GroqProviderError['code'], retryAfter: string | null = null) {
+  constructor(code: GroqProviderError['code'], retryAfter: string | null = null, diagnostic: GroqProviderError['diagnostic'] = null) {
     super(code)
     this.name = 'GroqProviderError'
     this.code = code
     this.retryAfter = retryAfter
+    this.diagnostic = diagnostic
   }
 }
 
@@ -119,13 +121,17 @@ export class GroqProvider {
       clearTimeout(timeout)
     }
 
-    if (response.status === 429) {
-      throw new GroqProviderError('GROQ_RATE_LIMITED', response.headers.get('retry-after'))
+    if (!response.ok) {
+      // Never expose provider message/failed_generation: these can echo private
+      // prompts, customer information or credentials. Preserve only bounded
+      // machine-readable diagnostic fields for an actionable certification.
+      let detail: Record<string, unknown> = {}
+      try { detail = (await response.json() as { error?: Record<string, unknown> }).error ?? {} } catch { /* no trustworthy detail */ }
+      const field = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.\[\]-]{1,120}$/.test(value) && !/^(?:gsk_|sk_|cfut_)/.test(value) ? value : null
+      const diagnostic = { status: response.status, type: field(detail.type), code: field(detail.code), param: field(detail.param) }
+      const code = response.status === 429 ? 'GROQ_RATE_LIMITED' : [401,403].includes(response.status) ? 'GROQ_UNAUTHORIZED' : [400,404].includes(response.status) ? 'GROQ_REQUEST_INVALID' : response.status >= 500 ? 'GROQ_UNAVAILABLE' : 'GROQ_REQUEST_FAILED'
+      throw new GroqProviderError(code, response.status === 429 ? response.headers.get('retry-after') : null, diagnostic)
     }
-    if (response.status === 401 || response.status === 403) throw new GroqProviderError('GROQ_UNAUTHORIZED')
-    if (response.status === 400 || response.status === 404) throw new GroqProviderError('GROQ_REQUEST_INVALID')
-    if (response.status >= 500) throw new GroqProviderError('GROQ_UNAVAILABLE')
-    if (!response.ok) throw new GroqProviderError('GROQ_REQUEST_FAILED')
 
     let body: GroqResponseBody
     try { body = await response.json() as GroqResponseBody } catch { throw new GroqProviderError('GROQ_RESPONSE_INVALID') }
