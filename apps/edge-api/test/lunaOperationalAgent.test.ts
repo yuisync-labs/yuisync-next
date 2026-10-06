@@ -97,6 +97,7 @@ describe('Luna operational foundation', () => {
     const provider = {
       model: 'groq-test-model',
       async complete(_input: { messages: readonly LunaMessage[]; tools: readonly LunaToolDefinition[] }): Promise<LunaProviderResponse & { requestLimit: number | null }> {
+        expect(_input.messages.some(message=>message.role==='system'&&message.content?.includes('RELÓGIO VERIFICADO DO WORKER:')&&message.content?.includes('(UTC)'))).toBe(true)
         call += 1
         return call === 1
           ? {
