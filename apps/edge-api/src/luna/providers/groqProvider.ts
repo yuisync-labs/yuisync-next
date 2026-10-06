@@ -3,6 +3,7 @@ import type {
   LunaProviderResponse,
   LunaToolDefinition,
 } from '../contracts'
+import { strictGroqToolSchema, normalizeGroqToolArguments } from './groqToolSchema'
 
 export class GroqProviderError extends Error {
   readonly diagnostic: { status: number; type: string | null; code: string | null; param: string | null } | null
@@ -108,7 +109,8 @@ export class GroqProvider {
             function: {
               name: tool.name,
               description: tool.description,
-              parameters: tool.parameters,
+              parameters: /^openai\/gpt-oss-/.test(this.model) ? strictGroqToolSchema(tool.parameters) : tool.parameters,
+              ...(/^openai\/gpt-oss-/.test(this.model) ? { strict: true } : {}),
             },
           })), tool_choice: 'auto' } : {}),
         }),
@@ -144,7 +146,11 @@ export class GroqProvider {
       type: 'function' as const,
       function: {
         name: String(call.function?.name || ''),
-        arguments: String(call.function?.arguments || '{}'),
+          arguments: (() => {
+            const raw = String(call.function?.arguments || '{}')
+            const definition = input.tools.find(tool => tool.name === call.function?.name)
+            return /^openai\/gpt-oss-/.test(this.model) && definition ? normalizeGroqToolArguments(raw, definition.parameters) : raw
+          })(),
       },
     })).filter((call) => call.id && call.function.name)
     const content = typeof message.content === 'string' ? message.content.trim() || null : null

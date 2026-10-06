@@ -105,10 +105,11 @@ describe('Luna Groq provider and budget', () => {
   it.each(['openai/gpt-oss-20b','openai/gpt-oss-120b'])('usa configuração de raciocínio suportada por %s', async model => {
     const fetchFn=vi.fn(async (_url:Parameters<typeof fetch>[0],_init?:Parameters<typeof fetch>[1])=>new Response(JSON.stringify({choices:[{message:{content:'ok',reasoning:'private'}}],usage:{prompt_tokens:10,completion_tokens:10}}),{status:200}))
     const provider=new GroqProvider({apiKey:'test-key',model,fetchFn})
-    const response=await provider.complete({messages:[],tools:[]})
+    const response=await provider.complete({messages:[],tools:[{name:'get_customer_context',description:'Identity',parameters:{type:'object',properties:{},required:[],additionalProperties:false}}]})
     const body=JSON.parse(String(fetchFn.mock.calls[0][1]?.body))
     expect(body).toMatchObject({model,include_reasoning:false,reasoning_effort:'low'})
     expect(body).not.toHaveProperty('reasoning_format')
+    expect(body.tools[0].function.strict).toBe(true)
     expect(response).not.toHaveProperty('reasoning')
   })
 
