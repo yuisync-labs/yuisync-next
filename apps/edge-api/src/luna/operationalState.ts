@@ -45,6 +45,7 @@ export function reduceDraft(state: OperationalState, event: DraftEvent): Operati
   if (event.action === 'set_field') {
     if (!event.field || !fields[event.kind].has(event.field) || typeof event.value !== 'string' || event.value.length > 1000) throw new Error('OPERATION_FIELD_INVALID')
     next.fields[event.field] = event.value
+    if(event.kind==='booking'&&event.field==='pet_id'&&current?.fields.pet_id!==event.value)delete next.fields.machine_number
   } else if (['add_item', 'remove_item', 'replace_item', 'set_quantity'].includes(event.action)) {
     if (event.kind === 'registration' || !event.itemId) throw new Error('OPERATION_ITEM_INVALID')
     const index = next.items.findIndex((item) => item.id === event.itemId)
@@ -60,6 +61,7 @@ export function reduceDraft(state: OperationalState, event: DraftEvent): Operati
       if (index < 0) next.items.push({ id, quantity }); else next.items[index] = { id, quantity }
       if (next.items.length > 12) throw new Error('OPERATION_ITEM_LIMIT')
     }
+    if(event.kind==='booking'&&JSON.stringify(current?.items??[])!==JSON.stringify(next.items))delete next.fields.machine_number
   } else if (event.action === 'pause') next.status = 'paused'
   else if (event.action === 'resume') next.status = 'active'
   else if (event.action === 'cancel') next.status = 'cancelled'

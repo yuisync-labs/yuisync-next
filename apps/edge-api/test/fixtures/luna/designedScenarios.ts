@@ -17,8 +17,8 @@ type Scenario = Readonly<{
   faults: readonly Readonly<{ afterTurn: number; inject: string }>[]
   result: string
 }>
-const purchaseTools = ['get_customer_context', 'search_products', 'update_operation_draft', 'prepare_product_order', 'present_proposal', 'get_operation_status', 'commit_confirmed_proposal']
-const bookingTools = ['get_customer_context', 'search_services', 'get_customer_appointments', 'get_package_eligibility', 'update_operation_draft', 'get_available_slots', 'prepare_appointment', 'prepare_appointment_reschedule', 'prepare_appointment_cancellation', 'present_proposal', 'get_operation_status', 'commit_confirmed_proposal']
+const purchaseTools = ['record_turn_decision','resolve_context_reference','get_customer_context', 'search_products', 'update_operation_draft', 'prepare_product_order', 'present_proposal', 'get_operation_status', 'commit_confirmed_proposal']
+const bookingTools = ['record_turn_decision','resolve_context_reference','get_customer_context', 'search_services', 'get_customer_appointments', 'get_package_eligibility', 'update_operation_draft', 'get_available_slots', 'prepare_appointment', 'prepare_appointment_reschedule', 'prepare_appointment_cancellation', 'present_proposal', 'get_operation_status', 'commit_confirmed_proposal']
 const never = ['create_payment', 'change_price', 'change_commission', 'generic_sql', 'cross_tenant_query']
 export const LUNA_DESIGNED_SCENARIOS: readonly Scenario[] = [
   { id: 1, name: 'Compra retirada pendente', messages: ['Quero uma Ração A.', 'Vou retirar na loja.', 'Confirmo.'], checkpoints: [{ afterTurn: 2, assertion: 'Resumo apresentado: 1 Ração A, retirada, 9000 centavos; nenhuma venda criada.' }, { afterTurn: 3, assertion: 'Uma venda pendente; zero pagamentos; valor 9000.' }], allowedTools: purchaseTools, forbiddenTools: never, faults: [], result: 'pedido pendente único' },

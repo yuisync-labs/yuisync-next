@@ -27,6 +27,9 @@ export default defineConfig({
     })),
   ],
   test: {
+    // Each file creates a real workerd/D1 migration fixture. Unbounded CPU-based
+    // concurrency can saturate Windows instead of accelerating certification.
+    maxWorkers: 2,
     include: ['test/**/*.test.ts'],
     setupFiles: ['./test/applyD1Migrations.ts'],
     clearMocks: true,

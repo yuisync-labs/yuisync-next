@@ -34,6 +34,30 @@ async function dropVersion30() {
   // Fixtures start from the fully migrated DB. Remove additive Luna objects
   // before replay so 0037 does not repeat ALTER TABLE against a current column.
   await db.exec(`
+    DROP TRIGGER IF EXISTS transport_reservation_guard;
+    DROP TRIGGER IF EXISTS transport_native_insert_guard;
+    DROP TRIGGER IF EXISTS transport_reschedule_guard;
+    DROP TRIGGER IF EXISTS transport_verified_update_guard;
+    DROP TRIGGER IF EXISTS transport_reactivation_guard;
+    DROP VIEW IF EXISTS transport_resource_allocations;
+    DROP TABLE IF EXISTS appointment_transport_reservations;
+    DROP TABLE IF EXISTS transport_availability_windows;
+    DROP TABLE IF EXISTS transport_option_resources;
+    DROP TABLE IF EXISTS transport_resources;
+    DROP TABLE IF EXISTS luna_conversation_memory;
+    DROP TABLE IF EXISTS luna_response_drafts;
+    DROP TABLE IF EXISTS luna_turn_decisions;
+    DROP TRIGGER IF EXISTS appointment_schedule_insert_guard;
+    DROP TRIGGER IF EXISTS appointment_schedule_external_insert_guard;
+    DROP TRIGGER IF EXISTS appointment_schedule_external_update_guard;
+    DROP TRIGGER IF EXISTS appointment_schedule_update_guard;
+    DROP TRIGGER IF EXISTS appointment_schedule_delete_guard;
+    DROP TABLE IF EXISTS appointment_schedule_guards;
+    DROP TRIGGER IF EXISTS pending_order_completion_guard;
+    DROP TRIGGER IF EXISTS pending_order_completion_settle;
+    DROP TRIGGER IF EXISTS pending_order_settlement_no_reopen;
+    DROP TABLE IF EXISTS pending_order_stock_settlement_lines;
+    DROP TABLE IF EXISTS pending_order_stock_settlements;
     DROP TABLE IF EXISTS sale_delivery_addresses;
     DROP TRIGGER IF EXISTS pending_order_cancel_release;
     DROP TABLE IF EXISTS pending_order_stock_reservations;

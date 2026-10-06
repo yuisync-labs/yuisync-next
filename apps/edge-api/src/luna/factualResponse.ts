@@ -2,7 +2,7 @@ import type { LunaToolResult } from './contracts'
 import { normalizeBusinessHours } from '../businessHours'
 
 export type FactualEvidence = { callId: string; tool: string; result: LunaToolResult }
-type Fact = { id: string; text: string }
+export type Fact = { id: string; text: string; reference?:import('./conversationalMemory').PresentedOption }
 // The model chooses relevant verified facts and a conversational next step;
 // it never supplies the values or assertions rendered to the customer.
 const openings: Record<string, string> = { none: '', welcome: 'Olá! Como posso ajudar?', acknowledge: 'Certo!', resume: 'Vamos continuar.', pause: 'Sem problema.', thanks: 'Por nada!' }
@@ -14,12 +14,23 @@ const questions: Record<string, string> = {
   machine: 'Qual número você prefere para a tosa na máquina?', name: 'Qual é o nome?', human: 'Você prefere falar com uma pessoa da equipe?',
 }
 const obj = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {}
+// Free discourse is deliberately non-commercial. The model composes its own
+// connective language; it cannot use that channel to negate a fact, invent a
+// value, promise availability or assert a payment. Operational clauses always
+// reference verified atoms and are rendered by the server. This is a lexical
+// boundary, not a collection of scenario-specific phrases.
+const discourseVocabulary = new Set(('oi olá ola tudo bem certo claro combinado obrigada obrigado por nada entendi vamos continuar seguir retomar pausar conversar com calma aqui estou para pra te você voce ajudar ajudar-lhe pode podemos por partes primeiro depois agora então entao ótimo otimo perfeito sem problema tranquilamente tranquilo tranquila até ate breve bom boa dia tarde noite novamente seja bem-vindo bem-vinda bem-vindos bem-vindas atenção atencao valeu beleza pois e à a o os as um uma de do da dos das em no na nos nas ao aos seu sua seus suas nosso nossa nossos nossas isso este esta essa esse contigo comigo nós nos eu quer quiser precisar obrigadaço').split(' '))
+function verifiedDiscourse(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim() || value.length > 240 || !/^[\p{L}\s,.!;:\-]+$/u.test(value)) return null
+  const words = value.toLocaleLowerCase('pt-BR').match(/[\p{L}]+(?:-[\p{L}]+)*/gu) ?? []
+  return words.length <= 40 && words.every(word => discourseVocabulary.has(word)) ? value.trim() : null
+}
 const money = (v: unknown) => Number.isSafeInteger(v) && Number(v) >= 0 ? `R$ ${(Number(v) / 100).toFixed(2).replace('.', ',')}` : null
 const safeText = (v: unknown) => typeof v === 'string' && v.trim() && v.length <= 1000 ? v.replace(/[\r\n\u0000-\u001f]/g, ' ').trim() : null
 
 export function buildVerifiedFacts(evidence: readonly FactualEvidence[]): Fact[] {
   const facts: Fact[] = []
-  const add = (e: FactualEvidence, suffix: string, text: string | null) => { if (text) facts.push({ id: `${e.callId}:${suffix}`, text }) }
+  const add = (e: FactualEvidence, suffix: string, text: string | null,reference?:Fact['reference']) => { if (text) facts.push({ id: `${e.callId}:${suffix}`, text,...(reference?{reference}:{}) }) }
   for (const e of evidence) {
     if (!e.result.ok) {
       // No code or argument supplied by the model becomes a customer claim.
@@ -34,25 +45,36 @@ export function buildVerifiedFacts(evidence: readonly FactualEvidence[]): Fact[]
       if (!rows.length) add(e, 'empty', 'Nenhum produto foi encontrado nessa consulta.')
       rows.forEach((raw, i) => {
         const p = obj(raw), name = safeText(p.name), price = money(p.price_cents), stock = p.available_milliunits
-        if (name && price && Number.isSafeInteger(stock) && Number(stock) >= 0) add(e, `product.${i}`, `${name}: ${price}; estoque disponível nesta consulta: ${Number(stock) / 1000}.`)
+        if (name && price && Number.isSafeInteger(stock) && Number(stock) >= 0) add(e, `product.${i}`, `${name}: ${price}; estoque disponível nesta consulta: ${Number(stock) / 1000}.`,typeof p.id==='string'?{id:p.id,kind:'product',label:name,observedAtMs:Date.now()}:undefined)
       })
     } else if (e.tool === 'search_services') {
       const rows = Array.isArray(data.services) ? data.services : []
       if (!rows.length) add(e, 'empty', 'Nenhum serviço foi encontrado nessa consulta.')
       rows.forEach((raw, i) => {
         const s = obj(raw), name = safeText(s.name), price = money(s.default_price_cents), duration = s.default_duration_min
-        if (name && price && Number.isSafeInteger(duration) && Number(duration) > 0) add(e, `service.${i}`, `${name}: ${price}; duração cadastrada: ${duration} minutos.`)
+        if (name && price && Number.isSafeInteger(duration) && Number(duration) > 0) add(e, `service.${i}`, `${name}: ${price}; duração cadastrada: ${duration} minutos.`,typeof s.id==='string'?{id:s.id,kind:'service',label:name,observedAtMs:Date.now()}:undefined)
       })
     } else if (e.tool === 'get_customer_context') {
       const rows = Array.isArray(data.pets) ? data.pets : []
-      rows.forEach((raw, i) => { const name = safeText(obj(raw).name); if (name) add(e, `pet.${i}`, `Pet cadastrado: ${name}.`) })
+      rows.forEach((raw, i) => { const p=obj(raw),name = safeText(p.name); if (name) add(e, `pet.${i}`, `Pet cadastrado: ${name}.`,typeof p.id==='string'?{id:p.id,kind:'pet',label:name,observedAtMs:Date.now()}:undefined) })
+    } else if (e.tool === 'get_customer_appointments') {
+      const rows = Array.isArray(data.appointments) ? data.appointments : []
+      if (!rows.length) add(e, 'empty', 'Nenhum próximo agendamento ativo foi encontrado nessa consulta.')
+      const statuses: Record<string,string> = {scheduled:'agendado',confirmed:'confirmado',in_progress:'em atendimento'}
+      rows.forEach((raw,i)=>{
+        const a=obj(raw),pet=safeText(a.pet_name),status=statuses[String(a.status)]
+        const at=a.scheduled_at_ms,duration=a.duration_min
+        if(!pet||!status||!Number.isSafeInteger(at)||!Number.isSafeInteger(duration)||Number(duration)<=0)return
+        const date=new Date(Number(at));if(!Number.isFinite(date.getTime()))return
+        add(e,`appointment.${i}`,`Agendamento de ${pet}: ${date.toISOString()} (UTC); duração cadastrada: ${duration} minutos; status: ${status}. Esse status não confirma pagamento.`)
+      })
     } else if (e.tool === 'get_delivery_quote') {
       const fee = money(data.fee_cents), city = safeText(data.city), neighborhood = safeText(data.neighborhood)
       if (fee && city && neighborhood) add(e, 'delivery', `Entrega em ${neighborhood}, ${city}: taxa de ${fee}.`)
     } else if (e.tool === 'get_transport_quote') {
       const rows = Array.isArray(data.options) ? data.options : []
       if (!rows.length) add(e, 'empty', 'Nenhuma opção de transporte foi encontrada para essa consulta.')
-      rows.forEach((raw, i) => { const r = obj(raw), label = safeText(r.label), fee = money(r.fee_cents); if (label && fee) add(e, `transport.${i}`, `${label}: ${fee}. A capacidade de transporte ainda precisa ser confirmada.`) })
+      rows.forEach((raw, i) => { const r = obj(raw), label = safeText(r.label), fee = money(r.fee_cents); if (label && fee) add(e, `transport.${i}`, `${label}: ${fee}. A capacidade de transporte ainda precisa ser confirmada.`,typeof r.id==='string'?{id:r.id,kind:'transport',label,observedAtMs:Date.now()}:undefined) })
     } else if (e.tool === 'get_store_information') {
       for (const [field, label] of [['store_name', 'Loja'], ['phone', 'Contato'], ['address', 'Endereço'], ['neighborhood', 'Bairro'], ['city', 'Cidade']] as const) {
         const value = safeText(data[field]); if (value) add(e, field, `${label}: ${value}.`)
@@ -69,7 +91,7 @@ export function buildVerifiedFacts(evidence: readonly FactualEvidence[]): Fact[]
         if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) return
         try {
           const formatted = new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, dateStyle: 'short', timeStyle: 'short' }).format(new Date(value))
-          add(e, `slot.${i}`, `Opção consultada: ${formatted} (${timezone}). Ainda não reservada; será revalidada na confirmação.`)
+          add(e, `slot.${i}`, `Opção consultada: ${formatted} (${timezone}). Ainda não reservada; será revalidada na confirmação.`,{id:value,kind:'slot',label:formatted,observedAtMs:Date.now()})
         } catch { /* invalid source timezone is not an operational fact */ }
       })
     } else if (e.tool === 'get_package_eligibility') {
@@ -91,13 +113,32 @@ export function buildVerifiedFacts(evidence: readonly FactualEvidence[]): Fact[]
 }
 
 export function responseContractInstruction(facts: readonly Fact[]): string {
-  return `RESPOSTA VERIFICADA: retorne somente JSON {"opening":"none","facts":["id"],"question":"none"}. Não escreva valores, fatos ou frases livres. Escolha IDs relevantes da lista abaixo; não confirme operação por conta própria. Opening permitido: ${Object.keys(openings).join(', ')}. Question permitido: ${Object.keys(questions).join(', ')}. Fatos verificados: ${JSON.stringify(facts)}. Os resumos comerciais serão anexados pelo servidor.`
+  return `RESPOSTA VERIFICADA: retorne somente JSON {"blocks":[{"kind":"social","text":"Claro, vamos por partes."},{"kind":"fact","id":"id"},{"kind":"question","field":"quantity"}]}. Componha livremente a linguagem social com as palavras de ligação permitidas: ${[...discourseVocabulary].join(', ')}. Varie blocos e ordem conforme a conversa; omita social/pergunta desnecessários e não repita fatos. Toda afirmação operacional deve ser um bloco fact, nunca texto social. Não crie valores, promessas, pagamento ou resultado. Pergunta opcional única: ${Object.keys(questions).filter(k=>k!=='none').join(', ')}. Fatos verificados: ${JSON.stringify(facts)}. Resumos comerciais serão anexados pelo servidor. O contrato antigo opening/facts/question é aceito somente por compatibilidade.`
 }
 
 export function validateFactualResponse(content: string | null, facts: readonly Fact[]): string | null {
   let value: unknown
   try { value = JSON.parse(content ?? '') } catch { return null }
   const r = obj(value)
+  if (Object.keys(r).length === 1 && Array.isArray(r.blocks) && r.blocks.length > 0 && r.blocks.length <= 16) {
+    const indexed = new Map(facts.map(f => [f.id, f.text]))
+    const used = new Set<string>(), rendered: string[] = []
+    let questionSeen = false, socialCount = 0
+    for (const raw of r.blocks) {
+      const block = obj(raw)
+      if (Object.keys(block).length !== 2) return null
+      if (block.kind === 'social' && Object.hasOwn(block, 'text')) {
+        const text = verifiedDiscourse(block.text)
+        if (!text || ++socialCount > 2) return null
+        rendered.push(text)
+      } else if (block.kind === 'fact' && typeof block.id === 'string' && indexed.has(block.id) && !used.has(block.id)) {
+        used.add(block.id); rendered.push(indexed.get(block.id)!)
+      } else if (block.kind === 'question' && typeof block.field === 'string' && block.field !== 'none' && Object.hasOwn(questions, block.field) && !questionSeen) {
+        questionSeen = true; rendered.push(questions[block.field])
+      } else return null
+    }
+    return rendered.join('\n') || null
+  }
   if (Object.keys(r).length !== 3 || !Object.hasOwn(openings, String(r.opening)) || !Object.hasOwn(questions, String(r.question)) || !Array.isArray(r.facts) || r.facts.length > 12) return null
   if (new Set(r.facts).size !== r.facts.length) return null
   const indexed = new Map(facts.map(f => [f.id, f.text]))
@@ -108,4 +149,8 @@ export function validateFactualResponse(content: string | null, facts: readonly 
 
 export function safeFactualFallback(facts: readonly Fact[]): string {
   return facts.length ? facts.slice(-6).map(f => f.text).join('\n') : 'Não tenho dados verificados suficientes para responder a essa etapa. Pode esclarecer o que você precisa?'
+}
+
+export function responseQuestion(reply:string):string|null {
+  return Object.entries(questions).find(([key,text])=>key!=='none'&&text&&reply.includes(text))?.[0]??null
 }

@@ -7,7 +7,8 @@ import { createLunaToolRegistry } from './toolRegistry'
 import type { LunaExecutionContext, LunaToolDefinition } from './contracts'
 import { loadPresentableProposals, renderProposalSummary } from './proposalPresentation'
 import { canonicalJson } from './canonicalJson'
-import { buildVerifiedFacts, responseContractInstruction, safeFactualFallback, validateFactualResponse, type FactualEvidence } from './factualResponse'
+import { buildVerifiedFacts, responseContractInstruction, responseQuestion, safeFactualFallback, validateFactualResponse, type FactualEvidence } from './factualResponse'
+import { loadConversationMemory,prepareResponseMemory } from './conversationalMemory'
 
 type Provider = Readonly<{
   model: string
@@ -46,9 +47,13 @@ export async function runLunaTurn(input: {
   let operational
   try { operational = await repository.loadState(input.context) }
   catch { return { status: 'failed', reply: null, proposalIds: [], committedOperationIds: [], traceId: input.context.traceId, errorCode: 'OPERATION_STATE_UNKNOWN', usage: emptyUsage } }
+  let acceptedMemory
+  try { acceptedMemory = await loadConversationMemory(input.database,input.context) }
+  catch { return { status: 'failed', reply: null, proposalIds: [], committedOperationIds: [], traceId: input.context.traceId, errorCode: 'CONVERSATION_MEMORY_UNKNOWN', usage: emptyUsage } }
   const messages: LunaMessage[] = [
     { role: 'system', content: LUNA_OPERATIONAL_SYSTEM_PROMPT },
     { role: 'system', content: `MEMÓRIA OPERACIONAL D1: ${JSON.stringify(operational.state)}\nResumo conversacional (não autoriza operações): ${operational.summary ?? ''}` },
+    { role:'system',content:`CONTEXTO APRESENTADO E ACEITO: ${JSON.stringify(acceptedMemory)}. Resolva referências pela ordem apresentada, não por uma ordem presumida. Havendo ambiguidade use resolve_context_reference e peça esclarecimento. Um novo assunto não apaga operações paralelas. Registre intenções múltiplas com record_turn_decision.` },
     ...(pendingProposal ? [pendingProposal] : []),
     ...await repository.loadHistory(input.context),
   ]
@@ -152,7 +157,8 @@ export async function runLunaTurn(input: {
   }
 
   const usage = budget.snapshot()
+  if(reply&&!errorCode)await prepareResponseMemory(input.database,input.context,reply,buildVerifiedFacts(evidence),responseQuestion(reply))
   const outcome = errorCode ? `${finalStatus}:${errorCode}` : `${finalStatus}:${responseMode}`
   try { await repository.recordUsage({ context: input.context, model: input.provider.model, usage, outcome }) } catch { /* operational result wins over telemetry */ }
-  return { status: finalStatus, reply, proposalIds: presented, committedOperationIds: committed, traceId: input.context.traceId, errorCode, usage }
+  return { status: finalStatus, reply, proposalIds: [...new Set(presented)], committedOperationIds: [...new Set(committed)], traceId: input.context.traceId, errorCode, usage }
 }

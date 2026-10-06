@@ -42,7 +42,8 @@ async function present(proposalId: string): Promise<string> {
   const id = crypto.randomUUID()
   await testEnv.DB.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,'outbound','assistant',?4,?5)`)
     .bind(TENANT, id, THREAD, renderProposalSummary(rows[0]), Date.now()).run()
-  await recordProposalPresentation(testEnv.DB, context, [proposalId], id)
+  const source = await testEnv.DB.prepare(`SELECT source_message_id FROM luna_proposals WHERE tenant_id=?1 AND module_id='petshop' AND conversation_id=?2 AND id=?3`).bind(TENANT,THREAD,proposalId).first<{source_message_id:string}>()
+  await recordProposalPresentation(testEnv.DB, {...context,sourceMessageId:source!.source_message_id}, [proposalId], id)
   return id
 }
 

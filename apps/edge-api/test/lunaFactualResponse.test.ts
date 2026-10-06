@@ -25,4 +25,21 @@ describe('Luna factual response contract', () => {
   it('não usa argumentos ou dados sem um renderer suportado como evidência', () => {
     expect(buildVerifiedFacts([{ callId: 'draft', tool: 'update_operation_draft', result: { ok: true, data: { price: 'R$ 1', availability: 'amanhã' } } }])).toEqual([])
   })
+  it('distingue status de agendamento e pagamento usando apenas dados consultados',()=>{
+    const rows=buildVerifiedFacts([{callId:'agenda',tool:'get_customer_appointments',result:{ok:true,data:{appointments:[{pet_name:'Mel',scheduled_at_ms:Date.parse('2026-10-07T12:00:00Z'),duration_min:60,status:'confirmed'}]}}}])
+    expect(rows[0].text).toContain('2026-10-07T12:00:00.000Z (UTC)')
+    expect(rows[0].text).toContain('não confirma pagamento')
+    expect(buildVerifiedFacts([{callId:'agenda',tool:'get_customer_appointments',result:{ok:true,data:{appointments:[{pet_name:'Mel',scheduled_at_ms:'amanhã',status:'paid'}]}}}])).toEqual([])
+  })
+  it('aceita composição social generativa e ordem variável sem alterar fatos', () => {
+    for (const social of ['Claro, vamos por partes.', 'Oi! Estou aqui pra te ajudar.', 'Entendi, podemos continuar com calma.']) {
+      const reply = validateFactualResponse(JSON.stringify({blocks:[{kind:'social',text:social},{kind:'fact',id:facts[0].id},{kind:'question',field:'quantity'}]}),facts)
+      expect(reply).toContain(social)
+      expect(reply).toContain(facts[0].text)
+      expect(reply).toContain('Qual quantidade?')
+    }
+  })
+  it.each(['Pagamento recebido.', 'Está disponível amanhã.', 'Não, esse estoque está errado.', 'Custa R$ 5,00.', 'Confirmado!', 'Claro, garantido.'])('impede afirmação operacional no canal social: %s', text => {
+    expect(validateFactualResponse(JSON.stringify({blocks:[{kind:'social',text},{kind:'fact',id:facts[0].id}]}),facts)).toBeNull()
+  })
 })

@@ -2,6 +2,7 @@ import { isWithinBusinessHours, normalizeBusinessHours, type BusinessHours } fro
 type ExtensionRow = { data_json: string }
 
 type SchedulePolicy = Readonly<{
+  settingsJSON: string
   capacity: number
   leadTimeMinutes: number
   slotIntervalMinutes: number
@@ -27,6 +28,7 @@ export async function loadSchedulePolicy(database: D1Database, tenantId: string,
   let timezone = typeof settings.petbot_timezone === 'string' ? settings.petbot_timezone : null
   try { if (timezone) new Intl.DateTimeFormat('pt-BR', { timeZone: timezone }) } catch { timezone = null }
   return {
+    settingsJSON: row?.data_json ?? '{}',
     capacity: integer(settings.petbot_booking_capacity, 1, 1, 50),
     leadTimeMinutes: integer(settings.petbot_booking_lead_time_min, 0, 0, 10_080),
     slotIntervalMinutes: integer(settings.petbot_slot_interval_min, 30, 5, 240),

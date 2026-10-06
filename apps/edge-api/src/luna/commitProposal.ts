@@ -10,6 +10,9 @@ import { canonicalJson } from './canonicalJson'
 import { commitRegistration, proposalCustomerAuthorized } from './registrationCommands'
 import { resolveDeliverySnapshot } from './deliveryContract'
 import { saleDeliveryAddressStatement } from '../saleDeliveryAddress'
+import { appointmentScheduleGuardStatement } from '../appointmentScheduleGuard'
+import { validateGroomingMachine } from '../groomingMachinePolicy'
+import { resolveTransportSnapshot } from './transportContract'
 
 type ProposalRow = {
   id: string
@@ -127,6 +130,7 @@ async function commitAppointment(database: D1Database, context: LunaExecutionCon
     source: 'whatsapp',
     status: 'scheduled',
     notes: text(payload.notes) || null,
+    grooming_machine_no: payload.grooming_machine_no ?? null,
     billing_intent: { type: 'auto', allocations: [] },
     idempotency_key: `luna-proposal:${proposal.id}`,
   }
@@ -139,6 +143,8 @@ async function commitAppointment(database: D1Database, context: LunaExecutionCon
     payload: commandPayload,
   })
   if (catalog.code || !catalog.items?.length) return { ok: false, code: catalog.code || 'PROPOSAL_STALE', retryable: false }
+  const machine=validateGroomingMachine(catalog.items,payload.grooming_machine_no)
+  if(!machine.ok)return{ok:false,code:machine.code,retryable:false}
   const currentSubtotal = catalog.items.reduce((sum, item) => sum + Math.round(Number(item.catalog_price || 0) * 100), 0)
   if (currentSubtotal !== Number(payload.subtotal_cents)) return { ok: false, code: 'PROPOSAL_STALE', retryable: false }
   const duration = catalog.items.reduce((sum, item) => sum + Number(item.duration_min || 0), 0)
@@ -147,7 +153,9 @@ async function commitAppointment(database: D1Database, context: LunaExecutionCon
     scheduledAtMs, durationMinutes: duration,
   })
   if (!availability.ok) return { ok: false, code: availability.code, retryable: false }
-
+  const transport=payload.transport?await resolveTransportSnapshot(database,context,petId,scheduledAtMs,duration,payload.transport):null
+  if(transport&&!transport.ok)return transport
+  if(transport?.ok&&canonicalJson(transport.data)!==canonicalJson(payload.transport))return{ok:false,code:'TRANSPORT_QUOTE_CHANGED',retryable:false}
   const items = catalog.items as BillingService[]
   const allocations = await automaticAllocations(database, {
     tenantId: context.tenantId, moduleId: context.moduleId, clientId: customerId,
@@ -164,6 +172,8 @@ async function commitAppointment(database: D1Database, context: LunaExecutionCon
     allocations,
     intent,
     identity: { operationKey: `luna-proposal:${proposal.id}`, appointmentId, fingerprint: proposal.fingerprint },
+    scheduleGuard: availability.policy,
+    transport:transport?.ok?{snapshot:transport.data,phone:context.customerAddress}:undefined,
   })
   const body = await response.json() as { data?: { appointment_id?: string; idempotent?: boolean }; code?: string }
   if (!response.ok || !body.data?.appointment_id) return { ok: false, code: body.code || 'APPOINTMENT_COMMIT_FAILED', retryable: response.status >= 500 }
@@ -263,7 +273,8 @@ async function commitAppointmentReschedule(database: D1Database, context: LunaEx
   })
   if (!availability.ok) return { ok: false, code: availability.code, retryable: false }
   const now = Date.now()
-  await database.batch([
+  try { await database.batch([
+    appointmentScheduleGuardStatement(database,{tenantId:context.tenantId,moduleId:context.moduleId,appointmentId,guard:availability.policy}),
     database.prepare(`
       UPDATE appointments SET scheduled_at_ms=?4,version=version+1,updated_at_ms=?5
       WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND version=?6 AND status IN ('scheduled','confirmed')
@@ -273,7 +284,13 @@ async function commitAppointmentReschedule(database: D1Database, context: LunaEx
       WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4 AND status='executing'
         AND EXISTS(SELECT 1 FROM appointments a WHERE a.tenant_id=?1 AND a.module_id=?2 AND a.id=?5 AND a.version=?7 AND a.updated_at_ms=?6)
     `).bind(context.tenantId, context.moduleId, context.conversationId, proposal.id, appointmentId, now, expectedVersion + 1),
-  ])
+  ]) } catch(error) {
+    const message=error instanceof Error?error.message:String(error)
+    if(message.includes('SCHEDULE_CAPACITY_EXCEEDED'))return {ok:false,code:'SLOT_UNAVAILABLE',retryable:false}
+    if(message.includes('SCHEDULE_POLICY_CHANGED'))return {ok:false,code:'SCHEDULE_POLICY_CHANGED',retryable:false}
+    // An ambiguous database failure is reconciled by operation ID, never retried here.
+    throw error
+  }
   const completed = await database.prepare(`
     SELECT status,committed_operation_id FROM luna_proposals
     WHERE tenant_id=?1 AND module_id=?2 AND id=?3 LIMIT 1

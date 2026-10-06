@@ -15,6 +15,10 @@ import { resolveBillingCatalog } from '../appointmentBillingCatalog'
 import { automaticAllocations } from '../subscriptionBenefitAuto'
 import { prepareRegistration, proposalCustomerAuthorized } from './registrationCommands'
 import { resolveDeliverySnapshot } from './deliveryContract'
+import { validateGroomingMachine } from '../groomingMachinePolicy'
+import { resolveContextReference } from './conversationalMemory'
+import { canonicalJson } from './canonicalJson'
+import { resolveTransportSnapshot } from './transportContract'
 
 type JsonRecord = Record<string, unknown>
 type ToolHandler = (args: JsonRecord, context: LunaExecutionContext) => Promise<LunaToolResult>
@@ -31,6 +35,8 @@ const objectSchema = (properties: JsonRecord, required: string[] = []) => ({
 const stringProperty = (description: string) => ({ type: 'string', description })
 
 const DEFINITIONS: readonly LunaToolDefinition[] = [
+  {name:'resolve_context_reference',description:'Resolve referência por opções realmente apresentadas. Ordinal usa a ordem aceita; single exige uma opção; other exige duas opções e um item selecionado no rascunho. Não altera rascunho nem autoriza commit.',parameters:objectSchema({kind:{type:'string',enum:['product','service','pet','slot','transport']},selection:{type:'string',enum:['ordinal','single','other']},ordinal:{type:'integer',minimum:1,maximum:40},operation_id:stringProperty('Operação em foco.')},['kind','selection'])},
+  {name:'record_turn_decision',description:'Persiste a interpretação estruturada das intenções do turno. Sem efeitos comerciais: mantenha operações de compra/agendamento independentes e depois use ferramentas de rascunho/consulta.',parameters:objectSchema({intents:{type:'array',minItems:1,maxItems:4,items:objectSchema({operation_id:{type:'string',minLength:1,maxLength:100},kind:{type:'string',enum:['cart','booking','registration']},goal:{type:'string',enum:['create','change','query','pause','resume','cancel']}},['operation_id','kind','goal'])},focus:{type:'string',minLength:1,maxLength:100}},['intents','focus'])},
   ...(['prepare_customer_registration', 'prepare_pet_registration'] as const).map(name => ({ name, description: name === 'prepare_customer_registration' ? 'Prepara cadastro de cliente novo e seu pet pelo telefone da conversa; não cria antes da confirmação e não une cadastros ambíguos.' : 'Prepara cadastro de outro pet do cliente identificado; nomes ambíguos exigem humano.', parameters: objectSchema({ customer_name: { type: 'string', minLength: 1, maxLength: 160 }, customer_id: { type: 'string', minLength: 1, maxLength: 160 }, pet_name: { type: 'string', minLength: 1, maxLength: 160 }, species: { type: 'string', enum: ['dog','cat','bird','rabbit','fish','other'] }, breed: { type: ['string','null'], maxLength: 160 }, weight_kg: { type: ['number','null'], minimum: 0.01, maximum: 200 }, operation_id: stringProperty('Rascunho de cadastro.') }, [name === 'prepare_customer_registration' ? 'customer_name' : 'customer_id', 'pet_name', 'species']) })),
   ...informationToolDefinitions,
   {
@@ -91,6 +97,8 @@ const DEFINITIONS: readonly LunaToolDefinition[] = [
       service_ids: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'string' } },
       scheduled_at: stringProperty('Data e hora ISO 8601 com fuso horário.'),
       notes: { type: ['string', 'null'] },
+      grooming_machine_no: {type:['integer','null'],enum:[4,7,10,null]},
+      transport:objectSchema({option_id:{type:'string',minLength:1,maxLength:80},city:{type:'string',minLength:1,maxLength:160},address:{type:'string',minLength:1,maxLength:500},reference:{type:['string','null'],maxLength:500}},['option_id','city','address']),
       operation_id: stringProperty('ID do rascunho de agendamento, quando existente.'),
     }, ['customer_id', 'pet_id', 'service_ids', 'scheduled_at', 'notes']),
   },
@@ -202,6 +210,17 @@ async function createProposal(database: D1Database, context: LunaExecutionContex
 
 export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
   const handlers = new Map<string, ToolHandler>()
+  handlers.set('resolve_context_reference',(args,ctx)=>resolveContextReference(database,ctx,args))
+  handlers.set('record_turn_decision',async(args,ctx)=>{
+    const intents=args.intents as {operation_id:string;kind:string;goal:string}[]
+    if(new Set(intents.map(i=>i.operation_id)).size!==intents.length||!intents.some(i=>i.operation_id===args.focus)||intents.some(i=>!/^[a-zA-Z0-9_-]{1,100}$/.test(i.operation_id)||['__proto__','constructor','prototype'].includes(i.operation_id)))return{ok:false,code:'TURN_DECISION_INVALID',retryable:false}
+    const inbound=await database.prepare(`SELECT id FROM chat_messages WHERE tenant_id=?1 AND module_id=?2 AND thread_id=?3 AND id=?4 AND direction='inbound' AND actor_type='customer'`).bind(ctx.tenantId,ctx.moduleId,ctx.conversationId,ctx.sourceMessageId).first()
+    if(!inbound)return{ok:false,code:'TURN_MESSAGE_MISSING',retryable:false}
+    const decision=canonicalJson(args)
+    await database.prepare(`INSERT INTO luna_turn_decisions VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(tenant_id,module_id,conversation_id,source_message_id) DO NOTHING`).bind(ctx.tenantId,ctx.moduleId,ctx.conversationId,ctx.sourceMessageId,decision,Date.now()).run()
+    const stored=await database.prepare(`SELECT decision_json FROM luna_turn_decisions WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND source_message_id=?4`).bind(ctx.tenantId,ctx.moduleId,ctx.conversationId,ctx.sourceMessageId).first<{decision_json:string}>()
+    return stored?.decision_json===decision?{ok:true,data:{decision:args,commercial_effect:false}}:{ok:false,code:'TURN_DECISION_CONFLICT',retryable:false}
+  })
   for (const name of ['prepare_customer_registration', 'prepare_pet_registration']) handlers.set(name, async (args, context) => {
     const existing = name === 'prepare_pet_registration'
     const result = await prepareRegistration(database, context, args, existing)
@@ -349,6 +368,8 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     if (services.results.length !== new Set(serviceIds).size) return { ok: false, code: 'SERVICE_NOT_FOUND', retryable: false }
     const catalog = await resolveBillingCatalog({ db: database, tenantId: context.tenantId, moduleId: context.moduleId, species: String(pet.species), weightGrams: pet.weight_kg == null ? null : Math.round(Number(pet.weight_kg) * 1000), payload: { services: services.results.map(service => ({ code: service.code })) } })
     if (catalog.code || !catalog.items?.length) return { ok: false, code: catalog.code || 'SERVICE_NOT_FOUND', retryable: false }
+    const machine=validateGroomingMachine(services.results,args.grooming_machine_no)
+    if(!machine.ok)return{ok:false,code:machine.code,retryable:false,missing_fields:machine.code==='GROOMING_MACHINE_REQUIRED'?['grooming_machine_no']:[]}
     const allocations = await automaticAllocations(database, { tenantId: context.tenantId, moduleId: context.moduleId, clientId: customerId }, catalog.items)
     const durationMinutes = services.results.reduce((sum, service) => sum + Number(service.default_duration_min || 0), 0)
     const availability = await validateScheduleAvailability({
@@ -356,16 +377,20 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
       scheduledAtMs: scheduledAt, durationMinutes,
     })
     if (!availability.ok) return { ok: false, code: availability.code, retryable: false }
+    const transport=args.transport?await resolveTransportSnapshot(database,context,petId,scheduledAt,durationMinutes,args.transport):null
+    if(transport&&!transport.ok)return transport
     const payload = {
       customer_id: customerId,
       pet_id: petId,
       pet_name: pet.name,
       scheduled_at_ms: scheduledAt,
       duration_minutes: durationMinutes,
+      grooming_machine_no: machine.number,
+      transport:transport?.ok?transport.data:null,
       services: services.results,
       subtotal_cents: services.results.reduce((sum, service) => sum + Number(service.default_price_cents || 0), 0),
       benefit_allocations: allocations,
-      total_cents: services.results.reduce((sum, service, position) => sum + (allocations.some(allocation => allocation.position === position) ? 0 : Number(service.default_price_cents || 0)), 0),
+      total_cents: services.results.reduce((sum, service, position) => sum + (allocations.some(allocation => allocation.position === position) ? 0 : Number(service.default_price_cents || 0)), 0)+(transport?.ok?transport.data.fee_cents:0),
       notes: clean(args.notes, 1000) || null,
     }
     return createProposal(database, context, 'appointment_create', payload, clean(args.operation_id, 100))
