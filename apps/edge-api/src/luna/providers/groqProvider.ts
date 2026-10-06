@@ -90,10 +90,12 @@ export class GroqProvider {
         body: JSON.stringify({
           model: this.model,
           temperature: 0.2,
-          // Groq requires parsed or hidden reasoning whenever GPT-OSS uses
-          // tool calling. Hidden keeps private chain-of-thought out of our
-          // application state while low effort controls latency and quota.
-          reasoning_format: 'hidden',
+          // GPT-OSS uses include_reasoning, not reasoning_format. The latter
+          // is unsupported for these models and can reject the request with
+          // HTTP 400. Keep private reasoning out of all response transcripts.
+          ...(/^openai\/gpt-oss-(?:20b|120b|safeguard-20b)$/.test(this.model)
+            ? { include_reasoning: false }
+            : { reasoning_format: 'hidden' }),
           reasoning_effort: 'low',
           // GPT-OSS can spend a material portion of this budget on reasoning.
           // A 600-token default occasionally ended after a tool result without

@@ -102,6 +102,16 @@ describe('Luna Groq provider and budget', () => {
     expect(body).not.toHaveProperty('tool_choice')
   })
 
+  it.each(['openai/gpt-oss-20b','openai/gpt-oss-120b'])('usa configuração de raciocínio suportada por %s', async model => {
+    const fetchFn=vi.fn(async (_url:Parameters<typeof fetch>[0],_init?:Parameters<typeof fetch>[1])=>new Response(JSON.stringify({choices:[{message:{content:'ok',reasoning:'private'}}],usage:{prompt_tokens:10,completion_tokens:10}}),{status:200}))
+    const provider=new GroqProvider({apiKey:'test-key',model,fetchFn})
+    const response=await provider.complete({messages:[],tools:[]})
+    const body=JSON.parse(String(fetchFn.mock.calls[0][1]?.body))
+    expect(body).toMatchObject({model,include_reasoning:false,reasoning_effort:'low'})
+    expect(body).not.toHaveProperty('reasoning_format')
+    expect(response).not.toHaveProperty('reasoning')
+  })
+
   it.each([undefined, { prompt_tokens: -1, completion_tokens: 10 }, { prompt_tokens: 10, completion_tokens: 0.5 }])('não certifica consumo desconhecido ou inválido como zero', async usage => {
     const provider = new GroqProvider({ apiKey: 'test-key', model: 'test-model', fetchFn: async () => new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage }), { status: 200 }) })
     await expect(provider.complete({ messages: [], tools: [] })).rejects.toMatchObject({ code: 'GROQ_USAGE_UNAVAILABLE' })
