@@ -6,9 +6,37 @@ import { loadConversationMemory } from '../src/luna/conversationalMemory'
 import { loadOperationalState } from '../src/luna/operationalState'
 import { LUNA_DESIGNED_SCENARIOS,LUNA_SCENARIO_CLOCK,LUNA_SCENARIO_FIXTURE } from './fixtures/luna/designedScenarios'
 import type { LunaMessage,LunaProviderResponse } from '../src/luna/contracts'
+import { createDesignedHarness } from './fixtures/luna/designedRuntimeHarness'
 const db=(env as EdgeEnv & {DB:D1Database}).DB
 type Command={name:string;args:Record<string,unknown>}
 describe('designed references scenarios — real Worker/local D1/simulated provider',()=>{
+ it('scenario 8 variation: a outra replaces only the chosen item and completes a native pending order',async()=>{
+  const h=await createDesignedHarness(8,'-other'),s=LUNA_DESIGNED_SCENARIOS.find(s=>s.id===8)!,c=h.command,d=h.draft,f=LUNA_SCENARIO_FIXTURE
+  try{
+   await h.turn(1,'Me mostra as duas rações.',[[c('search_products',{query:'Ração'})]],s.allowedTools,[],['call-1-1-0:product.0','call-1-1-0:product.1'],'choice')
+   await h.turn(2,'Quero a primeira.',[[c('resolve_context_reference',{kind:'product',selection:'ordinal',ordinal:1})],results=>{const selected=results.find(r=>r.data?.option)!.data.option;expect(selected.id).toBe('racao-a');return[d('cart','cart','add_item',{itemId:selected.id,quantity:1})]}],s.allowedTools)
+   await h.turn(3,'Não, a outra.',[[c('resolve_context_reference',{kind:'product',selection:'other',operation_id:'cart'})],results=>{const selected=results.find(r=>r.data?.option)!.data.option;expect(selected.id).toBe('racao-b');return[d('cart','cart','replace_item',{itemId:'racao-a',replacementId:selected.id,quantity:1})]}],s.allowedTools)
+   expect((await h.state()).operations.cart.items).toEqual([{id:'racao-b',quantity:1}])
+   await h.turn(4,'Retirada.',[[d('cart','cart','set_field',{field:'fulfillment_type',value:'counter'}),c('prepare_product_order',{customer_id:f.customer,items:[{product_id:'racao-b',quantity:1}],fulfillment_type:'counter',operation_id:'cart'})]],s.allowedTools)
+   await h.turn(5,'Confirmo.',[[c('commit_confirmed_proposal',h.proposals.product_order_create)]],s.allowedTools,[],['call-5-1-0:result'])
+   expect((await h.db.prepare(`SELECT total_cents,status FROM sales WHERE tenant_id=?1`).bind(h.tenant).all()).results).toEqual([{total_cents:11000,status:'pending'}])
+   expect(await h.db.prepare(`SELECT COUNT(*) AS count FROM payments WHERE tenant_id=?1`).bind(h.tenant).first()).toEqual({count:0})
+  }finally{h.close()}
+ })
+ it('scenario 5 variation: real zero stock refuses preparation and a verified alternative completes the order',async()=>{
+  const h=await createDesignedHarness(5,'-no-stock'),s=LUNA_DESIGNED_SCENARIOS.find(s=>s.id===5)!,c=h.command,d=h.draft,f=LUNA_SCENARIO_FIXTURE
+  try{
+   await h.db.prepare(`UPDATE inventory_balances SET on_hand_milliunits=0 WHERE tenant_id=?1 AND product_id='racao-a'`).bind(h.tenant).run()
+   await h.turn(1,'Quero uma Ração A.',[[c('search_products',{query:'Ração A'}),c('prepare_product_order',{customer_id:f.customer,items:[{product_id:'racao-a',quantity:1}],fulfillment_type:'counter'})]],s.allowedTools,['INSUFFICIENT_STOCK'],['call-1-1-0:product.0'])
+   expect(h.transcripts[0].result.proposalIds).toEqual([])
+   expect(h.transcripts[0].result.reply).toContain('estoque disponível nesta consulta: 0')
+   await h.turn(2,'Qual outra vocês têm?',[[c('search_products',{query:'Ração B'})]],s.allowedTools,[],['call-2-1-0:product.0'],'choice')
+   await h.turn(3,'Pode ser essa para retirada.',[[c('resolve_context_reference',{kind:'product',selection:'single'})],results=>{const selected=results.find(r=>r.data?.option)!.data.option;expect(selected.id).toBe('racao-b');return[d('cart','cart','add_item',{itemId:selected.id,quantity:1}),d('cart','cart','set_field',{field:'fulfillment_type',value:'counter'}),c('prepare_product_order',{customer_id:f.customer,items:[{product_id:selected.id,quantity:1}],fulfillment_type:'counter',operation_id:'cart'})]}],s.allowedTools)
+   await h.turn(4,'Confirmo.',[[c('commit_confirmed_proposal',h.proposals.product_order_create)]],s.allowedTools,[],['call-4-1-0:result'])
+   expect((await h.db.prepare(`SELECT total_cents,status FROM sales WHERE tenant_id=?1`).bind(h.tenant).all()).results).toEqual([{total_cents:11000,status:'pending'}])
+   expect(await h.db.prepare(`SELECT COUNT(*) AS count FROM payments WHERE tenant_id=?1`).bind(h.tenant).first()).toEqual({count:0})
+  }finally{h.close()}
+ })
  for(const id of [5,8])it(`scenario ${id}: accepted options/order, contextual selection, confirmation and pending sale`,async()=>{
   const scenario=LUNA_DESIGNED_SCENARIOS.find(s=>s.id===id)!,fixture=LUNA_SCENARIO_FIXTURE
   const tenant=`designed-references-${id}`,start=Date.parse(LUNA_SCENARIO_CLOCK.now),clock=vi.spyOn(Date,'now').mockReturnValue(start)

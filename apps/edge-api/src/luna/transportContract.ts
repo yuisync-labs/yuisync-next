@@ -22,5 +22,5 @@ export async function resolveTransportSnapshot(db:D1Database,ctx:LunaExecutionCo
  if(!window)return{ok:false,code:'TRANSPORT_CAPACITY_UNAVAILABLE',retryable:false}
  const count=await db.prepare(`SELECT COUNT(*) AS count FROM transport_resource_allocations WHERE tenant_id=?1 AND module_id=?2 AND resource_id=?3 AND starts_at_ms<?5 AND ends_at_ms>?4`).bind(ctx.tenantId,ctx.moduleId,window.resource_id,start,end).first<{count:number}>()
  if(count!.count>=window.capacity)return{ok:false,code:'TRANSPORT_SLOT_UNAVAILABLE',retryable:false}
- return{ok:true,data:{...window,option_id:option.id,label:option.label,fee_cents:option.fee_cents,pickup_required:option.pickup_required,dropoff_required:option.dropoff_required,starts_at_ms:start,ends_at_ms:end,city:args.city,address:args.address.trim(),reference:typeof args.reference==='string'?args.reference.trim()||null:null,pet_id:petId,weight_grams:weight}}
+ return{ok:true,data:{...window,option_id:option.id,label:option.label,fee_cents:option.fee_cents,pickup_required:option.pickup_required,dropoff_required:option.dropoff_required,outside_city:option.outside_city,store_city:option.store_city,max_weight_grams:option.max_weight_grams,starts_at_ms:start,ends_at_ms:end,city:args.city,address:args.address.trim(),reference:typeof args.reference==='string'?args.reference.trim()||null:null,pet_id:petId,weight_grams:weight}}
 }

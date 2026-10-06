@@ -39,6 +39,7 @@ BEGIN
   JOIN transport_options o ON o.tenant_id=t.tenant_id AND o.module_id=t.module_id AND o.id=t.option_id
   JOIN appointments ap ON ap.tenant_id=t.tenant_id AND ap.module_id=t.module_id AND ap.id=t.appointment_id
   JOIN pets p ON p.tenant_id=ap.tenant_id AND p.module_id=ap.module_id AND p.id=ap.pet_id
+  JOIN tenant_module_settings settings ON settings.tenant_id=ap.tenant_id AND settings.module_id=ap.module_id
   WHERE w.tenant_id=NEW.tenant_id AND w.module_id=NEW.module_id AND w.id=NEW.window_id AND w.resource_id=NEW.resource_id
    AND w.version=NEW.window_version AND w.starts_at_ms<=NEW.starts_at_ms AND w.ends_at_ms>=NEW.ends_at_ms
    AND r.status='active' AND m.resource_id=r.id AND o.status='active' AND o.fee_cents=t.fee_cents
@@ -48,6 +49,9 @@ BEGIN
    AND ap.scheduled_at_ms+ap.duration_min*60000=NEW.ends_at_ms AND p.status='active'
    AND (o.max_weight_grams IS NULL OR (p.weight_kg>0 AND ROUND(p.weight_kg*1000)<=o.max_weight_grams))
    AND ROUND(p.weight_kg*1000) IS json_extract(NEW.snapshot_json,'$.weight_grams')
+   AND o.outside_city=json_extract(NEW.snapshot_json,'$.outside_city')
+   AND o.max_weight_grams IS json_extract(NEW.snapshot_json,'$.max_weight_grams')
+   AND settings.store_city=json_extract(NEW.snapshot_json,'$.store_city')
    AND (o.pickup_required=0 OR t.pickup_address=json_extract(NEW.snapshot_json,'$.address'))
    AND (o.dropoff_required=0 OR t.dropoff_address=json_extract(NEW.snapshot_json,'$.address')))
   THEN RAISE(ABORT,'TRANSPORT_QUOTE_CHANGED') END;
