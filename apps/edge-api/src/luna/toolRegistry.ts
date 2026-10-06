@@ -17,7 +17,6 @@ import { prepareRegistration, proposalCustomerAuthorized } from './registrationC
 import { resolveDeliverySnapshot } from './deliveryContract'
 import { validateGroomingMachine } from '../groomingMachinePolicy'
 import { resolveContextReference } from './conversationalMemory'
-import { canonicalJson } from './canonicalJson'
 import { resolveTransportSnapshot } from './transportContract'
 
 type JsonRecord = Record<string, unknown>
@@ -33,10 +32,19 @@ const objectSchema = (properties: JsonRecord, required: string[] = []) => ({
 })
 
 const stringProperty = (description: string) => ({ type: 'string', description })
+const draftEventSchema = objectSchema({
+  operationId: { type: 'string', minLength: 1, maxLength: 100 },
+  kind: { type: 'string', enum: ['cart', 'booking', 'registration'] },
+  expectedVersion: { type: 'integer', minimum: 0 },
+  action: { type: 'string', enum: ['set_field', 'add_item', 'remove_item', 'replace_item', 'set_quantity', 'pause', 'resume', 'cancel'] },
+  field: { type: 'string' }, value: { type: 'string', maxLength: 1000 },
+  itemId: { type: 'string', maxLength: 160 }, replacementId: { type: 'string', maxLength: 160 },
+  quantity: { type: 'integer', minimum: 1, maximum: 100 },
+}, ['operationId', 'kind', 'expectedVersion', 'action'])
 
 const DEFINITIONS: readonly LunaToolDefinition[] = [
   {name:'resolve_context_reference',description:'Resolve referência por opções realmente apresentadas. Ordinal usa a ordem aceita; single exige uma opção; other exige duas opções e um item selecionado no rascunho. Não altera rascunho nem autoriza commit.',parameters:objectSchema({kind:{type:'string',enum:['product','service','pet','slot','transport']},selection:{type:'string',enum:['ordinal','single','other']},ordinal:{type:'integer',minimum:1,maximum:40},operation_id:stringProperty('Operação em foco.')},['kind','selection'])},
-  {name:'record_turn_decision',description:'Persiste a interpretação estruturada das intenções do turno. Sem efeitos comerciais: mantenha operações de compra/agendamento independentes e depois use ferramentas de rascunho/consulta.',parameters:objectSchema({intents:{type:'array',minItems:1,maxItems:4,items:objectSchema({operation_id:{type:'string',minLength:1,maxLength:100},kind:{type:'string',enum:['cart','booking','registration']},goal:{type:'string',enum:['create','change','query','pause','resume','cancel']}},['operation_id','kind','goal'])},focus:{type:'string',minLength:1,maxLength:100}},['intents','focus'])},
+  {name:'record_turn_decision',description:'Persiste intenções independentes e até oito eventos de rascunho atomicamente, sem efeitos comerciais. Consulte identidade e catálogo antes de usar IDs. Versões dos eventos são sequenciais por operação. Uma decisão por mensagem; não confirma nem executa venda/agendamento.',parameters:objectSchema({intents:{type:'array',minItems:1,maxItems:4,items:objectSchema({operation_id:{type:'string',minLength:1,maxLength:100},kind:{type:'string',enum:['cart','booking','registration']},goal:{type:'string',enum:['create','change','query','pause','resume','cancel']}},['operation_id','kind','goal'])},focus:{type:'string',minLength:1,maxLength:100},events:{type:'array',maxItems:8,items:draftEventSchema}},['intents','focus'])},
   ...(['prepare_customer_registration', 'prepare_pet_registration'] as const).map(name => ({ name, description: name === 'prepare_customer_registration' ? 'Prepara cadastro de cliente novo e seu pet pelo telefone da conversa; não cria antes da confirmação e não une cadastros ambíguos.' : 'Prepara cadastro de outro pet do cliente identificado; nomes ambíguos exigem humano.', parameters: objectSchema({ customer_name: { type: 'string', minLength: 1, maxLength: 160 }, customer_id: { type: 'string', minLength: 1, maxLength: 160 }, pet_name: { type: 'string', minLength: 1, maxLength: 160 }, species: { type: 'string', enum: ['dog','cat','bird','rabbit','fish','other'] }, breed: { type: ['string','null'], maxLength: 160 }, weight_kg: { type: ['number','null'], minimum: 0.01, maximum: 200 }, operation_id: stringProperty('Rascunho de cadastro.') }, [name === 'prepare_customer_registration' ? 'customer_name' : 'customer_id', 'pet_name', 'species']) })),
   ...informationToolDefinitions,
   {
@@ -50,15 +58,7 @@ const DEFINITIONS: readonly LunaToolDefinition[] = [
   {
     name: 'update_operation_draft',
     description: 'Persiste uma alteração estruturada sem efeito comercial. Use IDs de catálogo reais. Preços nunca são campos de rascunho. Leia versão no estado e mantenha carrinho e agenda independentes.',
-    parameters: objectSchema({
-      operationId: { type: 'string', minLength: 1, maxLength: 100 },
-      kind: { type: 'string', enum: ['cart', 'booking', 'registration'] },
-      expectedVersion: { type: 'integer', minimum: 0 },
-      action: { type: 'string', enum: ['set_field', 'add_item', 'remove_item', 'replace_item', 'set_quantity', 'pause', 'resume', 'cancel'] },
-      field: { type: 'string' }, value: { type: 'string', maxLength: 1000 },
-      itemId: { type: 'string', maxLength: 160 }, replacementId: { type: 'string', maxLength: 160 },
-      quantity: { type: 'integer', minimum: 1, maximum: 100 },
-    }, ['operationId', 'kind', 'expectedVersion', 'action']),
+    parameters: draftEventSchema,
   },
   {
     name: 'get_customer_context',
@@ -210,16 +210,35 @@ async function createProposal(database: D1Database, context: LunaExecutionContex
 
 export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
   const handlers = new Map<string, ToolHandler>()
+  async function validateDraftEvent(event: DraftEvent, context: LunaExecutionContext): Promise<LunaToolResult | null> {
+    if (['add_item', 'replace_item', 'set_quantity'].includes(event.action)) {
+      const id = event.action === 'replace_item' ? event.replacementId : event.itemId
+      const table = event.kind === 'cart' ? 'catalog_products' : event.kind === 'booking' ? 'services' : null
+      if (!table || !id) return { ok: false, code: 'OPERATION_ITEM_INVALID', retryable: false }
+      if (!await database.prepare(`SELECT id FROM ${table} WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`).bind(context.tenantId, context.moduleId, id).first()) return { ok: false, code: 'CATALOG_ITEM_NOT_FOUND', retryable: false }
+    }
+    if (event.field === 'pet_id' && event.value) {
+      const pet = await database.prepare(`SELECT client_id FROM pets WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`).bind(context.tenantId, context.moduleId, event.value).first<{ client_id: string }>()
+      if (!pet || !await isConversationCustomer(database, context, pet.client_id)) return { ok: false, code: 'CUSTOMER_SCOPE_DENIED', retryable: false }
+    }
+    return null
+  }
+  const draftFailure = (error: unknown): LunaToolResult => ({ ok: false, code: error instanceof Error && /^OPERATION_[A-Z_]+$/.test(error.message) ? error.message : 'OPERATION_EVENT_FAILED', retryable: false })
   handlers.set('resolve_context_reference',(args,ctx)=>resolveContextReference(database,ctx,args))
   handlers.set('record_turn_decision',async(args,ctx)=>{
     const intents=args.intents as {operation_id:string;kind:string;goal:string}[]
     if(new Set(intents.map(i=>i.operation_id)).size!==intents.length||!intents.some(i=>i.operation_id===args.focus)||intents.some(i=>!/^[a-zA-Z0-9_-]{1,100}$/.test(i.operation_id)||['__proto__','constructor','prototype'].includes(i.operation_id)))return{ok:false,code:'TURN_DECISION_INVALID',retryable:false}
-    const inbound=await database.prepare(`SELECT id FROM chat_messages WHERE tenant_id=?1 AND module_id=?2 AND thread_id=?3 AND id=?4 AND direction='inbound' AND actor_type='customer'`).bind(ctx.tenantId,ctx.moduleId,ctx.conversationId,ctx.sourceMessageId).first()
+    const inbound=await database.prepare(`SELECT id FROM chat_messages WHERE tenant_id=?1 AND module_id=?2 AND thread_id=?3 AND (id=?4 OR external_message_id=?4) AND direction='inbound' AND actor_type='customer'`).bind(ctx.tenantId,ctx.moduleId,ctx.conversationId,ctx.sourceMessageId).first()
     if(!inbound)return{ok:false,code:'TURN_MESSAGE_MISSING',retryable:false}
-    const decision=canonicalJson(args)
-    await database.prepare(`INSERT INTO luna_turn_decisions VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(tenant_id,module_id,conversation_id,source_message_id) DO NOTHING`).bind(ctx.tenantId,ctx.moduleId,ctx.conversationId,ctx.sourceMessageId,decision,Date.now()).run()
-    const stored=await database.prepare(`SELECT decision_json FROM luna_turn_decisions WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND source_message_id=?4`).bind(ctx.tenantId,ctx.moduleId,ctx.conversationId,ctx.sourceMessageId).first<{decision_json:string}>()
-    return stored?.decision_json===decision?{ok:true,data:{decision:args,commercial_effect:false}}:{ok:false,code:'TURN_DECISION_CONFLICT',retryable:false}
+    const events=(args.events??[]) as DraftEvent[]
+    for(const event of events){
+      if(!intents.some(i=>i.operation_id===event.operationId&&i.kind===event.kind))return{ok:false,code:'TURN_DECISION_INVALID',retryable:false}
+      const failure=await validateDraftEvent(event,ctx);if(failure)return failure
+    }
+    try{
+      const state=await new LunaConversationRepository(database).applyTurnDecision(ctx,args as unknown as {focus:string;events?:DraftEvent[]})
+      return{ok:true,data:{decision:args,state,commercial_effect:false}}
+    }catch(error){return draftFailure(error)}
   })
   for (const name of ['prepare_customer_registration', 'prepare_pet_registration']) handlers.set(name, async (args, context) => {
     const existing = name === 'prepare_pet_registration'
@@ -239,24 +258,12 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
 
   handlers.set('update_operation_draft', async (args, context) => {
     const event = args as unknown as DraftEvent
-    if (event.action === 'add_item' || event.action === 'replace_item' || event.action === 'set_quantity') {
-      const id = event.action === 'replace_item' ? event.replacementId : event.itemId
-      const table = event.kind === 'cart' ? 'catalog_products' : event.kind === 'booking' ? 'services' : null
-      if (!table || !id) return { ok: false, code: 'OPERATION_ITEM_INVALID', retryable: false }
-      const row = await database.prepare(`SELECT id FROM ${table} WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`)
-        .bind(context.tenantId, context.moduleId, id).first()
-      if (!row) return { ok: false, code: 'CATALOG_ITEM_NOT_FOUND', retryable: false }
-    }
-    if (event.field === 'pet_id' && event.value) {
-      const pet = await database.prepare(`SELECT client_id FROM pets WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`)
-        .bind(context.tenantId, context.moduleId, event.value).first<{ client_id: string }>()
-      if (!pet || !await isConversationCustomer(database, context, pet.client_id)) return { ok: false, code: 'CUSTOMER_SCOPE_DENIED', retryable: false }
-    }
+    const failure=await validateDraftEvent(event,context);if(failure)return failure
     try {
       const state = await new LunaConversationRepository(database).applyDraftEvent(context, event, context.actionIndex ?? 0)
       return { ok: true, data: { state } }
     } catch (error) {
-      return { ok: false, code: error instanceof Error && /^OPERATION_[A-Z_]+$/.test(error.message) ? error.message : 'OPERATION_EVENT_FAILED', retryable: false }
+      return draftFailure(error)
     }
   })
 
@@ -275,7 +282,10 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
       WHERE tenant_id=?1 AND module_id=?2 AND client_id=?3 AND status='active'
       ORDER BY name,id LIMIT 20
     `).bind(context.tenantId, context.moduleId, selected.id).all<Record<string, unknown>>()
-    return { ok: true, data: { customer: selected, pets: pets.results } }
+    const settings=await database.prepare(`SELECT data_json FROM module_settings_extensions WHERE tenant_id=?1 AND module_id=?2`).bind(context.tenantId,context.moduleId).first<{data_json:string}>()
+    let timezone:string|null=null
+    try{const configured=JSON.parse(settings?.data_json??'{}').petbot_timezone;if(typeof configured==='string'){new Intl.DateTimeFormat('pt-BR',{timeZone:configured}).format();timezone=configured}}catch{/* Missing/invalid configuration is not an invented timezone. */}
+    return { ok: true, data: { customer: selected, pets: pets.results, store_context:{timezone,current_time_utc:new Date(Date.now()).toISOString(),source:'module_settings_extensions/worker-clock'} } }
   })
 
   handlers.set('search_services', async (args, context) => {

@@ -1,7 +1,7 @@
 import type { LunaExecutionContext, LunaMessage, LunaToolResult } from './contracts'
 import { sanitizeLunaTelemetry } from './telemetrySanitizer'
 import { loadOperationalState, reduceDraft, type DraftEvent, type OperationalState } from './operationalState'
-import { hashCanonicalJson } from './canonicalJson'
+import { canonicalJson, hashCanonicalJson } from './canonicalJson'
 
 export class LunaConversationRepository {
   constructor(private readonly database: D1Database) {}
@@ -39,6 +39,48 @@ export class LunaConversationRepository {
           event.kind === 'booking' ? 'appointment_reschedule' : '', event.kind === 'booking' ? 'appointment_cancel' : 'pet_registration', eventId, event.operationId),
     ])
     if (results[0].meta.changes !== 1 || results[1].meta.changes !== 1) throw new Error('OPERATION_VERSION_STALE')
+    return next
+  }
+
+  /** One interpreted turn, one CAS: no partially applied multi-operation plan. */
+  async applyTurnDecision(context: LunaExecutionContext, decision: { focus: string; events?: DraftEvent[] }): Promise<OperationalState> {
+    if (!context.sourceMessageId) throw new Error('OPERATION_EVENT_INVALID')
+    const serializedDecision = canonicalJson(decision)
+    const previous = await this.database.prepare(`SELECT decision_json FROM luna_turn_decisions WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND source_message_id=?4`)
+      .bind(context.tenantId, context.moduleId, context.conversationId, context.sourceMessageId).first<{ decision_json: string }>()
+    const loaded = await this.loadState(context)
+    if (previous) {
+      if (previous.decision_json !== serializedDecision) throw new Error('OPERATION_EVENT_CONFLICT')
+      return loaded.state
+    }
+    let next = loaded.state
+    const events = []
+    for (const [index, event] of (decision.events ?? []).entries()) {
+      const before = next
+      next = reduceDraft(next, event)
+      events.push({ event, id: `${context.sourceMessageId}:decision:${index}`, fingerprint: await hashCanonicalJson(event),
+        nextVersion: next.operations[event.operationId].version, material: next.version !== before.version && !['pause', 'resume'].includes(event.action) })
+    }
+    if (next.operations[decision.focus]?.status === 'active') next = { ...next, focus: decision.focus }
+    const serializedState = JSON.stringify(next), now = Date.now()
+    const statements = [
+      this.database.prepare(`UPDATE luna_conversations SET state_json=?4,version=version+1,updated_at_ms=?5 WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND version=?6`)
+        .bind(context.tenantId, context.moduleId, context.conversationId, serializedState, now, loaded.databaseVersion),
+      this.database.prepare(`INSERT INTO luna_turn_decisions(tenant_id,module_id,conversation_id,source_message_id,decision_json,created_at_ms)
+        SELECT ?1,?2,?3,?4,?5,?6 WHERE changes()=1 AND EXISTS(SELECT 1 FROM luna_conversations WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND version=?7 AND state_json=?8)`)
+        .bind(context.tenantId, context.moduleId, context.conversationId, context.sourceMessageId, serializedDecision, now, loaded.databaseVersion + 1, serializedState),
+      ...events.map(({ event, id, fingerprint, nextVersion }) => this.database.prepare(`INSERT INTO luna_operation_events(tenant_id,module_id,conversation_id,event_id,operation_id,event_type,previous_version,next_version,created_at_ms,event_fingerprint)
+        SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10 WHERE changes()=1 AND EXISTS(SELECT 1 FROM luna_conversations WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND version=?11 AND state_json=?12)`)
+        .bind(context.tenantId, context.moduleId, context.conversationId, id, event.operationId, event.action, event.expectedVersion, nextVersion, now, fingerprint, loaded.databaseVersion + 1, serializedState)),
+      ...events.filter(e => e.material).map(({ event, id }) => this.database.prepare(`UPDATE luna_proposals SET status='invalidated',updated_at_ms=?4 WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3
+        AND status='awaiting_confirmation' AND (operation_id=?5 OR ((operation_id IS NULL OR operation_id=operation_kind) AND operation_kind IN (?6,?7,?8)))
+        AND EXISTS(SELECT 1 FROM luna_operation_events WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND event_id=?9)`)
+        .bind(context.tenantId, context.moduleId, context.conversationId, now, event.operationId,
+          event.kind === 'cart' ? 'product_order_create' : event.kind === 'booking' ? 'appointment_create' : 'customer_registration',
+          event.kind === 'booking' ? 'appointment_reschedule' : '', event.kind === 'booking' ? 'appointment_cancel' : 'pet_registration', id)),
+    ]
+    const results = await this.database.batch(statements)
+    if (results.slice(0, 2 + events.length).some(result => result.meta.changes !== 1)) throw new Error('OPERATION_VERSION_STALE')
     return next
   }
 

@@ -9,19 +9,21 @@ describe('designed scenario 11 — real Worker/local D1/simulated provider',()=>
   const pet=variant==='canonical'?'mel':'thor'
   try{
    if(variant!=='canonical')await h.db.prepare(`UPDATE catalog_products SET name='Premier adulto' WHERE tenant_id=?1 AND id='racao-a'`).bind(h.tenant).run()
-   await h.turn(1,variant==='canonical'?s.messages[0]:'Quero marcar banho pro Thor amanhã e vê se vocês têm Premier adulto.',[[
-    c('record_turn_decision',{intents:[{operation_id:'booking',kind:'booking',goal:'create'},{operation_id:'cart',kind:'cart',goal:'create'}],focus:'booking'}),
-    c('get_customer_context',{}),c('search_services',{query:'banho'}),c('search_products',{query:variant==='canonical'?'Ração A':'Premier adulto'}),
-    d('booking','booking','set_field',{field:'pet_id',value:pet}),d('booking','booking','add_item',{itemId:'banho',quantity:1}),d('booking','booking','set_field',{field:'period',value:'manhã'}),
-    d('cart','cart','add_item',{itemId:'racao-a',quantity:1}),d('cart','cart','set_field',{field:'fulfillment_type',value:'counter'}),
-    c('get_available_slots',{service_ids:['banho'],starts_at:at,ends_at:'2026-10-07T15:00:00Z'}),
-   ]],s.allowedTools)
+   const first=await h.turn(1,variant==='canonical'?s.messages[0]:'Quero marcar banho pro Thor amanhã e vê se vocês têm Premier adulto.',[
+    [c('get_customer_context',{})],[c('search_services',{query:'banho'})],[c('search_products',{query:variant==='canonical'?'Ração A':'Premier adulto'})],
+    [c('record_turn_decision',{intents:[{operation_id:'booking',kind:'booking',goal:'create'},{operation_id:'cart',kind:'cart',goal:'create'}],focus:'booking',events:[
+     d('booking','booking','set_field',{field:'pet_id',value:pet}).args,d('booking','booking','add_item',{itemId:'banho',quantity:1}).args,d('booking','booking','set_field',{field:'period',value:'manhã'}).args,
+     d('cart','cart','add_item',{itemId:'racao-a',quantity:1}).args,d('cart','cart','set_field',{field:'fulfillment_type',value:'counter'}).args,
+    ]})],
+    [c('get_available_slots',{service_ids:['banho'],starts_at:at,ends_at:'2026-10-07T15:00:00Z'})],
+   ],s.allowedTools)
+   expect(first.usage.modelCalls).toBe(6);expect(first.usage.toolCalls).toBe(5)
    expect((await h.state()).operations.cart.items).toEqual([{id:'racao-a',quantity:1}])
    expect((await loadConversationMemory(h.db,h.ctx)).focus).toBe('booking')
-   await h.turn(2,s.messages[1],[[d('booking','booking','set_field',{field:'scheduled_at',value:at}),h.booking(at,undefined,pet),c('prepare_product_order',{customer_id:f.customer,items:[{product_id:'racao-a',quantity:1}],fulfillment_type:'counter',operation_id:'cart'})]],s.allowedTools)
+   await h.turn(2,s.messages[1],[[d('booking','booking','set_field',{field:'scheduled_at',value:at})],[h.booking(at,undefined,pet)],[c('prepare_product_order',{customer_id:f.customer,items:[{product_id:'racao-a',quantity:1}],fulfillment_type:'counter',operation_id:'cart'})]],s.allowedTools)
    const bath=h.proposals.appointment_create
    expect(bath).toBeDefined();expect(h.proposals.product_order_create).toBeDefined()
-   await h.turn(3,s.messages[2],[[d('cart','cart','set_quantity',{itemId:'racao-a',quantity:2}),c('prepare_product_order',{customer_id:f.customer,items:[{product_id:'racao-a',quantity:2}],fulfillment_type:'counter',operation_id:'cart'})]],s.allowedTools)
+   await h.turn(3,s.messages[2],[[d('cart','cart','set_quantity',{itemId:'racao-a',quantity:2})],[c('prepare_product_order',{customer_id:f.customer,items:[{product_id:'racao-a',quantity:2}],fulfillment_type:'counter',operation_id:'cart'})]],s.allowedTools)
    expect((await h.state()).operations.booking.fields.scheduled_at).toBe(at)
    expect((await h.state()).operations.cart.items).toEqual([{id:'racao-a',quantity:2}])
    expect(await h.db.prepare(`SELECT status FROM luna_proposals WHERE tenant_id=?1 AND id=?2`).bind(h.tenant,bath.proposal_id).first()).toEqual({status:'awaiting_confirmation'})
