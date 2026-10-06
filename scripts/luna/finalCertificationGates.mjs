@@ -24,6 +24,7 @@ const {LUNA_DESIGNED_SCENARIOS:scenarios}=await import(new URL(`file:///${resolv
 const results=[]
 for(const [name,bin,args] of [
  ['diff-check','git',['diff','--check','HEAD']],
+ ['security-audit',process.execPath,[npm,'run','audit:ci']],
  ['offline',process.execPath,[npm,'run','test','--workspace','@yuisync/edge-api','--','test/lunaDesigned','--reporter=json','--outputFile',resolve(out,'offline.json')]],
  ['test-all',process.execPath,[npm,'run','test:all']],
  ['cold-upgrades',process.execPath,[npm,'run','test','--workspace','@yuisync/edge-api','--','test/d1ColdUpgradeV25First.test.ts','test/d1ColdUpgradeV25Second.test.ts','test/d1MigrationUpgradeMatrix.test.ts']],
@@ -34,7 +35,7 @@ for(const [name,bin,args] of [
 const report=JSON.parse(await readFile(resolve(out,'offline.json'),'utf8'))
 const finalSha=(await execute('git',['rev-parse','HEAD'],'sha-end')).output.trim()
 const offlinePassed=report.success&&report.numFailedTests===0&&report.numPassedTests>=23&&report.testResults.length>=12
-const passed=results.length===4&&results.every(r=>r.passed)&&offlinePassed&&finalSha===sha
+const passed=results.length===5&&results.every(r=>r.passed)&&offlinePassed&&finalSha===sha
 const gates={sha,passed,results,offline:{sha,executed:offlinePassed?20:0,passed:offlinePassed?20:0,manifestHash:certificationManifestHash(scenarios)},completedAt:new Date().toISOString()}
 await writeFile(resolve(out,'gates.json'),JSON.stringify(gates,null,2))
 if(!passed)process.exitCode=1

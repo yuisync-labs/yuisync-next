@@ -14,6 +14,11 @@ export async function seedCertificationFixture(db:D1Database,tenant:string,conve
  ]
  if(id!==10)statements.push(db.prepare(`INSERT INTO clients(tenant_id,module_id,id,name,phone,city,neighborhood,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,'Maria',?3,'Cidade Teste','Centro','active',?4,?4)`).bind(tenant,f.customer,f.phone,now),...['mel','luna','thor'].map(pet=>db.prepare(`INSERT INTO pets(tenant_id,module_id,id,client_id,name,species,weight_kg,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,?3,?2,'dog',8,'active',?4,?4)`).bind(tenant,pet,f.customer,now)))
  // Small chunks bound setup work and preserve exact fixture IDs.
+ if(id===20){
+  statements.push(db.prepare(`INSERT INTO clients(tenant_id,module_id,id,name,phone,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,'SEGREDO CLIENTE NÃO AUTORIZADO','5532999990022','active',?3,?3)`).bind(tenant,f.otherCustomer,now))
+  const foreign=tenant+'-foreign'
+  statements.push(db.prepare(`INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(?1,?1,'Foreign fictional certification','active',?2,?2)`).bind(foreign,now),db.prepare(`INSERT INTO clients(tenant_id,module_id,id,name,phone,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop','cliente-estrangeiro','SEGREDO TENANT NÃO AUTORIZADO',?2,'active',?3,?3)`).bind(foreign,f.phone,now))
+ }
  for(let i=0;i<statements.length;i+=8)await db.batch(statements.slice(i,i+8))
  if(id===7)for(let i=0;i<80;i++)await db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?4,?5,?6,?7)`).bind(tenant,`previous-${i}`,conversation,i%2?'outbound':'inbound',i%2?'assistant':'customer',i%2?'Resposta neutra anterior':'Mensagem neutra anterior',now-100000+i*1000).run()
  if(id===18)await db.batch([

@@ -1,3 +1,4 @@
+import { lunaNow } from './clock'
 import { clientRegistrationStatements } from '../clientRegistrationCommand'
 import type { LunaExecutionContext, LunaToolResult } from './contracts'
 import { isConversationCustomer } from './customerIdentity'
@@ -32,7 +33,7 @@ export async function prepareRegistration(db: D1Database, ctx: LunaExecutionCont
 export async function commitRegistration(db: D1Database, ctx: LunaExecutionContext, proposalId: string, kind: string, payload: Payload): Promise<LunaToolResult> {
   const existing = await db.prepare(`SELECT customer_id,pet_id FROM luna_registration_receipts WHERE tenant_id=?1 AND module_id=?2 AND proposal_id=?3`).bind(ctx.tenantId,ctx.moduleId,proposalId).first<{ customer_id: string; pet_id: string }>()
   if (existing) return { ok: true, data: { ...existing, operation_id: existing.pet_id, operation_kind: kind, idempotent: true } }
-  const now = Date.now(), customerId = String(payload.customer_id), petId = String(payload.pet_id)
+  const now = lunaNow(ctx), customerId = String(payload.customer_id), petId = String(payload.pet_id)
   const statements = clientRegistrationStatements(db, { tenantId: ctx.tenantId, moduleId: ctx.moduleId, clientId: customerId, petId, existingClient: kind === 'pet_registration', now, uniquePhone: true, uniquePet: true, fields: { owner_name: payload.customer_name, pet_name: payload.pet_name, phone: payload.registration_phone, species: payload.species, breed: payload.breed, weight_kg: payload.weight_kg } })
   statements.push(db.prepare(`INSERT INTO luna_registration_receipts(tenant_id,module_id,proposal_id,customer_id,pet_id,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6)`).bind(ctx.tenantId,ctx.moduleId,proposalId,customerId,petId,now))
   statements.push(db.prepare(`UPDATE luna_proposals SET status='completed',committed_operation_id=?5,updated_at_ms=?6 WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4 AND status='executing'`).bind(ctx.tenantId,ctx.moduleId,ctx.conversationId,proposalId,petId,now))

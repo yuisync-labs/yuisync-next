@@ -49,11 +49,18 @@ if(process.argv.includes('--prepare')){
  await writeFile(resolve(out,'wrangler.json'),JSON.stringify(config,null,2))
  console.log(JSON.stringify({prepared:true,sha,fixtureDatabaseId:identity.id,manifestHash}))
 }
-if(process.argv.includes('--run')){
+if(process.argv.includes('--run')||process.argv.includes('--publish-browser')){
  const gates=JSON.parse(await readFile(resolve(out,'gates.json'),'utf8'))
  if(gates.sha!==sha||!gates.passed||gates.offline.executed!==20||gates.offline.passed!==20||gates.offline.manifestHash!==manifestHash)throw new Error('CERTIFICATION_FINAL_GATES_REQUIRED')
  if(await git(['diff','HEAD','--','apps/edge-api/src','apps/edge-api/test','scripts/luna','test/luna']))throw new Error('CERTIFICATION_CODE_NOT_FROZEN')
  const configPath=resolve(out,'wrangler.json'),config=JSON.parse(await readFile(configPath,'utf8'))
+ if(process.argv.includes('--publish-browser')){
+  const operator=JSON.parse(await readFile(resolve(out,'browser-operator.json'),'utf8'))
+  if(operator.environment!=='staging'||!operator.email.endsWith('@staging.invalid'))throw new Error('CERTIFICATION_OPERATOR_INVALID')
+  config.env.staging.vars.LUNA_CERT_OPERATOR_ID=operator.id
+  config.env.staging.vars.LUNA_CERT_GATES_SHA=sha
+  config.assets.run_worker_first=[...new Set([...config.assets.run_worker_first,'/luna-certification'])]
+ }
  config.env.staging.vars.RELEASE_SHA=sha;await writeFile(configPath,JSON.stringify(config,null,2))
  // Rotate the temporary credential on resume. Only memory/stdin; never artifact.
  const token=randomBytes(32).toString('hex')
@@ -62,6 +69,10 @@ if(process.argv.includes('--run')){
  const baseUrl='https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev/'
  const release=await (await fetch(new URL('release',baseUrl),{redirect:'error'})).json()
  if(release.release_sha!==sha||release.environment!=='staging')throw new Error('CERTIFICATION_RELEASE_SHA_MISMATCH')
+ if(process.argv.includes('--publish-browser')){
+  await writeFile(resolve(out,'browser-release.json'),JSON.stringify({sha,release,provider:'groq',model:stage.vars.LUNA_MODEL,manifestHash,url:new URL('luna-certification',baseUrl).href,certified:false,production:false},null,2))
+  console.log(JSON.stringify({published:'staging only',sha,playground:new URL('luna-certification',baseUrl).href,modelCalls:0,certified:false}))
+ }else{
  const roundId=`groq-${sha.slice(0,12)}`
  const {adapter,store}=await createStagingHttpAdapter({baseUrl,token,sha,roundId})
  if(adapter.provider!=='groq'||adapter.model!=='openai/gpt-oss-20b'||!adapter.configurationFingerprint)throw new Error('CERTIFICATION_PROVIDER_CONFIGURATION_MISMATCH')
@@ -74,4 +85,5 @@ if(process.argv.includes('--run')){
  const report={sha,release,provider:adapter.provider,model:adapter.model,manifestHash,configurationFingerprint:adapter.configurationFingerprint,budget,result,error,diagnosticReceipt,transcriptsReviewed:0,certified:false}
  await writeFile(resolve(out,`round-${sha.slice(0,12)}.json`),JSON.stringify(report,null,2))
  console.log(JSON.stringify({sha,roundId,status:result?.status,error,budget,completed:Object.values(result?.scenarios??{}).filter(s=>s.status==='complete').length}))
+ }
 }

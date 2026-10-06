@@ -1,3 +1,4 @@
+import { lunaNow } from './clock'
 import type {
   LunaExecutionContext,
   LunaToolDefinition,
@@ -174,7 +175,7 @@ function proposalSummary(kind: string, data: JsonRecord): JsonRecord {
 
 async function createProposal(database: D1Database, context: LunaExecutionContext, kind: string, payload: JsonRecord, draftId = ''): Promise<LunaToolResult> {
   const id = crypto.randomUUID()
-  const now = Date.now()
+  const now = lunaNow(context)
   const expiresAt = now + 10 * 60_000
   await database.prepare(`
     INSERT OR IGNORE INTO luna_conversations(
@@ -249,7 +250,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
   handlers.set('get_operation_status', (args, context) => getProposalOperationStatus(database, context, clean(args.proposal_id, 160)))
   handlers.set('present_proposal', async (args, context) => {
     const row = await database.prepare(`SELECT id,version,operation_kind,payload_json FROM luna_proposals WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4 AND status='awaiting_confirmation' AND expires_at_ms>=?5`)
-      .bind(context.tenantId, context.moduleId, context.conversationId, args.proposal_id, Date.now()).first<{ id: string; version: number; operation_kind: string; payload_json: string }>()
+      .bind(context.tenantId, context.moduleId, context.conversationId, args.proposal_id, lunaNow(context)).first<{ id: string; version: number; operation_kind: string; payload_json: string }>()
     if (!row) return { ok: false, code: 'PROPOSAL_NOT_FOUND', retryable: false }
     const payload = JSON.parse(row.payload_json) as JsonRecord
     if (!await proposalCustomerAuthorized(database, context, row.operation_kind, payload)) return { ok: false, code: 'CUSTOMER_SCOPE_DENIED', retryable: false }
@@ -285,7 +286,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     const settings=await database.prepare(`SELECT data_json FROM module_settings_extensions WHERE tenant_id=?1 AND module_id=?2`).bind(context.tenantId,context.moduleId).first<{data_json:string}>()
     let timezone:string|null=null
     try{const configured=JSON.parse(settings?.data_json??'{}').petbot_timezone;if(typeof configured==='string'){new Intl.DateTimeFormat('pt-BR',{timeZone:configured}).format();timezone=configured}}catch{/* Missing/invalid configuration is not an invented timezone. */}
-    return { ok: true, data: { customer: selected, pets: pets.results, store_context:{timezone,current_time_utc:new Date(Date.now()).toISOString(),source:'module_settings_extensions/worker-clock'} } }
+    return { ok: true, data: { customer: selected, pets: pets.results, store_context:{timezone,current_time_utc:new Date(lunaNow(context)).toISOString(),source:'module_settings_extensions/worker-clock'} } }
   })
 
   handlers.set('search_services', async (args, context) => {
@@ -325,7 +326,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
       WHERE a.tenant_id=?1 AND a.module_id=?2 AND a.client_id=?3
         AND a.status IN ('scheduled','confirmed','in_progress') AND a.scheduled_at_ms>=?4
       ORDER BY a.scheduled_at_ms,a.id LIMIT 20
-    `).bind(context.tenantId, context.moduleId, customerId, Date.now() - 60_000).all<Record<string, unknown>>()
+    `).bind(context.tenantId, context.moduleId, customerId, lunaNow(context) - 60_000).all<Record<string, unknown>>()
     return { ok: true, data: { appointments: result.results } }
   })
 
@@ -383,7 +384,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     const allocations = await automaticAllocations(database, { tenantId: context.tenantId, moduleId: context.moduleId, clientId: customerId }, catalog.items)
     const durationMinutes = services.results.reduce((sum, service) => sum + Number(service.default_duration_min || 0), 0)
     const availability = await validateScheduleAvailability({
-      database, tenantId: context.tenantId, moduleId: context.moduleId,
+      database, tenantId: context.tenantId, moduleId: context.moduleId, nowMs: lunaNow(context),
       scheduledAtMs: scheduledAt, durationMinutes,
     })
     if (!availability.ok) return { ok: false, code: availability.code, retryable: false }
@@ -451,7 +452,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     if (!appointment) return { ok: false, code: 'APPOINTMENT_NOT_FOUND', retryable: false }
     if (!['scheduled', 'confirmed'].includes(String(appointment.status))) return { ok: false, code: 'APPOINTMENT_NOT_RESCHEDULABLE', retryable: false }
     const availability = await validateScheduleAvailability({
-      database, tenantId: context.tenantId, moduleId: context.moduleId,
+      database, tenantId: context.tenantId, moduleId: context.moduleId, nowMs: lunaNow(context),
       scheduledAtMs: scheduledAt, durationMinutes: Number(appointment.duration_min), ignoreAppointmentId: appointmentId,
     })
     if (!availability.ok) return { ok: false, code: availability.code, retryable: false }
@@ -500,7 +501,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
 
   handlers.set('handoff_to_human', async (args, context) => {
     const reason = clean(args.reason, 500) || 'Solicitação de atendimento humano.'
-    const now = Date.now()
+    const now = lunaNow(context)
     await database.batch([
       database.prepare(`UPDATE chat_threads SET status='handoff',updated_at_ms=?4 WHERE tenant_id=?1 AND module_id=?2 AND id=?3`).bind(context.tenantId, context.moduleId, context.conversationId, now),
       database.prepare(`UPDATE luna_conversations SET status='handoff',state_json=json_set(state_json,'$.handoff_reason',?4),updated_at_ms=?5,version=version+1 WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3`).bind(context.tenantId, context.moduleId, context.conversationId, reason, now),

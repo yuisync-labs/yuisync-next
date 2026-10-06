@@ -1,3 +1,4 @@
+import { lunaNow } from './clock'
 import type { LunaExecutionContext } from './contracts'
 import { acceptResponseMemory } from './conversationalMemory'
 export type PresentableProposal = { id: string; version: number; fingerprint: string; operation_kind: string; payload_json: string }
@@ -38,7 +39,7 @@ export async function loadPresentableProposals(database: D1Database, context: Lu
   for (const id of [...new Set(ids)].slice(0, 12)) {
     const row = await database.prepare(`SELECT id,version,fingerprint,operation_kind,payload_json FROM luna_proposals
       WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4 AND status='awaiting_confirmation' AND expires_at_ms>=?5`)
-      .bind(context.tenantId, context.moduleId, context.conversationId, id, Date.now()).first<PresentableProposal>()
+      .bind(context.tenantId, context.moduleId, context.conversationId, id, lunaNow(context)).first<PresentableProposal>()
     if (row) rows.push(row)
   }
   return rows
@@ -49,7 +50,7 @@ export async function recordProposalPresentation(database: D1Database, context: 
   const message = await database.prepare(`SELECT content_text,created_at_ms FROM chat_messages WHERE tenant_id=?1 AND module_id=?2 AND thread_id=?3 AND id=?4 AND direction='outbound' AND actor_type='assistant'`)
     .bind(context.tenantId, context.moduleId, context.conversationId, messageId).first<{ content_text: string;created_at_ms:number }>()
   if (!message) throw new Error('PRESENTATION_MESSAGE_MISSING')
-  const presentedAt=Math.max(Date.now(),message.created_at_ms)
+  const presentedAt=Math.max(lunaNow(context),message.created_at_ms)
   await acceptResponseMemory(database,context,messageId,message.content_text,presentedAt)
   const rows = await loadPresentableProposals(database, context, ids)
   for (const row of rows) {

@@ -38,6 +38,7 @@ export type LunaExecutionContext = Readonly<{
   traceId: string
   executionMode: 'fixture' | 'staging' | 'production'
   actionIndex?: number
+  nowMs?: number
 }>
 
 export type LunaProviderUsage = Readonly<{

@@ -6,7 +6,7 @@ export * from '../../apps/edge-api/src/index'
 import { runLunaTurn } from '../../apps/edge-api/src/luna/runLunaTurn'
 import { GroqProvider } from '../../apps/edge-api/src/luna/providers/groqProvider'
 import { recordProposalPresentation } from '../../apps/edge-api/src/luna/proposalPresentation'
-import { LUNA_DESIGNED_SCENARIOS,LUNA_SCENARIO_FIXTURE as f } from '../../apps/edge-api/test/fixtures/luna/designedScenarios'
+import { LUNA_DESIGNED_SCENARIOS,LUNA_SCENARIO_FIXTURE as f,LUNA_SCENARIO_CLOCK } from '../../apps/edge-api/test/fixtures/luna/designedScenarios'
 import { seedCertificationFixture } from './certificationFixtures'
 import { certificationMeter } from './certificationMeter'
 import { oneAgendaTimeout,blockCanonicalAfternoon,loseFirstCommittedBatch,changePriceAndLastStock,seedLastBenefit } from './certificationFaults'
@@ -15,7 +15,10 @@ import { openCertificationLedger } from './certificationLedger'
 import { CERTIFICATION_SCHEMA } from './certificationSchema'
 import { LUNA_OPERATIONAL_SYSTEM_PROMPT } from '../../apps/edge-api/src/luna/systemPrompt'
 import type { LunaExecutionContext } from '../../apps/edge-api/src/luna/contracts'
-type Env=EdgeEnv & {LUNA_CERT_DB?:D1Database;LUNA_CERT_TOKEN?:string;RELEASE_SHA?:string;GROQ_API_KEY?:string;LUNA_CERT_ENV?:string;LUNA_CERT_DATABASE_ID?:string}
+import { getBetterAuthSession } from '../../apps/edge-api/src/auth/betterAuthRuntime'
+import { certificationPlayground } from './certificationPlayground'
+import { lunaNow } from '../../apps/edge-api/src/luna/clock'
+type Env=EdgeEnv & {LUNA_CERT_DB?:D1Database;LUNA_CERT_TOKEN?:string;RELEASE_SHA?:string;GROQ_API_KEY?:string;LUNA_CERT_ENV?:string;LUNA_CERT_DATABASE_ID?:string;LUNA_CERT_OPERATOR_ID?:string;LUNA_CERT_GATES_SHA?:string}
 const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{'cache-control':'no-store'}})
 function sanitized(value:unknown):unknown{
  if(typeof value==='string'&&/^[\[{]/.test(value.trim())){try{return JSON.stringify(sanitized(JSON.parse(value)))}catch{/* ordinary text */}}
@@ -26,7 +29,7 @@ function sanitized(value:unknown):unknown{
 }
 export async function initializeCertificationSchema(db:D1Database){return await db.batch(CERTIFICATION_SCHEMA.map(sql=>db.prepare(sql)))}
 async function identity(env:Env){
- const payload={sha:env.RELEASE_SHA,provider:'groq',model:env.LUNA_MODEL,protocol:2,prompt:LUNA_OPERATIONAL_SYSTEM_PROMPT,scenarios:LUNA_DESIGNED_SCENARIOS,fixture:f,databaseId:env.LUNA_CERT_DATABASE_ID}
+ const payload={sha:env.RELEASE_SHA,provider:'groq',model:env.LUNA_MODEL,protocol:2,prompt:LUNA_OPERATIONAL_SYSTEM_PROMPT,scenarios:LUNA_DESIGNED_SCENARIOS,fixture:f,clock:LUNA_SCENARIO_CLOCK,databaseId:env.LUNA_CERT_DATABASE_ID}
  const fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(payload))))).map(b=>b.toString(16).padStart(2,'0')).join('')
  return{fingerprint,provider:'groq',model:env.LUNA_MODEL,scenarioVersion:2,promptVersion:env.RELEASE_SHA}
 }
@@ -82,18 +85,42 @@ function validate(id:number,turn:number,total:number,before:any,after:any,tools:
 }
 async function certification(request:Request,env:Env){
  if(env.APP_ENV!=='staging'||env.LUNA_ENABLED!=='false'||env.LUNA_CERT_ENV!=='isolated-luna-v2'||!env.LUNA_CERT_DATABASE_ID||!env.LUNA_CERT_DB||env.LUNA_CERT_DB===env.DB||env.LUNA_CERT_DB===env.AUTH_DB||!env.LUNA_CERT_TOKEN)return json({code:'CERTIFICATION_DISABLED'},404)
- if(request.headers.get('authorization')!==`Bearer ${env.LUNA_CERT_TOKEN}`)return json({code:'UNAUTHORIZED'},401)
+ const browserRequest=new URL(request.url).pathname.startsWith('/api/ai-lab/luna/certification/')
+ if(browserRequest){
+  if(env.LUNA_CERT_GATES_SHA!==env.RELEASE_SHA||!env.LUNA_CERT_OPERATOR_ID)return json({code:'CERTIFICATION_FINAL_GATES_REQUIRED'},409)
+  if(request.method!=='POST'||request.headers.get('origin')!==new URL(request.url).origin||!request.headers.get('cookie'))return json({code:'UNAUTHENTICATED'},401)
+ }else if(request.headers.get('authorization')!==`Bearer ${env.LUNA_CERT_TOKEN}`)return json({code:'UNAUTHORIZED'},401)
  const path=new URL(request.url).pathname,configuration=await identity(env)
  const body=await request.json() as any
  if(!/^[a-zA-Z0-9_-]{1,100}$/.test(body.roundId??''))return json({code:'INVALID_ROUND'},400)
+ if(browserRequest&&body.roundId!==`groq-ui-${env.RELEASE_SHA?.slice(0,12)}`)return json({code:'INVALID_ROUND'},400)
  // Tables are provisioned once before the round. Never issue recurring DDL or
  // unmetered schema scans on cold starts. Missing tables fail closed.
  const ledger=await openCertificationLedger(env.LUNA_CERT_DB,body.roundId,configuration.fingerprint),db=ledger.db
+ if(browserRequest){
+  if(!env.AUTH_DB||!env.DB)return json({code:'UNAUTHENTICATED'},401)
+  const session=await getBetterAuthSession(request,{...env,AUTH_DB:ledger.instrument(env.AUTH_DB)})
+  if(!session||session.user.id!==env.LUNA_CERT_OPERATOR_ID)return json({code:'FORBIDDEN'},403)
+  const operator=await ledger.instrument(env.DB).prepare(`SELECT p.id FROM identity_principals p JOIN platform_administrators a ON a.principal_id=p.id WHERE p.provider='better-auth' AND p.subject=?1 AND p.status='active' AND a.status='active' LIMIT 1`).bind(session.user.id).first()
+  if(!operator)return json({code:'FORBIDDEN'},403)
+ }
  const identityRow=await db.prepare('SELECT database_id,environment FROM luna_cert_identity WHERE id=1').first<{database_id:string;environment:string}>()
  if(identityRow?.database_id!==env.LUNA_CERT_DATABASE_ID||identityRow.environment!==env.LUNA_CERT_ENV)return json({code:'CERTIFICATION_DATABASE_IDENTITY_MISMATCH'},409)
  const reply=(value:unknown,status=200)=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json','cache-control':'no-store','x-luna-cert-budget':JSON.stringify(ledger.usage())}})
  if(path.endsWith('/capabilities'))return reply({environment:'staging',isolated:true,fixtureOnly:true,whatsappEnabled:false,releaseSha:env.RELEASE_SHA,...configuration})
  if(path.endsWith('/budget'))return reply(ledger.usage())
+ if(path.endsWith('/browser-state')){
+  const keys=LUNA_DESIGNED_SCENARIOS.flatMap(s=>s.messages.map((_,turn)=>`${body.roundId}:${env.RELEASE_SHA}:${s.id}:${turn}`))
+  const rows=await db.prepare(`SELECT scenario_id,turn_id,status,evidence_json FROM luna_cert_turns WHERE round_id=?1 AND idempotency_key IN (${keys.map((_,i)=>'?'+(i+2)).join(',')}) ORDER BY scenario_id,turn_id LIMIT 201`).bind(body.roundId,...keys).all<any>()
+  const receipts=rows.results.filter(row=>row.status==='complete').map(row=>JSON.parse(row.evidence_json))
+  let next:any=null,blocker:string|null=null
+  for(const scenario of LUNA_DESIGNED_SCENARIOS){for(let turn=0;turn<scenario.messages.length;turn++){
+   const row=rows.results.find(row=>row.scenario_id===scenario.id&&row.turn_id===turn),receipt=row?.status==='complete'?JSON.parse(row.evidence_json):null
+   if(row&&(!receipt?.validation.passed||!receipt?.metrics)){blocker=row.status==='running'?'TURN_STATE_UNCERTAIN':receipt?.validation.violations.join(', ');break}
+   if(!row){next={scenarioId:scenario.id,turn};break}
+  }if(next||blocker)break}
+  return reply({next,blocker,complete:!next&&!blocker,receipts,budget:ledger.usage()})
+ }
  if(path.endsWith('/store/load')){const row=await db.prepare(`SELECT checkpoint_json FROM luna_cert_store WHERE round_id=?1`).bind(body.roundId).first<{checkpoint_json:string}>();return reply(row?JSON.parse(row.checkpoint_json):null)}
  if(path.endsWith('/store/save')){
   const state=body.state
@@ -108,22 +135,26 @@ async function certification(request:Request,env:Env){
  if(!['calls','tokens','rowsRead'].every(k=>Number.isSafeInteger(body.limits?.[k])&&body.limits[k]>0)||body.limits.calls>36||body.limits.tokens>250000||body.limits.rowsRead>100000)return json({code:'INVALID_BUDGET'},400)
  const key=`${body.roundId}:${body.sha}:${scenario.id}:${turn}`
  if(key!==body.idempotencyKey)return json({code:'INVALID_IDEMPOTENCY_KEY'},400)
+ if(browserRequest){
+  const preceding=turn>0?{id:scenario.id,turn:turn-1}:scenario.id>1?{id:scenario.id-1,turn:LUNA_DESIGNED_SCENARIOS.find(s=>s.id===scenario.id-1)!.messages.length-1}:null
+  if(preceding){const precedingKey=`${body.roundId}:${env.RELEASE_SHA}:${preceding.id}:${preceding.turn}`;const row=await db.prepare(`SELECT evidence_json FROM luna_cert_turns WHERE idempotency_key=?1 AND round_id=?2 AND status='complete'`).bind(precedingKey,body.roundId).first<{evidence_json:string}>();const evidence=row?JSON.parse(row.evidence_json):null;if(!evidence?.validation.passed||!evidence?.metrics)return json({code:'PREVIOUS_CHECKPOINT_NOT_APPROVED'},409)}
+ }
  const existing=await db.prepare(`SELECT status,evidence_json FROM luna_cert_turns WHERE idempotency_key=?1`).bind(key).first<{status:string;evidence_json:string|null}>()
  if(existing)return existing.status==='complete'?reply(JSON.parse(existing.evidence_json!)):reply({code:'TURN_STATE_UNCERTAIN'},409)
  const locked=await db.prepare(`INSERT INTO luna_cert_turns VALUES(?1,?2,?3,?4,'running',NULL,?5)`).bind(key,body.roundId,scenario.id,turn,Date.now()).run()
  if(!locked.meta.changes)return json({code:'TURN_STATE_UNCERTAIN'},409)
  const meter=certificationMeter(db,body.limits),tenant=`luna-cert-${body.roundId}-${scenario.id}`,conversation=`scenario-${scenario.id}`
- const context:LunaExecutionContext={tenantId:tenant,moduleId:'petshop',conversationId:conversation,customerAddress:f.phone,phoneNumberId:'fixture-no-whatsapp',sourceMessageId:`source-${scenario.id}-${turn}`,traceId:`trace-${scenario.id}-${turn}`,executionMode:'staging'}
+ const context:LunaExecutionContext={tenantId:tenant,moduleId:'petshop',conversationId:conversation,customerAddress:f.phone,phoneNumberId:'fixture-no-whatsapp',sourceMessageId:`source-${scenario.id}-${turn}`,traceId:`trace-${scenario.id}-${turn}`,executionMode:'staging',nowMs:Date.parse(LUNA_SCENARIO_CLOCK.now)+(turn+1)*1000}
  const started=Date.now(),tools:any[]=[],responses:any[]=[],responseModes:string[]=[],errors:string[]=[],faults:any[]=[]
  let stateBefore:any={operational:{},tables:{}},stateAfter:any=stateBefore,result:any=null
  try{
   if(turn===0){ledger.category('setup');await seedCertificationFixture(meter.db,tenant,conversation,scenario.id);ledger.category('admin')}
   stateBefore=await certificationSnapshot(meter.db,tenant,conversation)
-  await meter.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?4,'inbound','customer',?5,?6)`).bind(tenant,crypto.randomUUID(),conversation,context.sourceMessageId,body.message,Date.now()).run()
+  await meter.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?4,'inbound','customer',?5,?6)`).bind(tenant,crypto.randomUUID(),conversation,context.sourceMessageId,body.message,lunaNow(context)).run()
   const groq=new GroqProvider({apiKey:env.GROQ_API_KEY,model:env.LUNA_MODEL})
   const provider={model:groq.model,async complete(input:any){
-   meter.beforeModel(input)
-   const upper=new TextEncoder().encode(JSON.stringify(input)).length+4096+1200
+   const upper=groq.reservationTokens(input)
+   meter.beforeModel(input,upper)
    await ledger.reserveModel(upper)
    let response
    try{response=await groq.complete(input)}catch(error){meter.modelUncertain();responses.push({providerError:error instanceof Error?error.message:'GROQ_REQUEST_FAILED',diagnostic:(error as {diagnostic?:unknown})?.diagnostic??null});throw error}
@@ -138,11 +169,11 @@ async function certification(request:Request,env:Env){
   const runtimeDb=lostCommit?.db??timeout?.db??meter.db
   const observer={tool:(event:any)=>tools.push({...event,conversationId:conversation}),response:(mode:string)=>responseModes.push(mode)}
   async function peer(thread:string,step:number,message:string){
-   const peerContext={...context,conversationId:thread,sourceMessageId:`${thread}-${step}`,traceId:`peer-${thread}-${step}`}
+   const peerContext={...context,conversationId:thread,sourceMessageId:`${thread}-${step}`,traceId:`peer-${thread}-${step}`,nowMs:lunaNow(context)+step*100}
    await meter.db.prepare(`INSERT INTO chat_threads(tenant_id,module_id,id,channel,external_thread_id,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,'internal',?2,'open',?3,?3) ON CONFLICT DO NOTHING`).bind(tenant,thread,Date.now()).run()
-   await meter.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?2,'inbound','customer',?4,?5)`).bind(tenant,peerContext.sourceMessageId,thread,message,Date.now()).run()
+   await meter.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?2,'inbound','customer',?4,?5)`).bind(tenant,peerContext.sourceMessageId,thread,message,lunaNow(peerContext)).run()
    const peerResult=await runLunaTurn({database:meter.db,provider,context:peerContext,observer:{tool:event=>tools.push({...event,conversationId:thread}),response:mode=>responseModes.push(mode)}})
-   if(peerResult.reply){const outbound=crypto.randomUUID();await meter.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,'outbound','assistant',?4,?5)`).bind(tenant,outbound,thread,peerResult.reply,Date.now()).run();await recordProposalPresentation(meter.db,peerContext,peerResult.proposalIds,outbound)}
+   if(peerResult.reply){const outbound=crypto.randomUUID();await meter.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,'outbound','assistant',?4,?5)`).bind(tenant,outbound,thread,peerResult.reply,lunaNow(peerContext)).run();await recordProposalPresentation(meter.db,peerContext,peerResult.proposalIds,outbound)}
    responses.push({peer:thread,step,message,result:peerResult})
    return peerResult
   }
@@ -164,7 +195,7 @@ async function certification(request:Request,env:Env){
   }
   ledger.category('admin')
   if(timeout)faults.push(timeout.evidence())
-  if(result.reply){const outbound=crypto.randomUUID();await meter.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,'outbound','assistant',?4,?5)`).bind(tenant,outbound,conversation,result.reply,Date.now()).run();await recordProposalPresentation(meter.db,context,result.proposalIds,outbound)}
+  if(result.reply){const outbound=crypto.randomUUID();await meter.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,'outbound','assistant',?4,?5)`).bind(tenant,outbound,conversation,result.reply,lunaNow(context)).run();await recordProposalPresentation(meter.db,context,result.proposalIds,outbound)}
   if(scenario.id===16&&turn===0)faults.push(await blockCanonicalAfternoon(meter.db,tenant))
   if(scenario.id===15&&turn===0){ledger.category('setup');await changePriceAndLastStock(meter.db,tenant);ledger.category('admin');faults.push({kind:'price_and_stock_changed',injected:true})}
   if(scenario.id===15&&turn===1){
@@ -183,7 +214,7 @@ async function certification(request:Request,env:Env){
    ledger.category('runtime');const prepared=await peer('benefit-peer',1,'Quero usar o último banho do pacote para a Mel amanhã às 09h.');if(prepared.status!=='awaiting_confirmation')throw new Error('CERTIFICATION_BENEFIT_RACE_PREPARATION_FAILED');ledger.category('admin')
   }
   stateAfter=await certificationSnapshot(meter.db,tenant,conversation)
- }catch(error){errors.push(error instanceof Error?error.message:'CERTIFICATION_EXECUTION_FAILED')}
+ }catch(error){errors.push(error instanceof Error?error.message:'CERTIFICATION_EXECUTION_FAILED');ledger.category('admin');try{stateAfter=await certificationSnapshot(meter.db,tenant,conversation)}catch{errors.push('CERTIFICATION_POST_FAILURE_SNAPSHOT_UNAVAILABLE')}}
  const validation=validate(scenario.id,turn,scenario.messages.length,stateBefore,stateAfter,tools,result?.errorCode??errors[0]??null)
  validation.violations.push(...await operationalAssertions({id:scenario.id,turn,total:scenario.messages.length,tenant,before:stateBefore,after:stateAfter,tools,faults}))
  if(scenario.id===19&&turn===0&&!faults.some(f=>f.injected&&f.attempts===2))validation.violations.push('AGENDA_RECOVERY_NOT_EXERCISED')
@@ -199,9 +230,11 @@ async function certification(request:Request,env:Env){
   commits:(stateAfter.tables.luna_proposals??[]).filter((p:any)=>p.status==='completed').map((p:any)=>({proposalId:p.id,operationId:p.committed_operation_id,fingerprint:p.fingerprint,version:p.version})),
   fallbacks:responseModes.filter(m=>m==='factual_fallback'),responseModes,reformulations:responseModes.filter(m=>m==='rewritten').length,errors,faults,result,responses,checkpoint:{tenant,conversation,nextTurn:turn+1},validation})
  await db.prepare(`UPDATE luna_cert_turns SET status='complete',evidence_json=?2 WHERE idempotency_key=?1 AND status='running'`).bind(key,JSON.stringify(evidence)).run()
- return reply(evidence)
+ return reply({...evidence as Record<string,unknown>,budget:ledger.usage()})
 }
 export default{...application,async fetch(request:Request,env:Env,ctx:ExecutionContext){
- if(new URL(request.url).pathname.startsWith('/internal/luna-certification/')){try{return await certification(request,env)}catch{return json({code:'CERTIFICATION_INTERNAL_FAILURE'},503)}}
+ const path=new URL(request.url).pathname
+ if(path==='/luna-certification'&&request.method==='GET'&&env.APP_ENV==='staging'&&env.LUNA_CERT_ENV==='isolated-luna-v2')return certificationPlayground(env.RELEASE_SHA??'')
+ if(path.startsWith('/internal/luna-certification/')||path.startsWith('/api/ai-lab/luna/certification/')){try{return await certification(request,env)}catch{return json({code:'CERTIFICATION_INTERNAL_FAILURE'},503)}}
  return application.fetch(request,env,ctx)
 }}

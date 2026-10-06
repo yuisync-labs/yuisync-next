@@ -4,9 +4,10 @@ import type {
   LunaToolDefinition,
 } from '../contracts'
 import { strictGroqToolSchema, normalizeGroqToolArguments } from './groqToolSchema'
+import { groqDiagnostic } from './groqDiagnostic'
 
 export class GroqProviderError extends Error {
-  readonly diagnostic: { status: number; type: string | null; code: string | null; param: string | null } | null
+  readonly diagnostic: ReturnType<typeof groqDiagnostic> | null
   readonly code:
     | 'GROQ_NOT_CONFIGURED'
     | 'GROQ_RATE_LIMITED'
@@ -73,22 +74,12 @@ export class GroqProvider {
     if (!this.apiKey || !this.model) throw new GroqProviderError('GROQ_NOT_CONFIGURED')
   }
 
-  async complete(input: {
+  serializeRequest(input: {
     messages: readonly LunaMessage[]
     tools: readonly LunaToolDefinition[]
     maxCompletionTokens?: number
-  }): Promise<LunaProviderResponse & { requestLimit: number | null; tokenLimit: number | null }> {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
-    let response: Response
-    try {
-      response = await this.fetchFn('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${this.apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
+  }): string {
+    return JSON.stringify({
           model: this.model,
           temperature: 0.2,
           // GPT-OSS uses include_reasoning, not reasoning_format. The latter
@@ -113,7 +104,23 @@ export class GroqProvider {
               ...(/^openai\/gpt-oss-/.test(this.model) ? { strict: true } : {}),
             },
           })), tool_choice: 'auto' } : {}),
-        }),
+        })
+  }
+
+  reservationTokens(input: Parameters<GroqProvider['serializeRequest']>[0]): number {
+    // Reserve the ACTUAL transformed wire body, not the smaller domain input.
+    return new TextEncoder().encode(this.serializeRequest(input)).length + 4096 + 1200
+  }
+
+  async complete(input: Parameters<GroqProvider['serializeRequest']>[0]): Promise<LunaProviderResponse & { requestLimit: number | null; tokenLimit: number | null }> {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+    let response: Response
+    try {
+      response = await this.fetchFn('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' },
+        body: this.serializeRequest(input),
         signal: controller.signal,
       })
     } catch (error) {
@@ -131,8 +138,7 @@ export class GroqProvider {
       // machine-readable diagnostic fields for an actionable certification.
       let detail: Record<string, unknown> = {}
       try { detail = (await response.json() as { error?: Record<string, unknown> }).error ?? {} } catch { /* no trustworthy detail */ }
-      const field = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_.\[\]-]{1,120}$/.test(value) && !/^(?:gsk_|sk_|cfut_)/.test(value) ? value : null
-      const diagnostic = { status: response.status, type: field(detail.type), code: field(detail.code), param: field(detail.param) }
+      const diagnostic = groqDiagnostic(detail, response.status, input.tools.map(tool => tool.name))
       const code = response.status === 429 ? 'GROQ_RATE_LIMITED' : [401,403].includes(response.status) ? 'GROQ_UNAUTHORIZED' : [400,404].includes(response.status) ? 'GROQ_REQUEST_INVALID' : response.status >= 500 ? 'GROQ_UNAVAILABLE' : 'GROQ_REQUEST_FAILED'
       throw new GroqProviderError(code, response.status === 429 ? response.headers.get('retry-after') : null, diagnostic)
     }

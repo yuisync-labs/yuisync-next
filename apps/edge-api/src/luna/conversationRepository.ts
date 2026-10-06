@@ -1,3 +1,4 @@
+import { lunaNow } from './clock'
 import type { LunaExecutionContext, LunaMessage, LunaToolResult } from './contracts'
 import { sanitizeLunaTelemetry } from './telemetrySanitizer'
 import { loadOperationalState, reduceDraft, type DraftEvent, type OperationalState } from './operationalState'
@@ -27,14 +28,14 @@ export class LunaConversationRepository {
     const next = reduceDraft(loaded.state, event)
     const results = await this.database.batch([
       this.database.prepare(`UPDATE luna_conversations SET state_json=?4,version=version+1,updated_at_ms=?5 WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND version=?6`)
-        .bind(context.tenantId, context.moduleId, context.conversationId, JSON.stringify(next), Date.now(), loaded.databaseVersion),
+        .bind(context.tenantId, context.moduleId, context.conversationId, JSON.stringify(next), lunaNow(context), loaded.databaseVersion),
       this.database.prepare(`INSERT INTO luna_operation_events(tenant_id,module_id,conversation_id,event_id,operation_id,event_type,previous_version,next_version,created_at_ms,event_fingerprint)
         SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?12 WHERE changes()=1 AND EXISTS(SELECT 1 FROM luna_conversations WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND version=?10 AND state_json=?11)`)
-        .bind(context.tenantId, context.moduleId, context.conversationId, eventId, event.operationId, event.action, event.expectedVersion, next.operations[event.operationId].version, Date.now(), loaded.databaseVersion + 1, JSON.stringify(next), fingerprint),
+        .bind(context.tenantId, context.moduleId, context.conversationId, eventId, event.operationId, event.action, event.expectedVersion, next.operations[event.operationId].version, lunaNow(context), loaded.databaseVersion + 1, JSON.stringify(next), fingerprint),
       this.database.prepare(`UPDATE luna_proposals SET status='invalidated',updated_at_ms=?4 WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3
         AND status='awaiting_confirmation' AND ?5=1 AND (operation_id=?10 OR ((operation_id IS NULL OR operation_id=operation_kind) AND operation_kind IN (?6,?7,?8)))
         AND EXISTS(SELECT 1 FROM luna_operation_events WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND event_id=?9)`)
-        .bind(context.tenantId, context.moduleId, context.conversationId, Date.now(), next.version === loaded.state.version || ['pause', 'resume'].includes(event.action) ? 0 : 1,
+        .bind(context.tenantId, context.moduleId, context.conversationId, lunaNow(context), next.version === loaded.state.version || ['pause', 'resume'].includes(event.action) ? 0 : 1,
           event.kind === 'cart' ? 'product_order_create' : event.kind === 'booking' ? 'appointment_create' : 'customer_registration',
           event.kind === 'booking' ? 'appointment_reschedule' : '', event.kind === 'booking' ? 'appointment_cancel' : 'pet_registration', eventId, event.operationId),
     ])
@@ -62,7 +63,7 @@ export class LunaConversationRepository {
         nextVersion: next.operations[event.operationId].version, material: next.version !== before.version && !['pause', 'resume'].includes(event.action) })
     }
     if (next.operations[decision.focus]?.status === 'active') next = { ...next, focus: decision.focus }
-    const serializedState = JSON.stringify(next), now = Date.now()
+    const serializedState = JSON.stringify(next), now = lunaNow(context)
     const statements = [
       this.database.prepare(`UPDATE luna_conversations SET state_json=?4,version=version+1,updated_at_ms=?5 WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND version=?6`)
         .bind(context.tenantId, context.moduleId, context.conversationId, serializedState, now, loaded.databaseVersion),
@@ -85,7 +86,7 @@ export class LunaConversationRepository {
   }
 
   async ensureConversation(context: LunaExecutionContext): Promise<'active' | 'handoff' | 'paused' | 'closed'> {
-    const now = Date.now()
+    const now = lunaNow(context)
     await this.database.prepare(`
       INSERT INTO luna_conversations(
         tenant_id,module_id,conversation_id,status,state_json,last_source_message_id,created_at_ms,updated_at_ms
@@ -127,7 +128,7 @@ export class LunaConversationRepository {
       WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3
         AND status IN ('awaiting_confirmation','executing') AND expires_at_ms>=?4
       ORDER BY updated_at_ms DESC,id DESC LIMIT 12
-    `).bind(context.tenantId, context.moduleId, context.conversationId, Date.now()).all<{
+    `).bind(context.tenantId, context.moduleId, context.conversationId, lunaNow(context)).all<{
       id: string
       operation_kind: string
       status: string
@@ -160,7 +161,7 @@ export class LunaConversationRepository {
     `).bind(
       input.context.tenantId, input.context.moduleId, crypto.randomUUID(), input.context.conversationId,
       input.context.traceId, input.name, JSON.stringify(sanitizeLunaTelemetry(input.args)), JSON.stringify(sanitizeLunaTelemetry(input.result)), status,
-      Math.max(0, input.durationMs), Date.now(),
+      Math.max(0, input.durationMs), lunaNow(input.context),
     ).run()
   }
 
@@ -178,7 +179,7 @@ export class LunaConversationRepository {
     `).bind(
       input.context.tenantId, input.context.moduleId, crypto.randomUUID(), input.context.conversationId,
       input.context.traceId, input.model, input.usage.promptTokens, input.usage.completionTokens,
-      input.usage.modelCalls, input.usage.toolCalls, input.outcome.slice(0, 80), Date.now(),
+      input.usage.modelCalls, input.usage.toolCalls, input.outcome.slice(0, 80), lunaNow(input.context),
     ).run()
   }
 }

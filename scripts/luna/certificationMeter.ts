@@ -24,10 +24,11 @@ export function certificationMeter(database:D1Database,limits:{calls:number;toke
  }
  const db={prepare:(sql:string)=>statement(database.prepare(sql)),async batch(statements:D1PreparedStatement[]){reserveRows(statements.length);return(await database.batch(statements.map(s=>(s as unknown as {__raw:D1PreparedStatement}).__raw))).map(account)},async exec(){throw new Error('CERTIFICATION_EXEC_UNSUPPORTED')},async dump(){throw new Error('CERTIFICATION_DUMP_FORBIDDEN')}} as unknown as D1Database
  return{db,metrics,unknown:()=>unknown,
-  beforeModel(input:unknown){
+  beforeModel(input:unknown,wireUpper?:number){
    // UTF-8 byte length is a deliberately conservative prompt-token reservation,
    // plus message/tool framing and the provider's hard completion ceiling.
-   const upper=new TextEncoder().encode(JSON.stringify(input)).length+4096+1200
+   const upper=wireUpper??new TextEncoder().encode(JSON.stringify(input)).length+4096+1200
+   if(!Number.isSafeInteger(upper)||upper<=0)throw new Error('CERTIFICATION_MODEL_RESERVATION_INVALID')
    if(metrics.calls+1>limits.calls||metrics.tokens+upper>limits.tokens)throw new Error('CERTIFICATION_MODEL_RESERVATION_EXHAUSTED')
    metrics.calls++
   },

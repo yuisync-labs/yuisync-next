@@ -9,6 +9,7 @@ import { loadPresentableProposals, renderProposalSummary } from './proposalPrese
 import { canonicalJson } from './canonicalJson'
 import { buildVerifiedFacts, responseContractInstruction, responseQuestion, safeFactualFallback, validateFactualResponse, type FactualEvidence } from './factualResponse'
 import { loadConversationMemory,prepareResponseMemory } from './conversationalMemory'
+import { lunaNow } from './clock'
 
 type Provider = Readonly<{
   model: string
@@ -53,7 +54,7 @@ export async function runLunaTurn(input: {
   catch { return { status: 'failed', reply: null, proposalIds: [], committedOperationIds: [], traceId: input.context.traceId, errorCode: 'CONVERSATION_MEMORY_UNKNOWN', usage: emptyUsage } }
   const messages: LunaMessage[] = [
     { role: 'system', content: LUNA_OPERATIONAL_SYSTEM_PROMPT },
-    { role: 'system', content: `RELÓGIO VERIFICADO DO WORKER: ${new Date(Date.now()).toISOString()} (UTC). Resolva datas relativas usando este instante e o fuso da loja retornado por get_customer_context.store_context ou get_store_information; nunca use uma data ou fuso presumidos pelo modelo. Para múltiplas intenções, consulte identidade/catálogos e agrupe eventos em record_turn_decision. Ferramentas são sequenciais; preserve orçamento para a resposta final.` },
+    { role: 'system', content: `RELÓGIO VERIFICADO DO WORKER: ${new Date(lunaNow(input.context)).toISOString()} (UTC). Resolva datas relativas usando este instante e o fuso da loja retornado por get_customer_context.store_context ou get_store_information; nunca use uma data ou fuso presumidos pelo modelo. Para múltiplas intenções, consulte identidade/catálogos e agrupe eventos em record_turn_decision. Ferramentas são sequenciais; preserve orçamento para a resposta final.` },
     { role: 'system', content: `MEMÓRIA OPERACIONAL D1: ${JSON.stringify(operational.state)}\nResumo conversacional (não autoriza operações): ${operational.summary ?? ''}` },
     { role:'system',content:`CONTEXTO APRESENTADO E ACEITO: ${JSON.stringify(acceptedMemory)}. Resolva referências pela ordem apresentada, não por uma ordem presumida. Havendo ambiguidade use resolve_context_reference e peça esclarecimento. Um novo assunto não apaga operações paralelas. Registre intenções múltiplas com record_turn_decision.` },
     ...(pendingProposal ? [pendingProposal] : []),

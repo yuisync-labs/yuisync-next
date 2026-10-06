@@ -1,3 +1,4 @@
+import { lunaNow } from './clock'
 import { executeBillingBooking } from '../appointmentBillingBookingExecute'
 import { resolveBillingCatalog, type BillingService } from '../appointmentBillingCatalog'
 import { automaticAllocations } from '../subscriptionBenefitAuto'
@@ -75,7 +76,7 @@ async function markProposal(database: D1Database, context: LunaExecutionContext,
   await database.prepare(`
     UPDATE luna_proposals SET status=?5,committed_operation_id=?6,updated_at_ms=?7
     WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4
-  `).bind(context.tenantId, context.moduleId, context.conversationId, proposalId, status, operationId, Date.now()).run()
+  `).bind(context.tenantId, context.moduleId, context.conversationId, proposalId, status, operationId, lunaNow(context)).run()
 }
 
 // Reconcile before revalidating availability/price: the previous request may
@@ -149,7 +150,7 @@ async function commitAppointment(database: D1Database, context: LunaExecutionCon
   if (currentSubtotal !== Number(payload.subtotal_cents)) return { ok: false, code: 'PROPOSAL_STALE', retryable: false }
   const duration = catalog.items.reduce((sum, item) => sum + Number(item.duration_min || 0), 0)
   const availability = await validateScheduleAvailability({
-    database, tenantId: context.tenantId, moduleId: context.moduleId,
+    database, tenantId: context.tenantId, moduleId: context.moduleId, nowMs: lunaNow(context),
     scheduledAtMs, durationMinutes: duration,
   })
   if (!availability.ok) return { ok: false, code: availability.code, retryable: false }
@@ -220,7 +221,7 @@ async function commitProductOrder(database: D1Database, context: LunaExecutionCo
   const totalCents = subtotalCents+deliveryFeeCents
   if (totalCents !== Number(payload.total_cents)) return { ok: false, code: 'PROPOSAL_STALE', retryable: false }
   const saleId = crypto.randomUUID()
-  const now = Date.now()
+  const now = lunaNow(context)
   const statements: D1PreparedStatement[] = [database.prepare(`
     INSERT INTO sales(
       tenant_id,module_id,id,operation_key,client_id,appointment_id,source,fulfillment_type,
@@ -268,11 +269,11 @@ async function commitAppointmentReschedule(database: D1Database, context: LunaEx
   }
   if (current.version !== expectedVersion) return { ok: false, code: 'APPOINTMENT_CONCURRENT_CHANGE', retryable: false }
   const availability = await validateScheduleAvailability({
-    database, tenantId: context.tenantId, moduleId: context.moduleId,
+    database, tenantId: context.tenantId, moduleId: context.moduleId, nowMs: lunaNow(context),
     scheduledAtMs, durationMinutes: current.duration_min, ignoreAppointmentId: appointmentId,
   })
   if (!availability.ok) return { ok: false, code: availability.code, retryable: false }
-  const now = Date.now()
+  const now = lunaNow(context)
   try { await database.batch([
     appointmentScheduleGuardStatement(database,{tenantId:context.tenantId,moduleId:context.moduleId,appointmentId,guard:availability.policy}),
     database.prepare(`
@@ -314,7 +315,7 @@ async function commitAppointmentCancellation(database: D1Database, context: Luna
   if (current.version !== expectedVersion) return { ok: false, code: 'APPOINTMENT_CONCURRENT_CHANGE', retryable: false }
   const reason = text(payload.reason)
   const auditNote = reason ? `Cancelado pela Luna: ${reason}` : 'Cancelado pela Luna mediante confirmação do cliente.'
-  const now = Date.now()
+  const now = lunaNow(context)
   await database.batch([
     database.prepare(`
       UPDATE appointments SET status='cancelled',notes=CASE WHEN notes IS NULL OR trim(notes)='' THEN ?4 ELSE notes || ' | ' || ?4 END,
@@ -356,13 +357,13 @@ export async function commitConfirmedProposal(database: D1Database, context: Lun
     return { ok: true, data: { operation_id: proposal.committed_operation_id, operation_kind: proposal.operation_kind, idempotent: true } }
   }
   if (!['awaiting_confirmation', 'executing'].includes(proposal.status)) return { ok: false, code: 'PROPOSAL_NOT_EXECUTABLE', retryable: false }
-  if (proposal.expires_at_ms < Date.now()) {
+  if (proposal.expires_at_ms < lunaNow(context)) {
     await markProposal(database, context, proposal.id, 'invalidated')
     return { ok: false, code: 'PROPOSAL_EXPIRED', retryable: false }
   }
   if (!await latestConfirmation(database, context, proposal)) return { ok: false, code: 'CONFIRMATION_REQUIRED', retryable: false }
   const claimed = await database.prepare(`UPDATE luna_proposals SET status='executing',updated_at_ms=?6 WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4 AND version=?5 AND status='awaiting_confirmation' RETURNING id`)
-    .bind(context.tenantId, context.moduleId, context.conversationId, proposal.id, proposalVersion, Date.now()).first()
+    .bind(context.tenantId, context.moduleId, context.conversationId, proposal.id, proposalVersion, lunaNow(context)).first()
   if (!claimed) return getProposalOperationStatus(database, context, proposal.id)
   let payload: JsonRecord
   try { payload = record(JSON.parse(proposal.payload_json)) }

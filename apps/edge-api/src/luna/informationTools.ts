@@ -1,3 +1,4 @@
+import { lunaNow } from './clock'
 import type { LunaExecutionContext, LunaToolDefinition, LunaToolResult } from './contracts'
 import { isConversationCustomer } from './customerIdentity'
 import { isWithinBusinessHours, normalizeBusinessHours } from '../businessHours'
@@ -35,7 +36,7 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
       store_name: optionalText(base.store_name), phone: optionalText(base.store_phone), address: optionalText(base.store_address),
       neighborhood: optionalText(base.store_neighborhood), city: optionalText(base.store_city),
       timezone: optionalText(settings.petbot_timezone), business_hours: normalizeBusinessHours(settings.store_business_hours),
-      observed_at_ms: Date.now(), source: 'tenant_module_settings',
+      observed_at_ms: lunaNow(ctx), source: 'tenant_module_settings',
     } }
   }
   if (name === 'get_available_slots') {
@@ -56,7 +57,7 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
     const appointments = await db.prepare(`SELECT scheduled_at_ms,duration_min FROM appointments WHERE tenant_id=?1 AND module_id=?2 AND status IN ('scheduled','confirmed','in_progress','blocked') AND scheduled_at_ms>=?3-86400000 AND scheduled_at_ms<?4 AND scheduled_at_ms+duration_min*60000>?3 ORDER BY scheduled_at_ms,id LIMIT 501`)
       .bind(ctx.tenantId, ctx.moduleId, starts, ends).all<{ scheduled_at_ms: number; duration_min: number }>()
     if (appointments.results.length > 500) return { ok: false, code: 'SCHEDULE_WINDOW_TOO_DENSE', retryable: false }
-    const slots: string[] = [], observed = Date.now(), min = observed + policy.leadTimeMinutes * 60000
+    const slots: string[] = [], observed = lunaNow(ctx), min = observed + policy.leadTimeMinutes * 60000
     for (let time = starts; time + duration * 60000 <= ends && slots.length < 12; time += policy.slotIntervalMinutes * 60000) {
       if (time <= observed || time < min || !isWithinBusinessHours(hours, timezone, time, duration)) continue
       const overlaps = appointments.results.filter(row => row.scheduled_at_ms < time + duration * 60000 && row.scheduled_at_ms + row.duration_min * 60000 > time).length
@@ -78,7 +79,7 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
     if (options.results.some(option => option.max_weight_grams != null) && (weight == null || !Number.isFinite(weight) || weight <= 0)) {
       return { ok: false, code: 'PET_WEIGHT_REQUIRED', retryable: false, missing_fields: ['weight_kg'] }
     }
-    return { ok: true, data: { options: options.results.filter(option => option.max_weight_grams == null || weight! <= option.max_weight_grams), city: args.city, pet_id: args.pet_id, capacity_checked: false, observed_at_ms: Date.now(), source: 'transport_options' } }
+    return { ok: true, data: { options: options.results.filter(option => option.max_weight_grams == null || weight! <= option.max_weight_grams), city: args.city, pet_id: args.pet_id, capacity_checked: false, observed_at_ms: lunaNow(ctx), source: 'transport_options' } }
   }
   if (name === 'get_delivery_quote') {
     // New optional configuration contract. Existing global delivery_fee alone
@@ -93,7 +94,7 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
     if (matches.length !== 1) return { ok: false, code: matches.length ? 'DELIVERY_COVERAGE_AMBIGUOUS' : 'DELIVERY_OUTSIDE_COVERAGE', retryable: false }
     const area = matches[0]
     if (!Number.isSafeInteger(area.fee_cents) || Number(area.fee_cents) < 0) return { ok: false, code: 'DELIVERY_FEE_UNAVAILABLE', retryable: false }
-    return { ok: true, data: { city: area.city, neighborhood: area.neighborhood, fee_cents: area.fee_cents, coverage_snapshot_json: JSON.stringify(areas), observed_at_ms: Date.now(), source: 'module_settings_extensions.delivery_coverage' } }
+    return { ok: true, data: { city: area.city, neighborhood: area.neighborhood, fee_cents: area.fee_cents, coverage_snapshot_json: JSON.stringify(areas), observed_at_ms: lunaNow(ctx), source: 'module_settings_extensions.delivery_coverage' } }
   }
   return { ok: false, code: 'TOOL_NOT_ALLOWED', retryable: false }
 }

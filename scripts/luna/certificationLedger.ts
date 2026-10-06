@@ -22,7 +22,7 @@ export async function openCertificationLedger(raw:D1Database,roundId:string,fing
  if(reads(boot)!==2||!boot.results[0])throw new Error('CERTIFICATION_LEDGER_IDENTITY_OR_BUDGET_INVALID')
  let latest=boot.results[0],category:ReadCategory='admin'
  const local={runtime:0,admin:initialReads+2,setup:0}
- async function execute(statements:D1PreparedStatement[],single:boolean,chargedCategory:ReadCategory){
+ async function execute(statements:D1PreparedStatement[],single:boolean,chargedCategory:ReadCategory,target:D1Database=raw){
   const ceiling=statements.length*512,reservation=ceiling+2
   const locked=await raw.prepare(`UPDATE luna_cert_budget SET reserved_reads=reserved_reads+?3,admin_reads=admin_reads+2
    WHERE round_id=?1 AND fingerprint=?2 AND uncertain=0
@@ -39,7 +39,7 @@ export async function openCertificationLedger(raw:D1Database,roundId:string,fing
   if(reads(locked)!==2)throw new Error('CERTIFICATION_ACCOUNTING_UNCERTAIN')
   local.admin+=2;latest=locked.results[0]
   // Unknown SQL response keeps the ceiling reserved. No blind SQL replay here.
-  const results=single?[await statements[0].all()]:await raw.batch(statements)
+  const results=single?[await statements[0].all()]:await target.batch(statements)
   const actual=results.reduce((sum,result)=>sum+reads(result),0)
   const column={runtime:'runtime_reads',admin:'admin_reads',setup:'setup_reads'}[chargedCategory]
   const done=await raw.prepare(`UPDATE luna_cert_budget SET reserved_reads=reserved_reads-?3,${column}=${column}+?4,admin_reads=admin_reads+2,
@@ -58,9 +58,10 @@ export async function openCertificationLedger(raw:D1Database,roundId:string,fing
    async raw(){throw new Error('CERTIFICATION_RAW_FORBIDDEN')},
   } as unknown as D1PreparedStatement
  }
- const db={prepare:(sql:string)=>statement(raw.prepare(sql),category),batch:(statements:D1PreparedStatement[])=>execute(statements.map(s=>(s as unknown as {__raw:D1PreparedStatement}).__raw),false,category),async exec(){throw new Error('CERTIFICATION_EXEC_FORBIDDEN')},async dump(){throw new Error('CERTIFICATION_DUMP_FORBIDDEN')}} as unknown as D1Database
+ const instrument=(target:D1Database)=>({prepare:(sql:string)=>statement(target.prepare(sql),category),batch:(statements:D1PreparedStatement[])=>execute(statements.map(s=>(s as unknown as {__raw:D1PreparedStatement}).__raw),false,category,target),async exec(){throw new Error('CERTIFICATION_EXEC_FORBIDDEN')},async dump(){throw new Error('CERTIFICATION_DUMP_FORBIDDEN')}} as unknown as D1Database)
+ const db=instrument(raw)
  const admin=(sql:string)=>statement(raw.prepare(sql),'admin')
- return{db,category:(next:ReadCategory)=>{category=next},local,usage:()=>({...latest,totalReads:latest.runtime_reads+latest.admin_reads+latest.setup_reads}),
+ return{db,instrument,category:(next:ReadCategory)=>{category=next},local,usage:()=>({...latest,totalReads:latest.runtime_reads+latest.admin_reads+latest.setup_reads}),
   async reserveModel(upper:number){
    if(!Number.isSafeInteger(upper)||upper<=0)throw new Error('CERTIFICATION_MODEL_RESERVATION_INVALID')
    const result=await admin(`UPDATE luna_cert_budget SET reserved_calls=reserved_calls+1,reserved_tokens=reserved_tokens+?3

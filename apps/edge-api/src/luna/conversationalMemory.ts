@@ -1,3 +1,4 @@
+import { lunaNow } from './clock'
 import type { LunaExecutionContext,LunaToolResult } from './contracts'
 import type { Fact } from './factualResponse'
 import { loadOperationalState } from './operationalState'
@@ -25,9 +26,9 @@ export async function prepareResponseMemory(db:D1Database,ctx:LunaExecutionConte
  const operations=Object.values(state.operations)
  const summary=JSON.stringify({focus,operations:operations.map(d=>({id:d.id,kind:d.kind,status:d.status,version:d.version,fields:d.fields,items:d.items})),question})
  const memory:ConversationMemory={schemaVersion:1,options,question,targetOperationId:question?focus:null,focus,paused:operations.filter(d=>d.status==='paused').map(d=>d.id),summary}
- await db.prepare(`INSERT INTO luna_response_drafts VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(tenant_id,module_id,conversation_id,source_message_id) DO UPDATE SET reply_text=excluded.reply_text,context_json=excluded.context_json,created_at_ms=excluded.created_at_ms`).bind(ctx.tenantId,ctx.moduleId,ctx.conversationId,ctx.sourceMessageId,reply,JSON.stringify(memory),Date.now()).run()
+ await db.prepare(`INSERT INTO luna_response_drafts VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(tenant_id,module_id,conversation_id,source_message_id) DO UPDATE SET reply_text=excluded.reply_text,context_json=excluded.context_json,created_at_ms=excluded.created_at_ms`).bind(ctx.tenantId,ctx.moduleId,ctx.conversationId,ctx.sourceMessageId,reply,JSON.stringify(memory),lunaNow(ctx)).run()
 }
-export async function acceptResponseMemory(db:D1Database,ctx:LunaExecutionContext,messageId:string,reply:string,presentedAt=Date.now()):Promise<void>{
+export async function acceptResponseMemory(db:D1Database,ctx:LunaExecutionContext,messageId:string,reply:string,presentedAt=lunaNow(ctx)):Promise<void>{
  const candidate=await db.prepare(`SELECT context_json,reply_text FROM luna_response_drafts WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND source_message_id=?4`).bind(ctx.tenantId,ctx.moduleId,ctx.conversationId,ctx.sourceMessageId).first<{context_json:string;reply_text:string}>()
  if(!candidate)return
  if(candidate.reply_text!==reply)throw new Error('RESPONSE_PRESENTATION_MISMATCH')
