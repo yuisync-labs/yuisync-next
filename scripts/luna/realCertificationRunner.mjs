@@ -7,6 +7,7 @@ export const certificationManifestHash = scenarios => createHash('sha256').updat
 export const LUNA_CERTIFICATION_LIMITS = Object.freeze({ calls: 120, tokens: 250000, rowsRead: 100000 })
 const integer = value => Number.isSafeInteger(value) && value >= 0
 const sanitize = value => {
+  if(typeof value==='string'&&/^[\[{]/.test(value.trim())){try{return JSON.stringify(sanitize(JSON.parse(value)))}catch{/* ordinary text */}}
   if (typeof value === 'string') return value.replace(/\b(?:gsk_|cfut_|sk_live_|sk_test_)[A-Za-z0-9_-]+/g,'[secret]').replace(/\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b/gi,'[email]').replace(/\b\d{10,15}\b/g,'[phone]')
   if (Array.isArray(value)) return value.map(sanitize)
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([key])=>!['reasoning','reasoning_content','authorization','apiKey'].includes(key)).map(([key,item])=>[key,sanitize(item)]))
@@ -37,8 +38,9 @@ export async function runRealCertification({ sha, roundId, gates, offline, scena
   for (const method of ['bound','runTurn','reconcileTurn']) if(typeof adapter[method]!=='function') fail('CERTIFICATION_ADAPTER_INCOMPLETE')
   if(typeof store?.load!=='function'||typeof store?.save!=='function') fail('CERTIFICATION_DURABLE_STORE_REQUIRED')
   let state=await store.load(roundId)
-  if(!state) state={roundId,sha,manifestHash,version:0,usage:{calls:0,tokens:0,rowsRead:0},reserved:{calls:0,tokens:0,rowsRead:0},pending:null,scenarios:{},status:'running'}
+  if(!state) state={roundId,sha,manifestHash,configurationFingerprint:adapter.configurationFingerprint??null,model:adapter.model??null,provider:adapter.provider??null,version:0,usage:{calls:0,tokens:0,rowsRead:0},reserved:{calls:0,tokens:0,rowsRead:0},pending:null,scenarios:{},status:'running'}
   if(state.sha!==sha||state.roundId!==roundId||state.manifestHash!==manifestHash) fail('CERTIFICATION_CHECKPOINT_SHA_MISMATCH')
+  if(adapter.configurationFingerprint&&(state.configurationFingerprint!==adapter.configurationFingerprint||state.model!==adapter.model||state.provider!==adapter.provider))fail('CERTIFICATION_CHECKPOINT_CONFIGURATION_MISMATCH')
   async function persist(next){
     const value={...next,version:state.version+1}
     if(!await store.save(state.version,value))fail('CERTIFICATION_CHECKPOINT_CONFLICT')

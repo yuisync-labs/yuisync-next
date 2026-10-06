@@ -1,4 +1,4 @@
-import type { LunaMessage, LunaProviderResponse, LunaTurnResult } from './contracts'
+import type { LunaMessage, LunaProviderResponse, LunaTurnResult, LunaToolResult } from './contracts'
 import { LunaConversationRepository } from './conversationRepository'
 import { createLunaBudget, LunaBudgetError } from './quotaBudget'
 import { GroqProviderError } from './providers/groqProvider'
@@ -29,6 +29,7 @@ export async function runLunaTurn(input: {
   maxModelCalls?: number
   maxToolCalls?: number
   maxTokens?: number
+  observer?: { tool(event: { id: string; name: string; args: unknown; result: LunaToolResult; recovery: boolean }): void; response(mode: string): void }
 }): Promise<LunaTurnResult> {
   const repository = new LunaConversationRepository(input.database)
   const conversationStatus = await repository.ensureConversation(input.context)
@@ -123,6 +124,7 @@ export async function runLunaTurn(input: {
           try { result = await registry.execute(call.function.name, args, { ...input.context, actionIndex: budget.snapshot().toolCalls - 1 }) }
           catch { result = { ok: false as const, code: 'TOOL_EXECUTION_FAILED', retryable: true } }
           if (!result.ok && result.retryable && retryableQueries.has(call.function.name) && !queryRecoveryUsed) {
+            input.observer?.tool({ id: call.id, name: call.function.name, args, result, recovery: true })
             queryRecoveryUsed = true
             await repository.recordToolRun({ context: input.context, name: call.function.name, args, result, durationMs: Date.now() - started })
             budget.beforeTool()
@@ -131,6 +133,7 @@ export async function runLunaTurn(input: {
           }
         }
         await repository.recordToolRun({ context: input.context, name: call.function.name, args: args || {}, result, durationMs: Date.now() - started })
+        input.observer?.tool({ id: call.id, name: call.function.name, args, result, recovery: false })
         evidence.push({ callId: call.id, tool: call.function.name, result })
         if (result.ok && result.data && typeof result.data === 'object') {
           const data = result.data as Record<string, unknown>
@@ -158,6 +161,7 @@ export async function runLunaTurn(input: {
   }
 
   const usage = budget.snapshot()
+  input.observer?.response(responseMode)
   if(reply&&!errorCode)await prepareResponseMemory(input.database,input.context,reply,buildVerifiedFacts(evidence),responseQuestion(reply))
   const outcome = errorCode ? `${finalStatus}:${errorCode}` : `${finalStatus}:${responseMode}`
   try { await repository.recordUsage({ context: input.context, model: input.provider.model, usage, outcome }) } catch { /* operational result wins over telemetry */ }

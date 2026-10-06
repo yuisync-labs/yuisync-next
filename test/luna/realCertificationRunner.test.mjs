@@ -15,6 +15,13 @@ test('recusa staging em SHA diferente antes da primeira chamada',async()=>{
  const f=fixture();f.input.adapter.releaseSha='old'
  await assert.rejects(runRealCertification(f.input),/CERTIFICATION_STAGING_REQUIRED/);assert.equal(f.calls,0)
 })
+test('retomada rejeita modelo/provider/configuração diferentes sem repetir chamadas',async()=>{
+ const f=fixture();Object.assign(f.input.adapter,{configurationFingerprint:'config-v1',model:'openai/gpt-oss-20b',provider:'groq'})
+ await runRealCertification(f.input);assert.equal(f.calls,20)
+ f.input.adapter.configurationFingerprint='config-v2'
+ await assert.rejects(runRealCertification(f.input),/CHECKPOINT_CONFIGURATION_MISMATCH/)
+ assert.equal(f.calls,20)
+})
 test('não substitui os roteiros certificados por vinte mensagens diferentes',async()=>{
  const f=fixture();f.input.scenarios[0].messages=['outro roteiro']
  await assert.rejects(runRealCertification(f.input),/CERTIFICATION_MANIFEST_MISMATCH/);assert.equal(f.calls,0)
