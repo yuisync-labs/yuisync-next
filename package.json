@@ -115,6 +115,11 @@
   "overrides": {
     "undici": "7.29.1",
     "nanoid": "3.3.18",
-    "qs": "6.16.0"
+    "qs": "6.16.0",
+    "shell-quote": "1.12.0",
+    "sharp": "0.35.5",
+    "wrangler": {
+      "sharp": "0.35.5"
+    }
   }
 }

@@ -1,30 +1,5 @@
 {
   "schema_version": 1,
   "policy": "Known high-severity dependency debt is time-boxed. New or expired findings fail CI.",
-  "entries": [
-    {
-      "package": "sharp",
-      "advisories_only": [1193725],
-      "review_by": "2026-10-13",
-      "reason": "Development-only dependency remains pinned at 0.35.2 by the latest Cloudflare vitest pool 0.22.0; rechecked on 2026-09-29 and remove as soon as the pool publishes a fixed Miniflare. Production dependencies are clean under npm audit --omit=dev."
-    },
-    {
-      "package": "miniflare",
-      "via_only": ["sharp"],
-      "review_by": "2026-10-13",
-      "reason": "Development-only exposure through the existing exact time-boxed sharp advisory. Undici was fixed at 7.29.1 on 2026-10-05 and is no longer an accepted part of this chain."
-    },
-    {
-      "package": "wrangler",
-      "via_only": ["miniflare"],
-      "review_by": "2026-10-13",
-      "reason": "Development-only transitive exposure through the exact time-boxed miniflare chain; no deploy/runtime package is affected."
-    },
-    {
-      "package": "@cloudflare/vitest-pool-workers",
-      "via_only": ["miniflare", "wrangler"],
-      "review_by": "2026-10-13",
-      "reason": "Development-only transitive exposure through the exact time-boxed Cloudflare toolchain chain; 0.22.0 remains the latest release as of 2026-09-29."
-    }
-  ]
+  "entries": []
 }
