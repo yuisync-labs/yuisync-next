@@ -15,18 +15,25 @@ describe('Groq strict wire schema without weakening domain validation',()=>{
     expect(JSON.parse(normalizeGroqToolArguments('{"id":"known","optional":null}',example))).toEqual({id:'known'})
     expect(JSON.parse(normalizeGroqToolArguments('{"id":"known","optional":{"name":"pet","note":null}}',example))).toEqual({id:'known',optional:{name:'pet',note:null}})
   })
-  it('uses structural wire constraints but never weakens authoritative domain bounds',()=>{
+  it('preserves wire and authoritative domain bounds',()=>{
     const domain={type:'object',properties:{quantity:{type:'integer',minimum:1,maximum:100},name:{type:'string',minLength:1,maxLength:10},items:{type:'array',minItems:1,maxItems:2,items:{type:'string'}},choice:{type:'string',enum:['counter','delivery']}},required:['quantity','name','items'],additionalProperties:false}
     const wire=strictGroqToolSchema(domain) as any
-    expect(wire.properties.quantity).toEqual({type:'integer'})
-    expect(wire.properties.name).toEqual({type:'string'})
-    expect(wire.properties.items).toEqual({type:'array',items:{type:'string'}})
+    expect(wire.properties.quantity).toEqual(domain.properties.quantity)
+    expect(wire.properties.name).toEqual(domain.properties.name)
+    expect(wire.properties.items).toEqual(domain.properties.items)
     expect(wire.properties.choice).toEqual({type:['string','null'],enum:['counter','delivery',null]})
     for(const bad of [{quantity:0,name:'valid',items:['one']},{quantity:101,name:'valid',items:['one']},{quantity:1,name:'',items:['one']},{quantity:1,name:'too-long-name',items:['one']},{quantity:1,name:'valid',items:[]},{quantity:1,name:'valid',items:['one','two','three']}]){
       const decoded=JSON.parse(normalizeGroqToolArguments(JSON.stringify({...bad,choice:null}),domain))
       expect(matchesToolSchema(decoded,domain)).toBe(false)
     }
     expect(matchesToolSchema(JSON.parse(normalizeGroqToolArguments('{"quantity":1,"name":"valid","items":["one"],"choice":null}',domain)),domain)).toBe(true)
+  })
+  it('represents no-argument functions with an inert wire sentinel, without hiding invalid arguments',()=>{
+    const domain={type:'object',properties:{},required:[],additionalProperties:false}
+    expect(strictGroqToolSchema(domain)).toEqual({type:'object',properties:{_no_arguments:{type:'string',enum:['none']}},required:['_no_arguments'],additionalProperties:false})
+    expect(JSON.parse(normalizeGroqToolArguments('{"_no_arguments":"none"}',domain))).toEqual({})
+    for(const raw of ['{"_no_arguments":"write"}','{"_no_arguments":null}','{"_no_arguments":"none","tenant_id":"foreign"}']) expect(matchesToolSchema(JSON.parse(normalizeGroqToolArguments(raw,domain)),domain)).toBe(false)
+    expect(domain.properties).toEqual({})
   })
   it('does not conceal unknown arguments, required nulls or malformed JSON',()=>{
     const invalid=JSON.parse(normalizeGroqToolArguments('{"id":null,"tenant_id":"foreign","optional":null}',example))
