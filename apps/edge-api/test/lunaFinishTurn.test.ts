@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FINISH_TURN, finishTurn, operationalCapabilities } from '../src/luna/finishTurn'
+import { FINISH_TURN, finishTurn, finishTurnDefinition, operationalCapabilities } from '../src/luna/finishTurn'
 import { loadOperationalState, reduceDraft } from '../src/luna/operationalState'
 import { createLunaToolRegistry } from '../src/luna/toolRegistry'
 import { env } from 'cloudflare:workers'
@@ -7,7 +7,7 @@ import { env } from 'cloudflare:workers'
 const empty = loadOperationalState('{}')
 const cart = reduceDraft(empty, {operationId:'cart',kind:'cart',expectedVersion:0,action:'add_item',itemId:'racao-a',quantity:1})
 const facts = [{id:'catalog:product.0',text:'Ração A: R$ 90,00; estoque disponível nesta consulta: 10.'}]
-const final = (blocks: {kind:string;value:string}[], intent='cart', operation_ids=['cart']) => ({intent,operation_ids,blocks})
+const final = (blocks: {kind:string;value:string}[], intent='cart', operation_ids=['cart']) => ({intent,operation_ids,social:blocks.filter(b=>b.kind==='social').map(b=>b.value),fact_ids:blocks.filter(b=>b.kind==='fact').map(b=>b.value),question:blocks.find(b=>b.kind==='question')?.value??'none'})
 
 describe('read-only Luna termination and capabilities', () => {
   it('renders source-owned facts and a missing field without changing the draft', () => {
@@ -31,7 +31,9 @@ describe('read-only Luna termination and capabilities', () => {
     [{kind:'question',value:'Pode confirmar o pagamento?'}],
     [{kind:'fact',value:facts[0].id},{kind:'fact',value:facts[0].id}],
   ].map(blocks=>({blocks})))('rejects invented facts, operational social prose and malformed questions: $blocks', ({blocks}) => {
-    expect(finishTurn(final(blocks),cart,facts)).toMatchObject({ok:false,code:'TURN_RESPONSE_INVALID'})
+    const result=finishTurn(final(blocks),cart,facts)
+    expect(result.ok).toBe(false)
+    if(!result.ok)expect(['TURN_RESPONSE_INVALID','TOOL_ARGUMENTS_INVALID']).toContain(result.code)
   })
   it('does not ask for already persisted quantity or fulfillment', () => {
     expect(finishTurn(final([{kind:'question',value:'quantity'}]),cart,[])).toMatchObject({ok:false,code:'TURN_QUESTION_ALREADY_KNOWN'})
@@ -50,5 +52,18 @@ describe('read-only Luna termination and capabilities', () => {
     expect(names(ready)).toContain('prepare_product_order')
     const paused = reduceDraft(ready,{operationId:'cart',kind:'cart',expectedVersion:2,action:'pause'})
     expect(names(paused)).not.toContain('prepare_product_order')
+  })
+  it('constrains fact selection in the model grammar to the current verified IDs',()=>{
+    const properties=finishTurnDefinition(facts).parameters.properties as any
+    expect(properties.fact_ids.items.enum).toEqual(['catalog:product.0'])
+    expect((finishTurnDefinition([]).parameters.properties as any).fact_ids.maxItems).toBe(0)
+    const definitions=createLunaToolRegistry((env as EdgeEnv & {DB:D1Database}).DB).definitions
+    const names=operationalCapabilities(definitions,empty,[],{identityCurrent:true,hasProposal:false,hasAppointments:false}).map(t=>t.name)
+    expect(names).not.toContain('update_operation_draft')
+    expect(names).not.toContain('get_customer_context')
+    expect(names).not.toContain('commit_confirmed_proposal')
+    expect(names).not.toContain('prepare_appointment_cancellation')
+    expect(names).toContain('record_turn_decision')
+    expect(names).toContain('get_operation_status')
   })
 })

@@ -11,7 +11,7 @@ import { buildVerifiedFacts, responseContractInstruction, responseQuestion, safe
 import { loadConversationMemory,prepareResponseMemory } from './conversationalMemory'
 import { lunaNow } from './clock'
 import { createLunaQuotaPacer } from './quotaPacer'
-import { FINISH_TURN, finishTurn, operationalCapabilities } from './finishTurn'
+import { FINISH_TURN, finishTurn, finishTurnDefinition, operationalCapabilities } from './finishTurn'
 
 type Provider = Readonly<{
   model: string
@@ -127,8 +127,12 @@ export async function runLunaTurn(input: {
       budget.beforeModel()
       const facts = buildVerifiedFacts(evidence)
       const currentState=(await repository.loadState(input.context)).state
-      const capabilities=operationalCapabilities(registry.definitions,currentState,acceptedMemory.options.map(option=>option.kind))
-      const tools=finalRepairUsed ? [FINISH_TURN] : [...capabilities,FINISH_TURN]
+      const capabilities=operationalCapabilities(registry.definitions,currentState,acceptedMemory.options.map(option=>option.kind),{
+        identityCurrent:identity.ok&&!committed.length,hasProposal:!!pendingProposal||!!proposals.length,
+        hasAppointments:evidence.some(item=>item.tool==='get_customer_appointments'&&item.result.ok&&Array.isArray((item.result.data as {appointments?:unknown[]})?.appointments)&&(item.result.data as {appointments:unknown[]}).appointments.length>0),
+      })
+      const finishDefinition=finishTurnDefinition(facts)
+      const tools=finalRepairUsed ? [finishDefinition] : [...capabilities,finishDefinition]
       const turnMessages=composeLunaModelMessages([...messages,{role:'system',content:`ESTADO ATUAL DO RASCUNHO: ${JSON.stringify(currentState)}. IDs fact disponíveis para finish_turn: ${JSON.stringify(facts.map(f=>({id:f.id,text:f.text})))}`}],facts)
       let response
       try { response = await infer({ messages: turnMessages, tools, toolChoice:'required' }) }

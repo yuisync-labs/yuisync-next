@@ -6,7 +6,7 @@ import type { LunaMessage, LunaToolDefinition } from '../src/luna/contracts'
 import { createDesignedHarness, type Command } from './fixtures/luna/designedRuntimeHarness'
 import { LUNA_DESIGNED_SCENARIOS } from './fixtures/luna/designedScenarios'
 
-const terminal = (intent:string, operation_ids:string[], blocks:{kind:string;value:string}[]):Command => ({name:'finish_turn',args:{intent,operation_ids,blocks}})
+const terminal = (intent:string, operation_ids:string[], blocks:{kind:string;value:string}[]):Command => ({name:'finish_turn',args:{intent,operation_ids,social:blocks.filter(b=>b.kind==='social').map(b=>b.value),fact_ids:blocks.filter(b=>b.kind==='fact').map(b=>b.value),question:blocks.find(b=>b.kind==='question')?.value??'none'}})
 const social = [{kind:'social',value:'Certo!'}]
 type Harness = Awaited<ReturnType<typeof createDesignedHarness>>
 async function execute(h:Harness, turn:number, message:string, groups:(Command[]|((messages:readonly LunaMessage[])=>Command[]))[]) {
@@ -50,7 +50,7 @@ describe('structured Luna termination on real Worker/D1',()=>{
       expect(first.reply).not.toContain('Qual quantidade?')
       expect((await h.state()).operations.cart.items).toEqual([{id:'racao-a',quantity:1}])
       const second=await execute(h,2,messages[1],[
-        [h.draft('cart','cart','set_field',{field:'fulfillment_type',value:'counter',expectedVersion:1})],
+        [h.command('record_turn_decision',{intents:[{operation_id:'cart',kind:'cart',goal:'change'}],focus:'cart',events:[{operationId:'cart',kind:'cart',expectedVersion:1,action:'set_field',field:'fulfillment_type',value:'counter'}]})],
         [h.command('prepare_product_order',{customer_id:'cliente-maria',operation_id:'cart',items:[{product_id:'racao-a',quantity:1}],fulfillment_type:'counter'})],
         [terminal('cart',['cart'],social)],
       ])
