@@ -11,10 +11,12 @@ import { buildVerifiedFacts, responseContractInstruction, responseQuestion, safe
 import { loadConversationMemory,prepareResponseMemory } from './conversationalMemory'
 import { lunaNow } from './clock'
 import { createLunaQuotaPacer } from './quotaPacer'
-import { FINISH_TURN, finishTurn, finishTurnDefinition, operationalCapabilities } from './finishTurn'
+import { FINISH_TURN, finishTurn, finishTurnDefinition, operationalCapabilities, decisionWithResponse } from './finishTurn'
+import { agentMemory, agentToolMessage, agentContextMessages } from './agentContext'
 
 type Provider = Readonly<{
   model: string
+  operationalReplies?: boolean
   complete(input: { messages: readonly LunaMessage[]; tools: readonly LunaToolDefinition[]; maxCompletionTokens?: number; toolChoice?:'auto'|'required' }): Promise<LunaProviderResponse & { requestLimit: number | null; tokenLimit?: number | null }>
 }>
 
@@ -74,8 +76,7 @@ export async function runLunaTurn(input: {
   const messages: LunaMessage[] = [
     { role: 'system', content: LUNA_OPERATIONAL_SYSTEM_PROMPT },
     { role: 'system', content: `RELÓGIO VERIFICADO DO WORKER: ${new Date(lunaNow(input.context)).toISOString()} (UTC). Datas relativas usam esse relógio e o fuso verificado da loja. Datas de tools: ISO8601 com fuso.` },
-    { role: 'system', content: `MEMÓRIA OPERACIONAL D1: ${JSON.stringify(operational.state)}\nResumo conversacional (não autoriza operações): ${operational.summary ?? ''}` },
-    { role:'system',content:`CONTEXTO APRESENTADO E ACEITO: ${JSON.stringify(acceptedMemory)}. Referências seguem essa ordem; ambiguidade exige esclarecimento. Intenções independentes: record_turn_decision.` },
+    { role:'system',content:`CONTEXTO APRESENTADO E ACEITO: ${agentMemory(acceptedMemory)}. Referências seguem essa ordem; ambiguidade exige esclarecimento. Intenções independentes: record_turn_decision.` },
     ...(pendingProposal ? [pendingProposal] : []),
     ...await repository.loadHistory(input.context),
   ]
@@ -132,8 +133,8 @@ export async function runLunaTurn(input: {
         hasAppointments:evidence.some(item=>item.tool==='get_customer_appointments'&&item.result.ok&&Array.isArray((item.result.data as {appointments?:unknown[]})?.appointments)&&(item.result.data as {appointments:unknown[]}).appointments.length>0),
       })
       const finishDefinition=finishTurnDefinition(facts)
-      const tools=finalRepairUsed ? [finishDefinition] : [...capabilities,finishDefinition]
-      const turnMessages=composeLunaModelMessages([...messages,{role:'system',content:`ESTADO ATUAL DO RASCUNHO: ${JSON.stringify(currentState)}. IDs fact disponíveis para finish_turn: ${JSON.stringify(facts.map(f=>({id:f.id,text:f.text})))}`}],facts)
+      const tools=finalRepairUsed ? [finishDefinition] : [...capabilities.map(d=>input.provider.operationalReplies?decisionWithResponse(d,facts):d),finishDefinition]
+      const turnMessages=composeLunaModelMessages([...agentContextMessages(messages,currentState),{role:'system',content:`IDs fact disponíveis para finish_turn: ${JSON.stringify(facts.map(f=>({id:f.id,text:f.text})))}`}],facts)
       let response
       try { response = await infer({ messages: turnMessages, tools, toolChoice:'required' }) }
       catch (error) {
@@ -198,7 +199,9 @@ export async function runLunaTurn(input: {
       messages.push({ role: 'assistant', content: response.content, tool_calls: response.toolCalls })
       for (const call of response.toolCalls) {
         budget.beforeTool()
-        const args = parseArguments(call.function.arguments)
+        const parsed = parseArguments(call.function.arguments)
+        const continuation=input.provider.operationalReplies&&call.function.name==='record_turn_decision'?parsed?.response:null
+        const args=parsed&&input.provider.operationalReplies&&call.function.name==='record_turn_decision'?Object.fromEntries(Object.entries(parsed).filter(([key])=>key!=='response')):parsed
         if(call.function.name==='finish_turn'){
           const finish=args?finishTurn(args,currentState,facts):{ok:false as const,code:'TOOL_ARGUMENTS_INVALID',retryable:false}
           await repository.recordToolRun({context:input.context,name:call.function.name,args:args??{},result:finish,durationMs:0})
@@ -241,7 +244,27 @@ export async function runLunaTurn(input: {
           if (typeof data.operation_id === 'string') committed.push(data.operation_id)
           if (data.status === 'handoff') finalStatus = 'handoff'
         }
-        messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) })
+        messages.push({ role: 'tool', tool_call_id: call.id, content: agentToolMessage(call.function.name,result) })
+        // A completed native command already supplies the authoritative reply.
+        // No extra model call may reinterpret a financial result or consume
+        // the final budget merely to acknowledge it. Multi-tool batches and
+        // unsuccessful commands continue through the normal bounded loop.
+        if(input.provider.operationalReplies && response.toolCalls.length===1 && result.ok){
+          if(continuation&&typeof continuation==='object'&&!Array.isArray(continuation)){
+            const persisted=(await repository.loadState(input.context)).state
+            const finished=finishTurn(continuation as Record<string,unknown>,persisted,facts)
+            if(finished.ok)await completeReply(finished.data.reply,'native_draft_response')
+            else{
+              messages.push({role:'system',content:`O rascunho JÁ foi persistido. Corrija somente a resposta final: ${JSON.stringify(finished)}. Não repita a alteração.`})
+              finalRepairUsed=true
+            }
+          }else if(['commit_confirmed_proposal','get_operation_status'].includes(call.function.name)){
+            const confirmed=buildVerifiedFacts([{callId:call.id,tool:call.function.name,result}])
+            if(confirmed.length)await completeReply(confirmed.map(f=>f.text).join('\n'),'native_result')
+          }else if(typeof (result.data as Record<string,unknown>)?.proposal_id==='string'){
+            await completeReply('', 'native_proposal')
+          }
+        }
       }
       if(reply && finalStatus!=='failed')break
       if (finalStatus === 'handoff') {

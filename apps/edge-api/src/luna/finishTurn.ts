@@ -25,6 +25,15 @@ export function finishTurnDefinition(facts:readonly Fact[]):LunaToolDefinition {
   return {...FINISH_TURN,parameters:{...FINISH_TURN.parameters,properties:{...properties,fact_ids:{...properties.fact_ids,...(facts.length?{items:{type:'string',enum:facts.map(f=>f.id)}}:{maxItems:0})}}}}
 }
 
+// A draft mutation and its read-only continuation may be planned in the same
+// model response. Strip this envelope before invoking the domain registry.
+// The continuation is checked AFTER persistence against the actual new state.
+export function decisionWithResponse(definition:LunaToolDefinition,facts:readonly Fact[]):LunaToolDefinition {
+  if(definition.name!=='record_turn_decision')return definition
+  const properties=definition.parameters.properties as Record<string,unknown>
+  return {...definition,description:`${definition.description} Inclua response para responder no mesmo passo após persistir; null se ainda precisar consultar/preparar. response usa somente fact_ids disponíveis e um campo realmente faltante.`,parameters:{...definition.parameters,properties:{...properties,response:{anyOf:[finishTurnDefinition(facts).parameters,{type:'null'}]}}}}
+}
+
 export function finishTurn(args: Record<string,unknown>, state: OperationalState, facts: readonly Fact[]): LunaToolResult<{reply:string}> {
   if(!matchesToolSchema(args,FINISH_TURN.parameters))return {ok:false,code:'TOOL_ARGUMENTS_INVALID',retryable:false}
   const intent=args.intent as string, ids=args.operation_ids as string[]

@@ -5,6 +5,7 @@ import application from '../../apps/edge-api/src/index'
 export * from '../../apps/edge-api/src/index'
 import { runLunaTurn } from '../../apps/edge-api/src/luna/runLunaTurn'
 import { GroqProvider, GroqProviderError } from '../../apps/edge-api/src/luna/providers/groqProvider'
+import { GroqSdkProvider } from '../../apps/edge-api/src/luna/providers/groqSdkProvider'
 import { recordProposalPresentation } from '../../apps/edge-api/src/luna/proposalPresentation'
 import { LUNA_DESIGNED_SCENARIOS,LUNA_SCENARIO_FIXTURE as f,LUNA_SCENARIO_CLOCK } from '../../apps/edge-api/test/fixtures/luna/designedScenarios'
 import { seedCertificationFixture } from './certificationFixtures'
@@ -154,8 +155,8 @@ async function certification(request:Request,env:Env){
   if(turn===0){ledger.category('setup');await seedCertificationFixture(meter.db,tenant,conversation,scenario.id);ledger.category('admin')}
   stateBefore=await certificationSnapshot(meter.db,tenant,conversation)
   await meter.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?4,'inbound','customer',?5,?6)`).bind(tenant,crypto.randomUUID(),conversation,context.sourceMessageId,body.message,lunaNow(context)).run()
-  const groq=new GroqProvider({apiKey:env.GROQ_API_KEY,model:env.LUNA_MODEL})
-  const provider={model:groq.model,async complete(input:any){
+  const groq=new GroqSdkProvider({apiKey:env.GROQ_API_KEY,model:env.LUNA_MODEL})
+  const provider={model:groq.model,operationalReplies:groq.operationalReplies,async complete(input:any){
    const upper=groq.reservationTokens(input)
    meter.beforeModel(input,upper)
    await ledger.reserveModel(upper)
