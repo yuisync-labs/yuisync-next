@@ -25,6 +25,7 @@ export type LunaToolFailure = Readonly<{
   code: string
   retryable: boolean
   missing_fields?: readonly string[]
+  validation_errors?: readonly Readonly<{ field: string; rule: string }>[]
 }>
 export type LunaToolResult<T = unknown> = LunaToolSuccess<T> | LunaToolFailure
 

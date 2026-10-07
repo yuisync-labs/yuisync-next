@@ -4,6 +4,20 @@ import { createLunaToolRegistry } from '../src/luna/toolRegistry'
 import { LunaConversationRepository } from '../src/luna/conversationRepository'
 
 describe('native turn decision batch', () => {
+  it('explains a kind used as focus without persisting it; corrected exact ID succeeds', async () => {
+    const h=await createDesignedHarness(1,'-focus-contract'),ctx={...h.ctx,sourceMessageId:'focus-message'},registry=createLunaToolRegistry(h.db)
+    const args={intents:[{operation_id:'op-cart-1',kind:'cart',goal:'create'}],focus:'cart',events:[{operationId:'op-cart-1',kind:'cart',expectedVersion:0,action:'add_item',itemId:'racao-a',quantity:1}]}
+    try {
+      await new LunaConversationRepository(h.db).ensureConversation(ctx)
+      await h.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop','focus-message',?2,'focus-message','inbound','customer','Comprar uma ração',?3)`).bind(h.tenant,ctx.conversationId,Date.now()).run()
+      expect(await registry.execute('record_turn_decision',args,ctx)).toMatchObject({ok:false,code:'TURN_DECISION_INVALID',validation_errors:[{field:'focus'}]})
+      expect((await h.state()).operations).toEqual({})
+      expect((await registry.execute('record_turn_decision',{...args,focus:'op-cart-1'},ctx)).ok).toBe(true)
+      expect((await h.state()).operations['op-cart-1'].items).toEqual([{id:'racao-a',quantity:1}])
+      expect(await registry.execute('prepare_product_order',{customer_id:'cliente-maria',items:[{product_id:'racao-a',quantity:1}],fulfillment_type:'counter',operation_id:'op-order-1'},ctx)).toMatchObject({ok:false,code:'OPERATION_DRAFT_INVALID',validation_errors:[{field:'operation_id'}]})
+      expect((await h.state()).operations['op-cart-1'].items).toEqual([{id:'racao-a',quantity:1}])
+    } finally { h.close() }
+  })
   for (const invalid of [false, true]) it(`external message identity; atomic draft events (invalid=${invalid})`, async () => {
     const h = await createDesignedHarness(11, invalid ? '-batch-invalid' : '-batch-replay')
     const ctx = { ...h.ctx, sourceMessageId: 'external-provider-id', actionIndex: 3 }

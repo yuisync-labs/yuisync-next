@@ -45,7 +45,7 @@ const draftEventSchema = objectSchema({
 
 const DEFINITIONS: readonly LunaToolDefinition[] = [
   {name:'resolve_context_reference',description:'Resolve referência por opções realmente apresentadas. Ordinal usa a ordem aceita; single exige uma opção; other exige duas opções e um item selecionado no rascunho. Não altera rascunho nem autoriza commit.',parameters:objectSchema({kind:{type:'string',enum:['product','service','pet','slot','transport']},selection:{type:'string',enum:['ordinal','single','other']},ordinal:{type:'integer',minimum:1,maximum:40},operation_id:stringProperty('Operação em foco.')},['kind','selection'])},
-  {name:'record_turn_decision',description:'Persiste intenções independentes e até oito eventos de rascunho atomicamente, sem efeitos comerciais. Consulte identidade e catálogo antes de usar IDs. Versões dos eventos são sequenciais por operação. Uma decisão por mensagem; não confirma nem executa venda/agendamento.',parameters:objectSchema({intents:{type:'array',minItems:1,maxItems:4,items:objectSchema({operation_id:{type:'string',minLength:1,maxLength:100},kind:{type:'string',enum:['cart','booking','registration']},goal:{type:'string',enum:['create','change','query','pause','resume','cancel']}},['operation_id','kind','goal'])},focus:{type:'string',minLength:1,maxLength:100},events:{type:'array',maxItems:8,items:draftEventSchema}},['intents','focus'])},
+  {name:'record_turn_decision',description:'Persiste intenções/eventos atomicamente, sem efeito comercial. focus é o operation_id exato de uma intenção, NÃO o kind. Cada events[].operationId e kind deve corresponder à mesma intenção. Mantenha esse ID ao preparar a proposta. expectedVersion é sequencial por operação. Uma decisão por mensagem; consulte catálogo antes de usar IDs.',parameters:objectSchema({intents:{type:'array',minItems:1,maxItems:4,items:objectSchema({operation_id:{type:'string',minLength:1,maxLength:100},kind:{type:'string',enum:['cart','booking','registration']},goal:{type:'string',enum:['create','change','query','pause','resume','cancel']}},['operation_id','kind','goal'])},focus:{type:'string',minLength:1,maxLength:100},events:{type:'array',maxItems:8,items:draftEventSchema}},['intents','focus'])},
   ...(['prepare_customer_registration', 'prepare_pet_registration'] as const).map(name => ({ name, description: name === 'prepare_customer_registration' ? 'Prepara cadastro de cliente novo e seu pet pelo telefone da conversa; não cria antes da confirmação e não une cadastros ambíguos.' : 'Prepara cadastro de outro pet do cliente identificado; nomes ambíguos exigem humano.', parameters: objectSchema({ customer_name: { type: 'string', minLength: 1, maxLength: 160 }, customer_id: { type: 'string', minLength: 1, maxLength: 160 }, pet_name: { type: 'string', minLength: 1, maxLength: 160 }, species: { type: 'string', enum: ['dog','cat','bird','rabbit','fish','other'] }, breed: { type: ['string','null'], maxLength: 160 }, weight_kg: { type: ['number','null'], minimum: 0.01, maximum: 200 }, operation_id: stringProperty('Rascunho de cadastro.') }, [name === 'prepare_customer_registration' ? 'customer_name' : 'customer_id', 'pet_name', 'species']) })),
   ...informationToolDefinitions,
   {
@@ -105,7 +105,7 @@ const DEFINITIONS: readonly LunaToolDefinition[] = [
   },
   {
     name: 'prepare_product_order',
-    description: 'Valida produtos, quantidades, estoque e preço e cria uma proposta que ainda exige confirmação.',
+    description: 'Valida produtos, quantidades, estoque e preço e prepara proposta para confirmação. operation_id deve reutilizar o ID exato do carrinho persistido, nunca criar outro ID. Só use fulfillment_type informado pelo cliente; se ausente, pergunte entrega ou retirada antes de preparar.',
     parameters: objectSchema({
       customer_id: stringProperty('ID exato do cliente.'),
       items: {
@@ -186,7 +186,7 @@ async function createProposal(database: D1Database, context: LunaExecutionContex
   if (draftId) {
     const { state } = await new LunaConversationRepository(database).loadState(context)
     const draft = state.operations[draftId]
-    if (!draft || draft.status !== 'active' || draft.kind !== (kind === 'product_order_create' ? 'cart' : kind.endsWith('_registration') ? 'registration' : 'booking')) return { ok: false, code: 'OPERATION_DRAFT_INVALID', retryable: false }
+    if (!draft || draft.status !== 'active' || draft.kind !== (kind === 'product_order_create' ? 'cart' : kind.endsWith('_registration') ? 'registration' : 'booking')) return { ok: false, code: 'OPERATION_DRAFT_INVALID', retryable: false, validation_errors: [{field:'operation_id',rule:'Reuse the exact ID of an existing active draft of the required kind; do not invent a replacement ID.'}] }
     payload = { ...payload, draft_operation_id: draftId, draft_version: draft.version }
   }
   const hash = await fingerprint(payload)
@@ -228,12 +228,13 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
   handlers.set('resolve_context_reference',(args,ctx)=>resolveContextReference(database,ctx,args))
   handlers.set('record_turn_decision',async(args,ctx)=>{
     const intents=args.intents as {operation_id:string;kind:string;goal:string}[]
-    if(new Set(intents.map(i=>i.operation_id)).size!==intents.length||!intents.some(i=>i.operation_id===args.focus)||intents.some(i=>!/^[a-zA-Z0-9_-]{1,100}$/.test(i.operation_id)||['__proto__','constructor','prototype'].includes(i.operation_id)))return{ok:false,code:'TURN_DECISION_INVALID',retryable:false}
+    if(new Set(intents.map(i=>i.operation_id)).size!==intents.length||intents.some(i=>!/^[a-zA-Z0-9_-]{1,100}$/.test(i.operation_id)||['__proto__','constructor','prototype'].includes(i.operation_id)))return{ok:false,code:'TURN_DECISION_INVALID',retryable:false,validation_errors:[{field:'intents[].operation_id',rule:'Use unique safe operation IDs, preserved across draft events and preparation.'}]}
+    if(!intents.some(i=>i.operation_id===args.focus))return{ok:false,code:'TURN_DECISION_INVALID',retryable:false,validation_errors:[{field:'focus',rule:'Must equal one intents[].operation_id exactly, not its kind.'}]}
     const inbound=await database.prepare(`SELECT id FROM chat_messages WHERE tenant_id=?1 AND module_id=?2 AND thread_id=?3 AND (id=?4 OR external_message_id=?4) AND direction='inbound' AND actor_type='customer'`).bind(ctx.tenantId,ctx.moduleId,ctx.conversationId,ctx.sourceMessageId).first()
     if(!inbound)return{ok:false,code:'TURN_MESSAGE_MISSING',retryable:false}
     const events=(args.events??[]) as DraftEvent[]
     for(const event of events){
-      if(!intents.some(i=>i.operation_id===event.operationId&&i.kind===event.kind))return{ok:false,code:'TURN_DECISION_INVALID',retryable:false}
+      if(!intents.some(i=>i.operation_id===event.operationId&&i.kind===event.kind))return{ok:false,code:'TURN_DECISION_INVALID',retryable:false,validation_errors:[{field:'events[].operationId',rule:'Every event must match the operation_id and kind of a declared intent.'}]}
       const failure=await validateDraftEvent(event,ctx);if(failure)return failure
     }
     try{
