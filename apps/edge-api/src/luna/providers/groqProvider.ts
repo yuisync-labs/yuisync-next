@@ -84,6 +84,7 @@ export class GroqProvider {
     messages: readonly LunaMessage[]
     tools: readonly LunaToolDefinition[]
     maxCompletionTokens?: number
+    toolChoice?: 'auto' | 'required'
   }): string {
     return JSON.stringify({
           model: this.model,
@@ -109,7 +110,7 @@ export class GroqProvider {
               parameters: compactToolSchema(/^openai\/gpt-oss-/.test(this.model) ? strictGroqToolSchema(tool.parameters) : tool.parameters),
               ...(/^openai\/gpt-oss-/.test(this.model) ? { strict: true } : {}),
             },
-          })), tool_choice: 'auto' } : {}),
+          })), tool_choice: input.toolChoice ?? 'auto' } : {}),
         })
   }
 
@@ -171,6 +172,10 @@ export class GroqProvider {
     })).filter((call) => call.id && call.function.name)
     const content = typeof message.content === 'string' ? message.content.trim() || null : null
     if (!content && toolCalls.length === 0) throw invalidResponse()
+    // Required-tool turns cannot silently fall back to prose. An unexpected
+    // function (or truncated call list) is also rejected before any effects.
+    if (input.toolChoice === 'required' && toolCalls.length === 0) throw invalidResponse()
+    if (toolCalls.length !== (message.tool_calls?.length ?? 0) || toolCalls.some(call => !input.tools.some(tool => tool.name === call.function.name))) throw invalidResponse()
     if (new Set(toolCalls.map(call => call.id)).size !== toolCalls.length) throw invalidResponse()
     if (!Number.isSafeInteger(promptTokens) || Number(promptTokens) < 0 || !Number.isSafeInteger(completionTokens) || Number(completionTokens) < 0) throw new GroqProviderError('GROQ_USAGE_UNAVAILABLE')
 

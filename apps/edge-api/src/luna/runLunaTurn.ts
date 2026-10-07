@@ -11,10 +11,11 @@ import { buildVerifiedFacts, responseContractInstruction, responseQuestion, safe
 import { loadConversationMemory,prepareResponseMemory } from './conversationalMemory'
 import { lunaNow } from './clock'
 import { createLunaQuotaPacer } from './quotaPacer'
+import { FINISH_TURN, finishTurn, operationalCapabilities } from './finishTurn'
 
 type Provider = Readonly<{
   model: string
-  complete(input: { messages: readonly LunaMessage[]; tools: readonly LunaToolDefinition[]; maxCompletionTokens?: number }): Promise<LunaProviderResponse & { requestLimit: number | null; tokenLimit?: number | null }>
+  complete(input: { messages: readonly LunaMessage[]; tools: readonly LunaToolDefinition[]; maxCompletionTokens?: number; toolChoice?:'auto'|'required' }): Promise<LunaProviderResponse & { requestLimit: number | null; tokenLimit?: number | null }>
 }>
 
 function parseArguments(raw: string): Record<string, unknown> | null {
@@ -33,10 +34,9 @@ export function composeLunaModelMessages(messages: readonly LunaMessage[], facts
     instructions.push(responseContractInstruction(facts))
     instructions.push('FINALIZAÇÃO SEM FERRAMENTAS: reformule uma única vez a resposta final no contrato factual, usando somente os fatos verificados. Não execute nem prometa novas ações.')
   } else {
-    // A final-response JSON contract must never compete with native function
-    // generation. The operational model speaks naturally like the legacy;
-    // its text is only a draft and cannot bypass the verified final renderer.
-    instructions.push('FASE OPERACIONAL: use tools nativas e resultados estruturados. Sem ferramenta pendente, escreva um rascunho breve; a resposta será verificada separadamente. Não invente tools de formatação.')
+    // Termination uses a read-only native function, not a competing free-text
+    // JSON instruction. The Worker owns all rendered operational values.
+    instructions.push('FASE OPERACIONAL: selecione tools nativas ou finish_turn. Não encerre com texto livre. Registre rascunhos com IDs reais antes de concluir intenções comerciais. finish_turn é somente leitura; selecione fatos verificados e pergunta faltante. Não invente tools.')
   }
   return [{ role: 'system', content: instructions.join('\n\n') }, ...messages.filter(message => message.role !== 'system')]
 }
@@ -90,6 +90,16 @@ export async function runLunaTurn(input: {
   let finalStatus: LunaTurnResult['status'] = 'failed'
   let reply: string | null = null
   let errorCode: string | null = null
+  let finalRepairUsed = false
+  const completeReply = async (candidate: string, mode: string) => {
+    // One authoritative presentation path for native termination, legacy
+    // responses and fallback. Invalidated proposals never reach the customer.
+    const summaries = await loadPresentableProposals(input.database, input.context, proposals)
+    presented.push(...summaries.map(summary => summary.id))
+    reply = [candidate, ...summaries.map(renderProposalSummary)].filter(Boolean).join('\n\n')
+    responseMode = mode
+    finalStatus = summaries.length ? 'awaiting_confirmation' : reply ? 'replied' : 'failed'
+  }
   const infer = async (request: Parameters<Provider['complete']>[0]) => {
     try { return await input.provider.complete(request) }
     catch (error) {
@@ -116,7 +126,19 @@ export async function runLunaTurn(input: {
       await pacer.beforeModel()
       budget.beforeModel()
       const facts = buildVerifiedFacts(evidence)
-      const response = await infer({ messages: composeLunaModelMessages(messages, facts), tools: registry.definitions })
+      const currentState=(await repository.loadState(input.context)).state
+      const capabilities=operationalCapabilities(registry.definitions,currentState,acceptedMemory.options.map(option=>option.kind))
+      const tools=finalRepairUsed ? [FINISH_TURN] : [...capabilities,FINISH_TURN]
+      const turnMessages=composeLunaModelMessages([...messages,{role:'system',content:`ESTADO ATUAL DO RASCUNHO: ${JSON.stringify(currentState)}. IDs fact disponíveis para finish_turn: ${JSON.stringify(facts.map(f=>({id:f.id,text:f.text})))}`}],facts)
+      let response
+      try { response = await infer({ messages: turnMessages, tools, toolChoice:'required' }) }
+      catch (error) {
+        // A failed formatting repair cannot erase verified query/commit facts
+        // or cause another action/model replay. Quota still pauses explicitly.
+        if (!finalRepairUsed || error instanceof LunaBudgetError || (error instanceof GroqProviderError && error.code === 'GROQ_RATE_LIMITED')) throw error
+        await completeReply(safeFactualFallback(buildVerifiedFacts(evidence.filter(item => item.callId !== 'bootstrap-identity'))), 'factual_fallback')
+        break
+      }
       pacer.observe({ promptTokens: response.usage.promptTokens, tokenLimit: response.tokenLimit ?? null, remainingTokens: response.rateLimit.remainingTokens, resetTokens: response.rateLimit.resetTokens })
       let terminalQuotaMargin = false
       try { budget.afterModel({
@@ -159,17 +181,35 @@ export async function runLunaTurn(input: {
             reply = safeFactualFallback(buildVerifiedFacts(evidence.filter(item=>item.callId!=='bootstrap-identity')))
           }
         }
-        const summaries = await loadPresentableProposals(input.database, input.context, proposals)
-        presented.push(...summaries.map(summary=>summary.id))
-        if (summaries.length) reply = [reply, ...summaries.map(renderProposalSummary)].filter(Boolean).join('\n\n')
-        finalStatus = summaries.length > 0 ? 'awaiting_confirmation' : reply ? 'replied' : 'failed'
+        await completeReply(reply ?? '', responseMode)
         break
       }
 
+      // Reject the entire batch before executing anything: finish_turn cannot
+      // authorize an action alongside it, and repair must remain read-only.
+      if ((response.toolCalls.some(call => call.function.name === 'finish_turn') && response.toolCalls.length !== 1)
+        || (finalRepairUsed && response.toolCalls.some(call => call.function.name !== 'finish_turn'))) {
+        throw new GroqProviderError('GROQ_RESPONSE_INVALID')
+      }
       messages.push({ role: 'assistant', content: response.content, tool_calls: response.toolCalls })
       for (const call of response.toolCalls) {
         budget.beforeTool()
         const args = parseArguments(call.function.arguments)
+        if(call.function.name==='finish_turn'){
+          const finish=args?finishTurn(args,currentState,facts):{ok:false as const,code:'TOOL_ARGUMENTS_INVALID',retryable:false}
+          await repository.recordToolRun({context:input.context,name:call.function.name,args:args??{},result:finish,durationMs:0})
+          input.observer?.tool({id:call.id,name:call.function.name,args,result:finish,recovery:false})
+          if(finish.ok){
+            await completeReply(finish.data.reply, finalRepairUsed ? 'rewritten' : 'verified')
+          }else{
+            messages.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(finish)})
+            if(finish.code==='TURN_RESPONSE_INVALID'||finish.code==='TOOL_ARGUMENTS_INVALID'){
+              if(finalRepairUsed)await completeReply(safeFactualFallback(buildVerifiedFacts(evidence.filter(item=>item.callId!=='bootstrap-identity'))),'factual_fallback')
+              finalRepairUsed=true
+            }
+          }
+          continue
+        }
         let result
         const signature = `${call.function.name}:${canonicalJson(args)}`
         const started = Date.now()
@@ -199,6 +239,7 @@ export async function runLunaTurn(input: {
         }
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) })
       }
+      if(reply && finalStatus!=='failed')break
       if (finalStatus === 'handoff') {
         reply = 'Vou encaminhar esta conversa para uma pessoa da equipe continuar o atendimento.'
         break

@@ -18,6 +18,7 @@ import type { LunaExecutionContext } from '../../apps/edge-api/src/luna/contract
 import { getBetterAuthSession } from '../../apps/edge-api/src/auth/betterAuthRuntime'
 import { certificationPlayground } from './certificationPlayground'
 import { lunaNow } from '../../apps/edge-api/src/luna/clock'
+import { FINISH_TURN } from '../../apps/edge-api/src/luna/finishTurn'
 type Env=EdgeEnv & {LUNA_CERT_DB?:D1Database;LUNA_CERT_TOKEN?:string;RELEASE_SHA?:string;GROQ_API_KEY?:string;LUNA_CERT_ENV?:string;LUNA_CERT_DATABASE_ID?:string;LUNA_CERT_OPERATOR_ID?:string;LUNA_CERT_GATES_SHA?:string}
 const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{'cache-control':'no-store'}})
 function sanitized(value:unknown):unknown{
@@ -49,7 +50,9 @@ export async function certificationSnapshot(db:D1Database,tenant:string,conversa
 function validate(id:number,turn:number,total:number,before:any,after:any,tools:any[],error:string|null){
  const violations:string[]=[],scenario=LUNA_DESIGNED_SCENARIOS.find(s=>s.id===id)!
  if(error)violations.push(error)
- for(const tool of tools)if(!scenario.allowedTools.includes(tool.name)||scenario.forbiddenTools.includes(tool.name))violations.push(`TOOL_NOT_ALLOWED:${tool.name}`)
+ // Runtime-only, read-only termination is valid in every scenario. Domain
+ // permissions and each scenario's forbidden commercial actions stay intact.
+ for(const tool of tools)if((tool.name!==FINISH_TURN.name&&!scenario.allowedTools.includes(tool.name))||scenario.forbiddenTools.includes(tool.name))violations.push(`TOOL_NOT_ALLOWED:${tool.name}`)
  if(after.tables.payments?.length)violations.push('INVENTED_PAYMENT')
  if(after.tables.sales?.some((sale:any)=>sale.status!=='pending'))violations.push('UNEXPECTED_SALE_STATUS')
  const operations=Object.values(after.operational.operations??{}) as any[],cart=operations.find(o=>o.kind==='cart'),booking=operations.find(o=>o.kind==='booking'),registration=operations.find(o=>o.kind==='registration')

@@ -4,6 +4,16 @@ import { GroqProvider } from '../src/luna/providers/groqProvider'
 import { createLunaBudget, LunaBudgetError } from '../src/luna/quotaBudget'
 
 describe('Luna Groq provider and budget', () => {
+  it('requires native termination and accounts prose violations without hiding usage', async () => {
+    const fetchFn=vi.fn(async (_url:Parameters<typeof fetch>[0],_init?:Parameters<typeof fetch>[1])=>new Response(JSON.stringify({choices:[{message:{content:'Certo!'}}],usage:{prompt_tokens:100,completion_tokens:20}}),{status:200}))
+    const provider=new GroqProvider({apiKey:'fixture',model:'openai/gpt-oss-20b',fetchFn})
+    await expect(provider.complete({messages:[],tools:[{name:'finish_turn',description:'Read only',parameters:{type:'object',properties:{},required:[],additionalProperties:false}}],toolChoice:'required'})).rejects.toMatchObject({code:'GROQ_RESPONSE_INVALID',usage:{promptTokens:100,completionTokens:20}})
+    expect(JSON.parse(String(fetchFn.mock.calls[0][1]?.body)).tool_choice).toBe('required')
+  })
+  it('rejects a function not exposed in this call before execution', async () => {
+    const provider=new GroqProvider({apiKey:'fixture',model:'test-model',fetchFn:async()=>new Response(JSON.stringify({choices:[{message:{tool_calls:[{id:'bad',function:{name:'create_payment',arguments:'{}'}}]}}],usage:{prompt_tokens:100,completion_tokens:20}}),{status:200})})
+    await expect(provider.complete({messages:[],tools:[]})).rejects.toMatchObject({code:'GROQ_RESPONSE_INVALID',usage:{promptTokens:100,completionTokens:20}})
+  })
   it('preserva uso conhecido de completion vazia e diagnostica somente a forma, sem raciocínio privado', async () => {
     const provider=new GroqProvider({apiKey:'fixture',model:'openai/gpt-oss-20b',fetchFn:async()=>new Response(JSON.stringify({choices:[{finish_reason:'length',message:{content:null,reasoning:'private reasoning'}}],usage:{prompt_tokens:400,completion_tokens:1200}}),{status:200})})
     await expect(provider.complete({messages:[{role:'user',content:'oi'}],tools:[]})).rejects.toMatchObject({code:'GROQ_RESPONSE_INVALID',usage:{promptTokens:400,completionTokens:1200},responseShape:{messagePresent:true,finishReason:'length',contentPresent:false,toolCount:0}})
