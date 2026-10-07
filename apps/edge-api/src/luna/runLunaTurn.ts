@@ -23,6 +23,16 @@ function parseArguments(raw: string): Record<string, unknown> | null {
   } catch { return null }
 }
 
+// Keep the working legacy layout: instructions first, then history/user/tool
+// messages. Do not replace the current conversational turn with a trailing
+// system message demanding final JSON while native tools are still available.
+export function composeLunaModelMessages(messages: readonly LunaMessage[], facts: readonly import('./factualResponse').Fact[], finalOnly = false): LunaMessage[] {
+  const instructions = messages.filter(message => message.role === 'system').map(message => message.content).filter(Boolean)
+  instructions.push(responseContractInstruction(facts))
+  if (finalOnly) instructions.push('FINALIZAÇÃO SEM FERRAMENTAS: reformule uma única vez a resposta final no contrato factual, usando somente os fatos verificados. Não execute nem prometa novas ações.')
+  return [{ role: 'system', content: instructions.join('\n\n') }, ...messages.filter(message => message.role !== 'system')]
+}
+
 export async function runLunaTurn(input: {
   database: D1Database
   provider: Provider
@@ -76,7 +86,7 @@ export async function runLunaTurn(input: {
     for (;;) {
       budget.beforeModel()
       const facts = buildVerifiedFacts(evidence)
-      const response = await input.provider.complete({ messages: [...messages, { role: 'system', content: responseContractInstruction(facts) }], tools: registry.definitions })
+      const response = await input.provider.complete({ messages: composeLunaModelMessages(messages, facts), tools: registry.definitions })
       budget.afterModel({
         promptTokens: response.usage.promptTokens,
         completionTokens: response.usage.completionTokens,
@@ -96,7 +106,7 @@ export async function runLunaTurn(input: {
           try {
             budget.beforeModel()
             const rewritten = await input.provider.complete({
-              messages: [...messages, { role: 'system', content: `${responseContractInstruction(facts)} A resposta anterior não seguiu o contrato. Reformule uma única vez sem chamar ferramentas.` }],
+              messages: composeLunaModelMessages(messages, facts, true),
               tools: [],
             })
             budget.afterModel({ promptTokens: rewritten.usage.promptTokens, completionTokens: rewritten.usage.completionTokens, remainingRequests: rewritten.rateLimit.remainingRequests, requestLimit: rewritten.requestLimit, remainingTokens: rewritten.rateLimit.remainingTokens, tokenLimit: rewritten.tokenLimit })

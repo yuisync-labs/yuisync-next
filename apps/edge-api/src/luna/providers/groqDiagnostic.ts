@@ -12,11 +12,21 @@ export function groqDiagnostic(detail: Record<string, unknown>, status: number, 
   ] as const
   const controls = ['strict','include_reasoning','reasoning_format','reasoning_effort','parallel_tool_calls','max_completion_tokens','tool_choice','additionalproperties','anyof','minlength','maxlength','minimum','maximum','minitems','maxitems','enum','type','required','properties','items']
   const failed = typeof detail.failed_generation === 'string' ? detail.failed_generation : ''
+  // Structural category only, never generated text, arguments or reasoning.
+  let failedGenerationShape: 'final_json'|'tool_json'|'other_json'|'tool_markup'|'harmony'|'text'|null = null
+  if (failed) {
+    failedGenerationShape = /<\|(?:start|channel|message|end)/.test(failed) ? 'harmony' : /<\/?(?:tool_call|function)/.test(failed) ? 'tool_markup' : 'text'
+    try {
+      const value = JSON.parse(failed)
+      failedGenerationShape = value && typeof value === 'object' && ('blocks' in value || 'opening' in value) ? 'final_json' : value && typeof value === 'object' && ('tool_calls' in value || 'function' in value || 'name' in value) ? 'tool_json' : 'other_json'
+    } catch { /* keep structural category, not raw generation */ }
+  }
   return { status, type: field(detail.type), code: field(detail.code), param: field(detail.param),
     reasons: categories.filter(([, pattern]) => pattern.test(message)).map(([name]) => name),
     controls: controls.filter(name => new RegExp(`\\b${name}\\b`).test(message)),
     generatedToolNames: toolNames.filter(name => failed.includes(name)).slice(0, 10),
     schemaToolNames: /schema/.test(message) ? toolNames.filter(name => message.includes(name)).slice(0,10) : [],
     hasFailedGeneration: Boolean(detail.failed_generation),
+    failedGenerationShape,
   }
 }

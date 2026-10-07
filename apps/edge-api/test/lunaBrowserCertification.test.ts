@@ -2,7 +2,8 @@ import {describe,it,expect,vi} from 'vitest'
 import {lunaNow} from '../src/luna/clock'
 import {groqDiagnostic} from '../src/luna/providers/groqDiagnostic'
 import {GroqProvider} from '../src/luna/providers/groqProvider'
-import {certificationPlayground} from '../../../scripts/luna/certificationPlayground'
+import {certificationPlayground,certificationInputHint} from '../../../scripts/luna/certificationPlayground'
+import {composeLunaModelMessages} from '../src/luna/runLunaTurn'
 import {LUNA_DESIGNED_SCENARIOS} from './fixtures/luna/designedScenarios'
 import type {LunaExecutionContext} from '../src/luna/contracts'
 import {env} from 'cloudflare:workers'
@@ -12,6 +13,28 @@ import worker,{initializeCertificationSchema} from '../../../scripts/luna/stagin
 
 const context:LunaExecutionContext={tenantId:'fictional',moduleId:'petshop',conversationId:'scenario',customerAddress:'5532999990011',phoneNumberId:'no-whatsapp',sourceMessageId:'test',traceId:'test',executionMode:'staging'}
 describe('Human-driven Luna certification',()=>{
+ it('keeps legacy-compatible message order and separates tools from final formatting',()=>{
+  const history=[{role:'system' as const,content:'Identity and safe operations'},{role:'system' as const,content:'Persisted memory'},{role:'user' as const,content:'Quero uma Ração A.'}]
+  const initial=composeLunaModelMessages(history,[])
+  expect(initial.filter(m=>m.role==='system')).toHaveLength(1)
+  expect(initial.at(-1)).toEqual(history[2])
+  expect(initial[0].content).toContain('O formato blocks NÃO é uma ferramenta')
+  const tool={role:'tool' as const,tool_call_id:'catalog',content:'{"ok":true}'}
+  expect(composeLunaModelMessages([...history,tool],[]).at(-1)).toEqual(tool)
+  expect(composeLunaModelMessages(history,[],true)[0].content).toContain('FINALIZAÇÃO SEM FERRAMENTAS')
+  expect(history).toHaveLength(3)
+ })
+ it('explains exact-script mismatches instead of silently disabling the button',()=>{
+  expect(certificationInputHint('Quero uma ração A.','Quero uma Ração A.')).toContain('nada foi enviado')
+  expect(certificationInputHint('Quero uma Ração A.','Quero uma Ração A.')).toContain('Você pode enviar')
+  expect(certificationInputHint('','test')).toContain('maiúsculas')
+ })
+ it('identifies generation shape without retaining generated data or private reasoning',()=>{
+  const result=groqDiagnostic({code:'tool_use_failed',failed_generation:'{"blocks":[{"kind":"social","text":"private@example.com gsk_secret"}]}',message:'Failed to call a function'},400,[])
+  expect(result.failedGenerationShape).toBe('final_json')
+  expect(JSON.stringify(result)).not.toMatch(/private@example|gsk_secret|social/)
+  expect(groqDiagnostic({failed_generation:'<tool_call>secret</tool_call>'},400,[]).failedGenerationShape).toBe('tool_markup')
+ })
  it('requires a real staging session and designated global admin, meters its auth reads and resumes without calling Groq',async()=>{
   const DB=(env as EdgeEnv & {DB:D1Database}).DB,AUTH_DB=(env as EdgeEnv & {AUTH_DB:D1Database}).AUTH_DB
   const id=crypto.randomUUID(),email=id+'@test.invalid',password='FixtureOnlyPassword123!',now=new Date().toISOString()
@@ -68,6 +91,9 @@ describe('Human-driven Luna certification',()=>{
   for(const scenario of LUNA_DESIGNED_SCENARIOS)expect(html).toContain(JSON.stringify(scenario.messages[0]).slice(1,-1))
   expect(html).toContain('addEventListener(\'click\'')
   expect(html).not.toMatch(/api\.groq\.com|legacy-preview|localStorage|setInterval|apiKey/)
+  expect(html).not.toContain('[Sem resposta conclusiva]')
+  expect(html).toContain('Diagnóstico de execução (não é uma resposta da Luna)')
+  expect(html).toContain('aria-describedby="input-hint"')
   expect(response.headers.get('content-security-policy')).toContain("connect-src 'self'")
   expect(response.headers.get('cache-control')).toBe('no-store')
  })
