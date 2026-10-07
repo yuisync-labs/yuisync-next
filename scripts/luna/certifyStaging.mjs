@@ -7,6 +7,7 @@ import {build} from 'esbuild'
 import {prepareStagingMigrations} from './prepareStagingMigrations.mjs'
 import {createStagingHttpAdapter} from './stagingHttpAdapter.mjs'
 import {runRealCertification,certificationManifestHash} from './realCertificationRunner.mjs'
+import {waitForStagingRelease} from './stagingRelease.mjs'
 const root=process.cwd(),out=resolve(root,'.artifacts/luna-certification-staging')
 await mkdir(out,{recursive:true})
 async function command(args,input){
@@ -67,8 +68,7 @@ if(process.argv.includes('--run')||process.argv.includes('--publish-browser')){
  await command(['secret','put','LUNA_CERT_TOKEN','--env','staging','--config',configPath],token+'\n')
  await command(['deploy','--env','staging','--config',configPath])
  const baseUrl='https://yuisync-edge-api-staging.gabrielboalento3004.workers.dev/'
- const release=await (await fetch(new URL('release',baseUrl),{redirect:'error'})).json()
- if(release.release_sha!==sha||release.environment!=='staging')throw new Error('CERTIFICATION_RELEASE_SHA_MISMATCH')
+ const release=await waitForStagingRelease(baseUrl,sha)
  if(process.argv.includes('--publish-browser')){
   await writeFile(resolve(out,'browser-release.json'),JSON.stringify({sha,release,provider:'groq',model:stage.vars.LUNA_MODEL,manifestHash,url:new URL('luna-certification',baseUrl).href,certified:false,production:false},null,2))
   console.log(JSON.stringify({published:'staging only',sha,playground:new URL('luna-certification',baseUrl).href,modelCalls:0,certified:false}))

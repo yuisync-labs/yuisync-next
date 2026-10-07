@@ -79,3 +79,7 @@ Evidência visual local: `.artifacts/luna-certification-staging/browser-fa2ebda-
 - Regressão SDK/Worker/D1 reproduz a ausência da pergunta e o encerramento prematuro; valida uma única correção factual, recuperação operacional e apresentação sem venda.
 
 41 testes direcionados em 5 arquivos passaram; typecheck passou após corrigir o predicado de tipo do novo validador. Certificação completa e nova rodada Groq ainda pendentes no momento deste registro. Nenhuma migration ou alteração de dados reais.
+
+A integração no commit `3eaa4ec` executou os 20 offline com sucesso e encontrou uma única falha entre 502 testes Worker: prompt com 2.486 caracteres frente ao teto existente de 2.200. O texto foi compactado sem elevar o teto; 13 testes de contexto/SDK/browser passaram e typecheck passou. Esse gate vermelho permanece preservado, não é uma certificação.
+
+O publicador também passa a tolerar propagação da identidade com até seis leituras públicas de `/release`, timeout de cinco segundos por leitura e cinco pausas de dois segundos. Não repete deploy, não troca SHA, não aceita produção e mantém falha se a identidade não aparecer. Testes simulam atraso, indisponibilidade e destino incorreto, sem API externa.
