@@ -20,6 +20,35 @@ beforeAll(async () => {
 })
 
 describe('Luna recovery on real local D1', () => {
+  it('não descarta fatos verificados quando a resposta terminal esgota a margem; não faz outra chamada', async () => {
+    let calls = 0
+    const result = await runLunaTurn({ database: db, context: { ...ctx, sourceMessageId: 'terminal-quota' }, provider: {
+      model: 'fixture', complete: async () => {
+        calls += 1
+        return {
+          content: calls === 1 ? null : 'Está pago e custa R$ 0.',
+          toolCalls: calls === 1 ? [{ id: 'quota-stock', type: 'function' as const, function: { name: 'search_products', arguments: '{"query":"Produto"}' } }] : [],
+          usage: { promptTokens: 10, completionTokens: 10 },
+          rateLimit: { remainingRequests: 900, remainingTokens: calls === 1 ? 7000 : 100, resetRequests: null, resetTokens: null }, requestLimit: 1000, tokenLimit: 10000,
+        }
+      },
+    } })
+    expect(calls).toBe(2)
+    expect(result).toMatchObject({ status: 'replied', errorCode: null, reply: 'Produto: R$ 10,00; estoque disponível nesta consulta: 10.', committedOperationIds: [], usage: { modelCalls: 2, toolCalls: 1 } })
+  })
+
+  it('continua bloqueando ferramentas quando a resposta não terminal esgota a margem', async () => {
+    let calls = 0
+    const result = await runLunaTurn({ database: db, context: { ...ctx, sourceMessageId: 'tool-quota' }, provider: {
+      model: 'fixture', complete: async () => {
+        calls += 1
+        return { content: null, toolCalls: [{ id: 'blocked-stock', type: 'function' as const, function: { name: 'search_products', arguments: '{"query":"Produto"}' } }], usage: { promptTokens: 10, completionTokens: 10 }, rateLimit: { remainingRequests: 900, remainingTokens: 100, resetRequests: null, resetTokens: null }, requestLimit: 1000, tokenLimit: 10000 }
+      },
+    } })
+    expect(calls).toBe(1)
+    expect(result).toMatchObject({ status: 'quota_paused', errorCode: 'LUNA_RATE_LIMIT_MARGIN', reply: null, usage: { modelCalls: 1, toolCalls: 0 } })
+  })
+
   it('não anuncia confirmação de uma proposta invalidada dentro do mesmo turno', async () => {
     let calls=0
     const commands=[

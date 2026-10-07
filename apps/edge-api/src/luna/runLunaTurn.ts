@@ -94,14 +94,21 @@ export async function runLunaTurn(input: {
       budget.beforeModel()
       const facts = buildVerifiedFacts(evidence)
       const response = await input.provider.complete({ messages: composeLunaModelMessages(messages, facts), tools: registry.definitions })
-      budget.afterModel({
+      let terminalQuotaMargin = false
+      try { budget.afterModel({
         promptTokens: response.usage.promptTokens,
         completionTokens: response.usage.completionTokens,
         remainingRequests: response.rateLimit.remainingRequests,
         requestLimit: response.requestLimit,
         remainingTokens: response.rateLimit.remainingTokens,
         tokenLimit: response.tokenLimit,
-      })
+      }) } catch (error) {
+        // A completed terminal response must not be discarded merely because
+        // it consumed the remaining safety margin. No further model call or
+        // tool is allowed here; render verified content locally instead.
+        if (error instanceof LunaBudgetError && error.code === 'LUNA_RATE_LIMIT_MARGIN' && response.toolCalls.length === 0) terminalQuotaMargin = true
+        else throw error
+      }
 
       if (response.toolCalls.length === 0) {
         reply = validateFactualResponse(response.content, facts)
@@ -111,6 +118,7 @@ export async function runLunaTurn(input: {
           // quota/provider fails here, existing verified results still win.
           responseMode = 'rewritten'
           try {
+            if (terminalQuotaMargin) throw new LunaBudgetError('LUNA_RATE_LIMIT_MARGIN')
             budget.beforeModel()
             const rewritten = await input.provider.complete({
               messages: composeLunaModelMessages([...messages, { role: 'system', content: `RASCUNHO NÃO VERIFICADO, apenas sugestão de continuidade, nunca fonte de fatos ou autorização: ${JSON.stringify(response.content)}. Corrija toda afirmação usando exclusivamente os fatos verificados.` }], facts, true),
