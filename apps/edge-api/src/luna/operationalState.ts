@@ -19,6 +19,11 @@ const fields: Record<DraftKind, Set<string>> = {
   booking: new Set(['pet_id', 'scheduled_at', 'period', 'transport_mode', 'address', 'reference', 'notes', 'machine_number']),
   registration: new Set(['customer_name', 'pet_name', 'species', 'breed', 'weight_kg']),
 }
+export const CART_FULFILLMENT_VALUES = ['counter', 'delivery'] as const
+export function validDraftFieldValue(kind: DraftKind, field: string, value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 1000 && fields[kind]?.has(field) === true
+    && (kind !== 'cart' || field !== 'fulfillment_type' || CART_FULFILLMENT_VALUES.some(option => option === value))
+}
 export function loadOperationalState(raw: string): OperationalState {
   const value = JSON.parse(raw) as Record<string, unknown>
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('OPERATION_STATE_UNKNOWN')
@@ -29,7 +34,7 @@ export function loadOperationalState(raw: string): OperationalState {
   if (state.focus !== null && (typeof state.focus !== 'string' || !Object.hasOwn(state.operations, state.focus))) throw new Error('OPERATION_STATE_UNKNOWN')
   for (const [id, draft] of Object.entries(state.operations)) {
     if (!draft || id !== draft.id || !Object.hasOwn(fields, draft.kind) || !Number.isSafeInteger(draft.version) || draft.version < 1 || !['active', 'paused', 'cancelled'].includes(draft.status) || !draft.fields || typeof draft.fields !== 'object' || Array.isArray(draft.fields) || !Array.isArray(draft.items) || draft.items.length > 12) throw new Error('OPERATION_STATE_UNKNOWN')
-    if (Object.entries(draft.fields).some(([key, val]) => !fields[draft.kind].has(key) || typeof val !== 'string' || val.length > 1000)) throw new Error('OPERATION_STATE_UNKNOWN')
+    if (Object.entries(draft.fields).some(([key, val]) => !validDraftFieldValue(draft.kind, key, val))) throw new Error('OPERATION_STATE_UNKNOWN')
     if (draft.items.some((item) => !item || typeof item.id !== 'string' || !Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 100)) throw new Error('OPERATION_STATE_UNKNOWN')
     if (new Set(draft.items.map((item) => item.id)).size !== draft.items.length) throw new Error('OPERATION_STATE_UNKNOWN')
   }
@@ -43,7 +48,7 @@ export function reduceDraft(state: OperationalState, event: DraftEvent): Operati
   if (!current && Object.keys(state.operations).length >= 12) throw new Error('OPERATION_LIMIT')
   const next = structuredClone(current ?? { id: event.operationId, kind: event.kind, version: 0, status: 'active' as const, fields: {}, items: [] })
   if (event.action === 'set_field') {
-    if (!event.field || !fields[event.kind].has(event.field) || typeof event.value !== 'string' || event.value.length > 1000) throw new Error('OPERATION_FIELD_INVALID')
+    if (!event.field || !validDraftFieldValue(event.kind, event.field, event.value)) throw new Error('OPERATION_FIELD_INVALID')
     next.fields[event.field] = event.value
     if(event.kind==='booking'&&event.field==='pet_id'&&current?.fields.pet_id!==event.value)delete next.fields.machine_number
   } else if (['add_item', 'remove_item', 'replace_item', 'set_quantity'].includes(event.action)) {

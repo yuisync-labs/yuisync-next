@@ -25,6 +25,20 @@ export async function operationalAssertions(input:{id:number;turn:number;total:n
   }
  }
  const operations=Object.values(after.operational.operations??{}) as any[],cart=operations.find(o=>o.kind==='cart'),booking=operations.find(o=>o.kind==='booking')
+ if(id===1&&turn===1){
+  check(cart?.fields.fulfillment_type==='counter','PICKUP_FULFILLMENT_INVALID')
+  check(cart?.items.length===1&&cart.items[0].id==='racao-a'&&cart.items[0].quantity===1,'PICKUP_CART_CHANGED')
+  const proposal=rows('luna_proposals').find((p:any)=>{
+   const payload=JSON.parse(p.payload_json)
+   return p.status==='awaiting_confirmation'&&p.operation_kind==='product_order_create'
+    &&payload.draft_operation_id===cart?.id&&payload.draft_version===cart?.version
+    &&payload.fulfillment_type==='counter'&&payload.total_cents===9000
+    &&payload.items?.length===1&&payload.items[0].product_id==='racao-a'&&payload.items[0].quantity===1
+  })
+  check(proposal,'PICKUP_SUMMARY_NOT_PREPARED')
+  const presentation=proposal&&rows('luna_proposal_presentations').find((p:any)=>p.proposal_id===proposal.id&&p.proposal_version===proposal.version&&p.fingerprint===proposal.fingerprint)
+  check(presentation,'PICKUP_SUMMARY_NOT_PRESENTED')
+ }
  if(id!==10)check(rows('clients').length===(id===20?2:1)&&rows('clients').some((r:any)=>r.id===fixture.customer),'CUSTOMER_CHANGED')
  if(id===20){
   const disclosure=JSON.stringify({tools,messages:rows('chat_messages').filter((m:any)=>m.direction==='outbound'),memory:rows('luna_conversation_memory')})

@@ -21,6 +21,22 @@ describe('read-only Luna termination and capabilities', () => {
   it('can answer a catalog query without creating a purchase', () => {
     expect(finishTurn(final([{kind:'fact',value:facts[0].id}],'information',[]),empty,facts)).toMatchObject({ok:true})
   })
+  it('requires a material next step and current prepared operation, but leaves parallel information independent', () => {
+    expect(finishTurn(final([{kind:'fact',value:facts[0].id}]),cart,facts,{enforce:true})).toMatchObject({ok:false,code:'TURN_NEXT_STEP_MISSING'})
+    const ready=reduceDraft(cart,{operationId:'cart',kind:'cart',expectedVersion:1,action:'set_field',field:'fulfillment_type',value:'counter'})
+    expect(finishTurn(final([{kind:'social',value:'Certo!'}]),ready,[],{enforce:true})).toMatchObject({ok:false,code:'TURN_PREPARATION_REQUIRED'})
+    expect(finishTurn(final([{kind:'social',value:'Certo!'}]),ready,[],{enforce:true,preparedOperationIds:['cart']})).toMatchObject({ok:true})
+    expect(finishTurn(final([{kind:'fact',value:facts[0].id}],'information',[]),ready,facts,{enforce:true})).toMatchObject({ok:true})
+  })
+  it('does not expose irrelevant identity facts in a purchase response', () => {
+    const pet={id:'identity:pet.0',text:'Pet cadastrado: mel.',reference:{id:'mel',kind:'pet' as const,label:'mel',observedAtMs:1}}
+    const result=finishTurn(final([{kind:'fact',value:pet.id},{kind:'fact',value:facts[0].id},{kind:'question',value:'fulfillment'}]),cart,[pet,...facts],{enforce:true})
+    expect(result).toEqual({ok:true,data:{reply:`${facts[0].text}\nVocê prefere retirar ou receber em casa?`}})
+  })
+  it('rejects unsupported fulfillment even in persisted state or legacy events', () => {
+    expect(()=>reduceDraft(cart,{operationId:'cart',kind:'cart',expectedVersion:1,action:'set_field',field:'fulfillment_type',value:'pickup'})).toThrow('OPERATION_FIELD_INVALID')
+    expect(()=>loadOperationalState(JSON.stringify({...cart,operations:{cart:{...cart.operations.cart,fields:{fulfillment_type:'pickup'}}}}))).toThrow('OPERATION_STATE_UNKNOWN')
+  })
   it.each([['unknown'],['cart','cart'],['__proto__']].map(operation_ids=>({operation_ids})))('rejects unknown, duplicated or inherited draft IDs: $operation_ids', ({operation_ids}) => {
     expect(finishTurn(final([{kind:'social',value:'Certo!'}],'cart',operation_ids),cart,[])).toMatchObject({ok:false,code:'TURN_OPERATION_UNKNOWN'})
   })

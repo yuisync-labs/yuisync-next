@@ -2,6 +2,7 @@ import type { LunaExecutionContext, LunaToolDefinition, LunaToolResult } from '.
 import type { LunaToolRegistry } from './toolRegistry'
 import { LunaConversationRepository } from './conversationRepository'
 import { matchesToolSchema } from './toolSchema'
+import { CART_FULFILLMENT_VALUES } from './operationalState'
 
 // Model-facing commands have one purpose. Versions, identity and event IDs are
 // server-owned; the existing domain command still enforces CAS and catalog scope.
@@ -16,14 +17,15 @@ const commands = [
   ['remove_item', { item_id: item }],
   ['replace_item', { item_id: item, replacement_id: item, quantity }],
   ['set_quantity', { item_id: item, quantity }],
-  ['set_field', { field: { type: 'string', enum: ['fulfillment_type', 'address', 'reference', 'payment_preference', 'pet_id', 'scheduled_at', 'period', 'transport_mode', 'notes', 'machine_number', 'customer_name', 'pet_name', 'species', 'breed', 'weight_kg'] }, value: { type: 'string', maxLength: 1000 } }],
+  ['set_fulfillment', { value: { type: 'string', enum: [...CART_FULFILLMENT_VALUES] } }],
+  ['set_field', { field: { type: 'string', enum: ['address', 'reference', 'payment_preference', 'pet_id', 'scheduled_at', 'period', 'transport_mode', 'notes', 'machine_number', 'customer_name', 'pet_name', 'species', 'breed', 'weight_kg'] }, value: { type: 'string', maxLength: 1000 } }],
   ['pause', {}], ['resume', {}], ['cancel', {}],
 ] as const
 
 export const DRAFT_TOOL_DEFINITIONS: readonly LunaToolDefinition[] = commands.map(([action, fields]) => ({
   name: `draft_${action}`,
-  description: `Altera somente o rascunho: ${action}. Reutilize operation_id estável e IDs reais consultados. Sem preço, pagamento ou reserva. A versão é resolvida e validada no servidor.`,
-  parameters: { type: 'object', additionalProperties: false, properties: { ...common, ...fields }, required: [...Object.keys(common), ...Object.keys(fields)] },
+  description: `Altera somente o rascunho: ${action}. ${action === 'set_fulfillment' ? 'counter significa retirada na loja; delivery significa entrega. Escolha somente a modalidade explícita do cliente.' : 'Reutilize IDs reais; não adicione novamente itens já persistidos sem mudança solicitada.'} Reutilize operation_id estável. Sem preço, pagamento ou reserva. A versão é resolvida e validada no servidor.`,
+  parameters: { type: 'object', additionalProperties: false, properties: { ...common, ...(action === 'set_fulfillment' ? { kind: { type: 'string', enum: ['cart'] } } : {}), ...fields }, required: [...Object.keys(common), ...Object.keys(fields)] },
 }))
 
 export async function executeDraftTool(database: D1Database, registry: LunaToolRegistry, name: string, args: unknown, context: LunaExecutionContext): Promise<LunaToolResult> {
@@ -38,7 +40,8 @@ export async function executeDraftTool(database: D1Database, registry: LunaToolR
   return registry.execute('update_operation_draft', {
     operationId: data.operation_id, kind: data.kind,
     expectedVersion: prior?.previous_version ?? loaded.state.operations[String(data.operation_id)]?.version ?? 0,
-    action: name.slice('draft_'.length),
+    action: name === 'draft_set_fulfillment' ? 'set_field' : name.slice('draft_'.length),
+    ...(name === 'draft_set_fulfillment' ? { field: 'fulfillment_type', value: data.value } : {}),
     ...('item_id' in data ? { itemId: data.item_id } : {}),
     ...('replacement_id' in data ? { replacementId: data.replacement_id } : {}),
     ...('quantity' in data ? { quantity: data.quantity } : {}),

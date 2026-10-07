@@ -17,7 +17,7 @@ type Scenario = Readonly<{
   faults: readonly Readonly<{ afterTurn: number; inject: string }>[]
   result: string
 }>
-const draftTools = ['draft_add_item','draft_remove_item','draft_replace_item','draft_set_quantity','draft_set_field','draft_pause','draft_resume','draft_cancel']
+const draftTools = ['draft_add_item','draft_remove_item','draft_replace_item','draft_set_quantity','draft_set_field','draft_set_fulfillment','draft_pause','draft_resume','draft_cancel']
 const purchaseTools = [...draftTools,'record_turn_decision','resolve_context_reference','get_customer_context', 'search_products', 'update_operation_draft', 'prepare_product_order', 'present_proposal', 'get_operation_status', 'commit_confirmed_proposal']
 const bookingTools = [...draftTools,'record_turn_decision','resolve_context_reference','get_customer_context', 'search_services', 'get_customer_appointments', 'get_package_eligibility', 'update_operation_draft', 'get_available_slots', 'prepare_appointment', 'prepare_appointment_reschedule', 'prepare_appointment_cancellation', 'present_proposal', 'get_operation_status', 'commit_confirmed_proposal']
 const never = ['create_payment', 'change_price', 'change_commission', 'generic_sql', 'cross_tenant_query']

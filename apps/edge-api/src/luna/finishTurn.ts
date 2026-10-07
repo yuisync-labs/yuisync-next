@@ -25,13 +25,22 @@ export function finishTurnDefinition(facts:readonly Fact[]):LunaToolDefinition {
   return {...FINISH_TURN,parameters:{...FINISH_TURN.parameters,properties:{...properties,fact_ids:{...properties.fact_ids,...(facts.length?{items:{type:'string',enum:facts.map(f=>f.id)}}:{maxItems:0})}}}}
 }
 
-export function finishTurn(args: Record<string,unknown>, state: OperationalState, facts: readonly Fact[]): LunaToolResult<{reply:string}> {
+export function finishTurn(args: Record<string,unknown>, state: OperationalState, facts: readonly Fact[], progress: { enforce?: boolean; preparedOperationIds?: readonly string[] } = {}): LunaToolResult<{reply:string}> {
   if(!matchesToolSchema(args,FINISH_TURN.parameters))return {ok:false,code:'TOOL_ARGUMENTS_INVALID',retryable:false}
   const intent=args.intent as string, ids=args.operation_ids as string[]
   if(new Set(ids).size!==ids.length || ids.some(id=>!Object.hasOwn(state.operations,id)))return {ok:false,code:'TURN_OPERATION_UNKNOWN',retryable:false}
   if(['cart','booking','registration'].includes(intent) && !ids.some(id=>state.operations[id].kind===intent))return {ok:false,code:'TURN_NOT_READY',retryable:false,validation_errors:[{field:'operation_ids',rule:'First query the real catalog/identity as needed and persist the requested draft with an available draft tool. Reuse that draft ID; do not ask again for explicit data.'}]}
-  const blocks=[...(args.social as string[]).map(text=>({kind:'social',value:text})),...(args.fact_ids as string[]).map(id=>({kind:'fact',value:id})),...(args.question==='none'?[]:[{kind:'question',value:args.question as string}])]
   const related=ids.map(id=>state.operations[id])
+  const activeCarts = intent === 'cart' ? related.filter(d => d.kind === 'cart' && d.status === 'active' && d.items.length > 0) : []
+  if (progress.enforce && args.question === 'none') {
+    if (activeCarts.some(d => !['counter', 'delivery'].includes(d.fields.fulfillment_type))) return {ok:false,code:'TURN_NEXT_STEP_MISSING',retryable:false,validation_errors:[{field:'question',rule:'The active purchase is missing fulfillment. Ask fulfillment; do not assert completion or repeat persisted items.'}]}
+    if (activeCarts.some(d => !progress.preparedOperationIds?.includes(d.id))) return {ok:false,code:'TURN_PREPARATION_REQUIRED',retryable:false,validation_errors:[{field:'operation_ids',rule:'Prepare the current cart with prepare_product_order using the persisted ID and values; if material delivery data is missing, ask that field. A draft alone is not a presented commercial summary.'}]}
+  }
+  // Identity remains available to planning, but is not a relevant purchase
+  // answer. Preserve facts for parallel information/booking intents instead.
+  const irrelevantPets = intent === 'cart' && !related.some(d => d.kind === 'booking')
+    ? new Set(facts.filter(f => f.reference?.kind === 'pet').map(f => f.id)) : new Set<string>()
+  const blocks=[...(args.social as string[]).map(text=>({kind:'social',value:text})),...(args.fact_ids as string[]).filter(id=>!irrelevantPets.has(id)).map(id=>({kind:'fact',value:id})),...(args.question==='none'?[]:[{kind:'question',value:args.question as string}])]
   for(const block of blocks){
     if(block.kind!=='question')continue
     if(block.value==='quantity' && related.some(d=>d.kind==='cart'&&d.items.length>0&&d.items.every(i=>i.quantity>0)))return {ok:false,code:'TURN_QUESTION_ALREADY_KNOWN',retryable:false,validation_errors:[{field:'blocks',rule:'Quantities already exist in the cart. Ask only a materially missing field.'}]}

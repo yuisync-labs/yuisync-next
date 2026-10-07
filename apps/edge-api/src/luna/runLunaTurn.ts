@@ -204,13 +204,22 @@ export async function runLunaTurn(input: {
         budget.beforeTool()
         const args = parsed
         if(call.function.name==='finish_turn'){
-          const finish=args?finishTurn(args,currentState,facts):{ok:false as const,code:'TOOL_ARGUMENTS_INVALID',retryable:false}
+          const preparedOperationIds: string[] = []
+          if (input.provider.operationalReplies && args?.intent === 'cart') {
+            const rows = (await input.database.prepare(`SELECT payload_json FROM luna_proposals WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND (status='completed' OR (status='awaiting_confirmation' AND expires_at_ms>=?4)) LIMIT 13`)
+              .bind(input.context.tenantId,input.context.moduleId,input.context.conversationId,lunaNow(input.context)).all<{payload_json:string}>()).results
+            if (rows.length <= 12) for (const row of rows) {
+              const payload = JSON.parse(row.payload_json) as {draft_operation_id?:string;draft_version?:number}
+              if (payload.draft_operation_id && currentState.operations[payload.draft_operation_id]?.version === payload.draft_version) preparedOperationIds.push(payload.draft_operation_id)
+            }
+          }
+          const finish=args?finishTurn(args,currentState,facts,{enforce:!!input.provider.operationalReplies,preparedOperationIds}):{ok:false as const,code:'TOOL_ARGUMENTS_INVALID',retryable:false}
           await repository.recordToolRun({context:input.context,name:call.function.name,args:args??{},result:finish,durationMs:0})
           input.observer?.tool({id:call.id,name:call.function.name,args,result:finish,recovery:false})
           if(finish.ok){
             await completeReply(finish.data.reply, finalRepairUsed ? 'rewritten' : 'verified')
           }else{
-            if(finish.code==='TURN_RESPONSE_INVALID'||finish.code==='TOOL_ARGUMENTS_INVALID'){
+            if(finish.code==='TURN_RESPONSE_INVALID'||finish.code==='TOOL_ARGUMENTS_INVALID'||finish.code==='TURN_NEXT_STEP_MISSING'){
               if(finalRepairUsed)await completeReply(safeFactualFallback(buildVerifiedFacts(evidence.filter(item=>item.callId!=='bootstrap-identity'))),'factual_fallback')
               finalRepairUsed=true
             }

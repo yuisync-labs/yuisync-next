@@ -37,4 +37,22 @@ describe('small SDK draft tools with real local D1', () => {
       for (const definition of DRAFT_TOOL_DEFINITIONS) expect(definition.parameters).toMatchObject({ additionalProperties: false })
     } finally { h.close() }
   })
+  it('encodes pickup as counter and rejects unsupported fulfillment before persisting any event', async () => {
+    const h = await createDesignedHarness(1, '-sdk-fulfillment')
+    try {
+      const context = { ...h.ctx, sourceMessageId: 'fulfillment-message', actionIndex: 1 }
+      await new LunaConversationRepository(h.db).ensureConversation(context)
+      const registry = createLunaToolRegistry(h.db)
+      const args = { operation_id: 'cart', kind: 'cart', value: 'pickup' }
+      expect(await executeDraftTool(h.db,registry,'draft_set_fulfillment',args,context)).toMatchObject({ok:false,code:'TOOL_ARGUMENTS_INVALID'})
+      expect(await executeDraftTool(h.db,registry,'draft_set_field',{...args,field:'fulfillment_type'},context)).toMatchObject({ok:false,code:'TOOL_ARGUMENTS_INVALID'})
+      expect((await h.state()).operations).toEqual({})
+      expect((await executeDraftTool(h.db,registry,'draft_set_fulfillment',{...args,value:'counter'},context)).ok).toBe(true)
+      expect((await h.state()).operations.cart.fields.fulfillment_type).toBe('counter')
+      expect(await executeDraftTool(h.db,registry,'draft_set_fulfillment',{...args,kind:'booking',value:'counter'},{...context,actionIndex:2})).toMatchObject({ok:false,code:'TOOL_ARGUMENTS_INVALID'})
+      // The legacy/internal writer cannot bypass the same domain validation.
+      expect(await registry.execute('update_operation_draft',{operationId:'cart',kind:'cart',expectedVersion:1,action:'set_field',field:'fulfillment_type',value:'pickup'},{...context,actionIndex:2})).toMatchObject({ok:false})
+      expect((await h.state()).operations.cart.fields.fulfillment_type).toBe('counter')
+    } finally { h.close() }
+  })
 })

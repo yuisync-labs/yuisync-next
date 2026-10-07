@@ -5,10 +5,17 @@ import { seedCertificationFixture } from '../../../scripts/luna/certificationFix
 import worker,{ certificationSnapshot,initializeCertificationSchema } from '../../../scripts/luna/stagingWorker'
 import { runLunaTurn } from '../src/luna/runLunaTurn'
 import { oneAgendaTimeout,blockCanonicalAfternoon } from '../../../scripts/luna/certificationFaults'
+import { operationalAssertions } from '../../../scripts/luna/certificationAssertions'
 
 const db=(env as EdgeEnv & {DB:D1Database}).DB
 const limits={calls:6,tokens:100000,rowsRead:20000}
 describe('Isolated staging certification adapter — no external provider',()=>{
+ it('fails the observed real pickup checkpoint instead of approving absence of a premature sale',async()=>{
+  const tenant='cert-local-summary-regression'
+  const snapshot={operational:{operations:{op1:{id:'op1',kind:'cart',version:2,status:'active',fields:{fulfillment_type:'pickup'},items:[{id:'racao-a',quantity:1}]}}},tables:{clients:[{tenant_id:tenant,module_id:'petshop',id:'cliente-maria'}],luna_proposals:[],luna_proposal_presentations:[]}}
+  const violations=await operationalAssertions({id:1,turn:1,total:3,tenant,before:snapshot,after:snapshot,tools:[],faults:[]})
+  expect(violations).toEqual(expect.arrayContaining(['PICKUP_FULFILLMENT_INVALID','PICKUP_SUMMARY_NOT_PREPARED','PICKUP_SUMMARY_NOT_PRESENTED']))
+ })
  it('injects one real agenda timeout and then delegates recovery to D1',async()=>{
   await seedCertificationFixture(db,'cert-local-timeout','scenario-19',19)
   const fault=oneAgendaTimeout(certificationMeter(db,limits).db)

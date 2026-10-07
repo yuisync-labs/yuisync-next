@@ -40,6 +40,30 @@ async function turn(h:Harness,index:number,message:string,commands:Command[]){
 }
 
 describe('vertical purchase: real SDK + Worker/D1, HTTP model simulated',()=>{
+  it('recovers the observed missing question and premature finish without a second draft mutation or invented sale',async()=>{
+    const h=await createDesignedHarness(1,'-sdk-browser-regression')
+    try{
+      const first=await turn(h,1,'Quero uma Ração A.',[
+        h.command('search_products',{query:'Ração A'}),
+        h.command('draft_add_item',{operation_id:'cart',kind:'cart',item_id:'racao-a',quantity:1}),
+        {name:'finish_turn',args:{intent:'cart',operation_ids:['cart'],social:[],fact_ids:['bootstrap-identity:pet.0','sdk-1-1:product.0'],question:'none'}},
+        {name:'finish_turn',args:{intent:'cart',operation_ids:['cart'],social:[],fact_ids:['bootstrap-identity:pet.0','sdk-1-1:product.0'],question:'fulfillment'}},
+      ])
+      expect(first.reply).toContain('retirar ou receber em casa')
+      expect(first.reply).not.toContain('Pet cadastrado')
+      expect((await h.state()).operations.cart.items).toEqual([{id:'racao-a',quantity:1}])
+      const second=await turn(h,2,'Vou retirar na loja.',[
+        h.command('draft_set_fulfillment',{operation_id:'cart',kind:'cart',value:'counter'}),
+        {name:'finish_turn',args:{intent:'cart',operation_ids:['cart'],social:['Tudo certo!'],fact_ids:['bootstrap-identity:pet.0'],question:'none'}},
+        h.command('prepare_product_order',{customer_id:'cliente-maria',operation_id:'cart',items:[{product_id:'racao-a',quantity:1}],fulfillment_type:'counter'}),
+      ])
+      expect(second.status).toBe('awaiting_confirmation')
+      expect(second.reply).toContain('Ração A × 1: R$ 90,00')
+      expect(second.reply).toContain('Modalidade: retirada')
+      expect((await h.db.prepare('SELECT * FROM luna_proposal_presentations WHERE tenant_id=?1').bind(h.tenant).all()).results).toHaveLength(1)
+      expect(await h.db.prepare('SELECT COUNT(*) AS n FROM sales WHERE tenant_id=?1').bind(h.tenant).first()).toEqual({n:0})
+    }finally{h.close()}
+  })
   it('completes scenario 1 through ToolLoopAgent and small draft commands with a pending order and no invented payment',async()=>{
     const h=await createDesignedHarness(1,'-sdk-vertical')
     try{
@@ -54,7 +78,7 @@ describe('vertical purchase: real SDK + Worker/D1, HTTP model simulated',()=>{
       expect(first.reply).not.toContain('Qual quantidade?')
       expect((await h.state()).operations.cart.items).toEqual([{id:'racao-a',quantity:1}])
       const second=await turn(h,2,LUNA_DESIGNED_SCENARIOS[0].messages[1],[
-        h.command('draft_set_field',{operation_id:'cart',kind:'cart',field:'fulfillment_type',value:'counter'}),
+        h.command('draft_set_fulfillment',{operation_id:'cart',kind:'cart',value:'counter'}),
         h.command('prepare_product_order',{customer_id:'cliente-maria',operation_id:'cart',items:[{product_id:'racao-a',quantity:1}],fulfillment_type:'counter'}),
       ])
       expect(second).toMatchObject({status:'awaiting_confirmation',errorCode:null,usage:{modelCalls:2}})
