@@ -6,11 +6,24 @@ const nullable = (schema: Schema): boolean => schema.type === 'null' || Array.is
 // provider grammar; the authoritative domain schema remains untouched.
 export function strictGroqToolSchema(schema: Schema): Schema {
   const converted: Record<string, unknown> = { ...schema }
+  // Compile only structural grammar constraints on the provider wire. Domain
+  // bounds remain mandatory in matchesToolSchema BEFORE any tool executes;
+  // provider schema compilation is not our authorization/security boundary.
+  // Complex scalar/collection bounds can reject the entire Groq request,
+  // including calls to an unrelated zero-argument tool.
+  for (const key of ['minLength','maxLength','minimum','maximum','minItems','maxItems']) delete converted[key]
   if (schema.properties || schema.type === 'object') {
     const properties = object(schema.properties), required = new Set(Array.isArray(schema.required) ? schema.required : [])
     converted.properties = Object.fromEntries(Object.entries(properties).map(([key, value]) => {
       const original = object(value), child = strictGroqToolSchema(original)
-      return [key, !required.has(key) && !nullable(original) ? { anyOf: [child, { type: 'null' }] } : child]
+      if (required.has(key) || nullable(original)) return [key, child]
+      // Prefer the documented nullable type form over an unnecessary anyOf.
+      // An optional enum must explicitly include its wire null sentinel.
+      if (typeof child.type === 'string') return [key, {
+        ...child, type: [child.type, 'null'],
+        ...(Array.isArray(child.enum) ? { enum: [...child.enum, null] } : {}),
+      }]
+      return [key, { anyOf: [child, { type: 'null' }] }]
     }))
     converted.required = Object.keys(properties)
     converted.additionalProperties = false
