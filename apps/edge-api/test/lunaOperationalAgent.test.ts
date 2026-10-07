@@ -5,6 +5,7 @@ import { runLunaTurn } from '../src/luna/runLunaTurn'
 import type { LunaMessage, LunaProviderResponse, LunaToolDefinition } from '../src/luna/contracts'
 import { createLunaToolRegistry } from '../src/luna/toolRegistry'
 import { loadPresentableProposals, recordProposalPresentation, renderProposalSummary } from '../src/luna/proposalPresentation'
+import { GroqProviderError } from '../src/luna/providers/groqProvider'
 
 const testEnv = env as EdgeEnv & { DB: D1Database }
 const TENANT = 'tenant-luna-agent-test'
@@ -55,6 +56,22 @@ async function present(proposalId: string): Promise<string> {
 }
 
 describe('Luna operational foundation', () => {
+  it('contabiliza uso conhecido da reformulação vazia e não usa pets do bootstrap como resposta à compra', async () => {
+    const thread='rewrite-invalid-'+crypto.randomUUID(),source='rewrite-source-'+crypto.randomUUID(),ctx={...context,conversationId:thread,sourceMessageId:source,traceId:thread}
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(`INSERT INTO chat_threads(tenant_id,module_id,id,channel,external_thread_id,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,'internal',?2,'open',?3,?3)`).bind(TENANT,thread,NOW),
+      testEnv.DB.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?2,'inbound','customer','Quero uma ração',?4)`).bind(TENANT,source,thread,NOW),
+    ])
+    let calls=0
+    const result=await runLunaTurn({database:testEnv.DB,context:ctx,provider:{model:'fixture',async complete(){
+      if(++calls===2)throw new GroqProviderError('GROQ_RESPONSE_INVALID',null,null,{usage:{promptTokens:400,completionTokens:1200},responseShape:{messagePresent:true,finishReason:'length',contentPresent:false,toolCount:0}})
+      return {content:'Prefere retirar ou receber?',toolCalls:[],usage:{promptTokens:100,completionTokens:20},rateLimit:{remainingRequests:900,remainingTokens:7000,resetRequests:null,resetTokens:null},requestLimit:1000}
+    }}})
+    expect(result.usage).toMatchObject({modelCalls:2,promptTokens:500,completionTokens:1220})
+    expect(result.reply).not.toContain('Pet cadastrado')
+    expect(result.reply).toContain('Não tenho dados verificados suficientes')
+    expect(result.committedOperationIds).toEqual([])
+  })
   it('separa tools nativas da composição final e não transforma o rascunho em fonte de preço', async () => {
     const thread = 'phase-split-' + crypto.randomUUID(), source = 'source-' + crypto.randomUUID()
     const ctx = { ...context, conversationId: thread, sourceMessageId: source, traceId: thread }

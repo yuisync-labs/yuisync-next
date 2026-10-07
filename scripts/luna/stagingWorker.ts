@@ -4,7 +4,7 @@
 import application from '../../apps/edge-api/src/index'
 export * from '../../apps/edge-api/src/index'
 import { runLunaTurn } from '../../apps/edge-api/src/luna/runLunaTurn'
-import { GroqProvider } from '../../apps/edge-api/src/luna/providers/groqProvider'
+import { GroqProvider, GroqProviderError } from '../../apps/edge-api/src/luna/providers/groqProvider'
 import { recordProposalPresentation } from '../../apps/edge-api/src/luna/proposalPresentation'
 import { LUNA_DESIGNED_SCENARIOS,LUNA_SCENARIO_FIXTURE as f,LUNA_SCENARIO_CLOCK } from '../../apps/edge-api/test/fixtures/luna/designedScenarios'
 import { seedCertificationFixture } from './certificationFixtures'
@@ -157,7 +157,10 @@ async function certification(request:Request,env:Env){
    meter.beforeModel(input,upper)
    await ledger.reserveModel(upper)
    let response
-   try{response=await groq.complete(input)}catch(error){meter.modelUncertain();responses.push({providerError:error instanceof Error?error.message:'GROQ_REQUEST_FAILED',diagnostic:(error as {diagnostic?:unknown})?.diagnostic??null});throw error}
+   try{response=await groq.complete(input)}catch(error){
+    if(error instanceof GroqProviderError && error.usage){meter.afterModel(error.usage);await ledger.settleModel(upper,error.usage)}else meter.modelUncertain()
+    responses.push({providerError:error instanceof Error?error.message:'GROQ_REQUEST_FAILED',diagnostic:(error as {diagnostic?:unknown})?.diagnostic??null,...(error instanceof GroqProviderError?{usage:error.usage,responseShape:error.responseShape}:{})});throw error
+   }
    // Known usage stays known even if it reveals a budget violation.
    meter.afterModel(response.usage)
    await ledger.settleModel(upper,response.usage)

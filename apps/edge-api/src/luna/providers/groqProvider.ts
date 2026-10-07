@@ -20,13 +20,17 @@ export class GroqProviderError extends Error {
     | 'GROQ_RESPONSE_INVALID'
     | 'GROQ_USAGE_UNAVAILABLE'
   readonly retryAfter: string | null
+  readonly usage: { promptTokens: number; completionTokens: number } | null
+  readonly responseShape: { messagePresent: boolean; finishReason: string | null; contentPresent: boolean; toolCount: number } | null
 
-  constructor(code: GroqProviderError['code'], retryAfter: string | null = null, diagnostic: GroqProviderError['diagnostic'] = null) {
+  constructor(code: GroqProviderError['code'], retryAfter: string | null = null, diagnostic: GroqProviderError['diagnostic'] = null, metadata?: {usage: GroqProviderError['usage']; responseShape: GroqProviderError['responseShape']}) {
     super(code)
     this.name = 'GroqProviderError'
     this.code = code
     this.retryAfter = retryAfter
     this.diagnostic = diagnostic
+    this.usage = metadata?.usage ?? null
+    this.responseShape = metadata?.responseShape ?? null
   }
 }
 
@@ -39,6 +43,7 @@ type GroqProviderOptions = Readonly<{
 
 type GroqResponseBody = {
   choices?: Array<{
+    finish_reason?: string
     message?: {
       content?: string | null
       tool_calls?: Array<{
@@ -147,7 +152,11 @@ export class GroqProvider {
     let body: GroqResponseBody
     try { body = await response.json() as GroqResponseBody } catch { throw new GroqProviderError('GROQ_RESPONSE_INVALID') }
     const message = body.choices?.[0]?.message
-    if (!message) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
+    const promptTokens = body.usage?.prompt_tokens, completionTokens = body.usage?.completion_tokens
+    const knownUsage = Number.isSafeInteger(promptTokens) && Number(promptTokens) >= 0 && Number.isSafeInteger(completionTokens) && Number(completionTokens) >= 0 ? {promptTokens:promptTokens!,completionTokens:completionTokens!} : null
+    const rawFinish = body.choices?.[0]?.finish_reason
+    const invalidResponse = () => new GroqProviderError('GROQ_RESPONSE_INVALID',null,null,{usage:knownUsage,responseShape:{messagePresent:!!message,finishReason:['stop','length','tool_calls','content_filter'].includes(rawFinish ?? '') ? rawFinish! : null,contentPresent:typeof message?.content==='string' && !!message.content.trim(),toolCount:Array.isArray(message?.tool_calls) ? Math.min(100,message.tool_calls.length) : 0}})
+    if (!message) throw invalidResponse()
     const toolCalls = (message.tool_calls || []).map((call) => ({
       id: String(call.id || ''),
       type: 'function' as const,
@@ -161,9 +170,8 @@ export class GroqProvider {
       },
     })).filter((call) => call.id && call.function.name)
     const content = typeof message.content === 'string' ? message.content.trim() || null : null
-    if (!content && toolCalls.length === 0) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
-    if (new Set(toolCalls.map(call => call.id)).size !== toolCalls.length) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
-    const promptTokens = body.usage?.prompt_tokens, completionTokens = body.usage?.completion_tokens
+    if (!content && toolCalls.length === 0) throw invalidResponse()
+    if (new Set(toolCalls.map(call => call.id)).size !== toolCalls.length) throw invalidResponse()
     if (!Number.isSafeInteger(promptTokens) || Number(promptTokens) < 0 || !Number.isSafeInteger(completionTokens) || Number(completionTokens) < 0) throw new GroqProviderError('GROQ_USAGE_UNAVAILABLE')
 
     return {

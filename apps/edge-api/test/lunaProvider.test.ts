@@ -4,6 +4,11 @@ import { GroqProvider } from '../src/luna/providers/groqProvider'
 import { createLunaBudget, LunaBudgetError } from '../src/luna/quotaBudget'
 
 describe('Luna Groq provider and budget', () => {
+  it('preserva uso conhecido de completion vazia e diagnostica somente a forma, sem raciocínio privado', async () => {
+    const provider=new GroqProvider({apiKey:'fixture',model:'openai/gpt-oss-20b',fetchFn:async()=>new Response(JSON.stringify({choices:[{finish_reason:'length',message:{content:null,reasoning:'private reasoning'}}],usage:{prompt_tokens:400,completion_tokens:1200}}),{status:200})})
+    await expect(provider.complete({messages:[{role:'user',content:'oi'}],tools:[]})).rejects.toMatchObject({code:'GROQ_RESPONSE_INVALID',usage:{promptTokens:400,completionTokens:1200},responseShape:{messagePresent:true,finishReason:'length',contentPresent:false,toolCount:0}})
+    try { await provider.complete({messages:[],tools:[]}) } catch(error) { expect(JSON.stringify(error)).not.toContain('private reasoning') }
+  })
   it('normaliza resposta, chamada de ferramenta, uso e limites', async () => {
     const fetchFn = vi.fn(async () => new Response(JSON.stringify({
       choices: [{ message: { content: null, tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'search_services', arguments: '{"query":"banho"}' } }] } }],

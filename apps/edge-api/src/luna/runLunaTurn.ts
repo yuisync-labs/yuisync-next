@@ -90,6 +90,15 @@ export async function runLunaTurn(input: {
   let finalStatus: LunaTurnResult['status'] = 'failed'
   let reply: string | null = null
   let errorCode: string | null = null
+  const infer = async (request: Parameters<Provider['complete']>[0]) => {
+    try { return await input.provider.complete(request) }
+    catch (error) {
+      // An unusable completion can still have valid billed usage. Never turn
+      // that known consumption into zero or force an unnecessary replay.
+      if (error instanceof GroqProviderError && error.usage) budget.afterModel({...error.usage,remainingRequests:null,requestLimit:null})
+      throw error
+    }
+  }
 
   try {
     // Identity is a deterministic bootstrap, not an LLM planning step. It is
@@ -107,7 +116,7 @@ export async function runLunaTurn(input: {
       await pacer.beforeModel()
       budget.beforeModel()
       const facts = buildVerifiedFacts(evidence)
-      const response = await input.provider.complete({ messages: composeLunaModelMessages(messages, facts), tools: registry.definitions })
+      const response = await infer({ messages: composeLunaModelMessages(messages, facts), tools: registry.definitions })
       pacer.observe({ promptTokens: response.usage.promptTokens, tokenLimit: response.tokenLimit ?? null, remainingTokens: response.rateLimit.remainingTokens, resetTokens: response.rateLimit.resetTokens })
       let terminalQuotaMargin = false
       try { budget.afterModel({
@@ -136,14 +145,19 @@ export async function runLunaTurn(input: {
             if (terminalQuotaMargin) throw new LunaBudgetError('LUNA_RATE_LIMIT_MARGIN')
             await pacer.beforeModel()
             budget.beforeModel()
-            const rewritten = await input.provider.complete({
+            const rewritten = await infer({
               messages: composeLunaModelMessages([...messages, { role: 'system', content: `RASCUNHO NÃO VERIFICADO, apenas sugestão de continuidade, nunca fonte de fatos ou autorização: ${JSON.stringify(response.content)}. Corrija toda afirmação usando exclusivamente os fatos verificados.` }], facts, true),
               tools: [],
             })
             budget.afterModel({ promptTokens: rewritten.usage.promptTokens, completionTokens: rewritten.usage.completionTokens, remainingRequests: rewritten.rateLimit.remainingRequests, requestLimit: rewritten.requestLimit, remainingTokens: rewritten.rateLimit.remainingTokens, tokenLimit: rewritten.tokenLimit })
             reply = rewritten.toolCalls.length ? null : validateFactualResponse(rewritten.content, facts)
           } catch { reply = null }
-          if (!reply) { responseMode = 'factual_fallback'; reply = safeFactualFallback(facts) }
+          if (!reply) {
+            responseMode = 'factual_fallback'
+            // Bootstrap identity is context, not evidence of the customer's
+            // requested action. Do not answer a purchase with a list of pets.
+            reply = safeFactualFallback(buildVerifiedFacts(evidence.filter(item=>item.callId!=='bootstrap-identity')))
+          }
         }
         const summaries = await loadPresentableProposals(input.database, input.context, proposals)
         presented.push(...summaries.map(summary=>summary.id))
