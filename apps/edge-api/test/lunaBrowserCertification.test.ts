@@ -18,10 +18,13 @@ describe('Human-driven Luna certification',()=>{
   const initial=composeLunaModelMessages(history,[])
   expect(initial.filter(m=>m.role==='system')).toHaveLength(1)
   expect(initial.at(-1)).toEqual(history[2])
-  expect(initial[0].content).toContain('O formato blocks NÃO é uma ferramenta')
+  expect(initial[0].content).toContain('FASE OPERACIONAL')
+  expect(initial[0].content).not.toContain('"blocks"')
+  expect(initial[0].content).not.toContain('RESPOSTA FINAL VERIFICADA')
   const tool={role:'tool' as const,tool_call_id:'catalog',content:'{"ok":true}'}
   expect(composeLunaModelMessages([...history,tool],[]).at(-1)).toEqual(tool)
   expect(composeLunaModelMessages(history,[],true)[0].content).toContain('FINALIZAÇÃO SEM FERRAMENTAS')
+  expect(composeLunaModelMessages(history,[],true)[0].content).toContain('"blocks"')
   expect(history).toHaveLength(3)
  })
  it('explains exact-script mismatches instead of silently disabling the button',()=>{

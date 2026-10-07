@@ -28,8 +28,15 @@ function parseArguments(raw: string): Record<string, unknown> | null {
 // system message demanding final JSON while native tools are still available.
 export function composeLunaModelMessages(messages: readonly LunaMessage[], facts: readonly import('./factualResponse').Fact[], finalOnly = false): LunaMessage[] {
   const instructions = messages.filter(message => message.role === 'system').map(message => message.content).filter(Boolean)
-  instructions.push(responseContractInstruction(facts))
-  if (finalOnly) instructions.push('FINALIZAÇÃO SEM FERRAMENTAS: reformule uma única vez a resposta final no contrato factual, usando somente os fatos verificados. Não execute nem prometa novas ações.')
+  if (finalOnly) {
+    instructions.push(responseContractInstruction(facts))
+    instructions.push('FINALIZAÇÃO SEM FERRAMENTAS: reformule uma única vez a resposta final no contrato factual, usando somente os fatos verificados. Não execute nem prometa novas ações.')
+  } else {
+    // A final-response JSON contract must never compete with native function
+    // generation. The operational model speaks naturally like the legacy;
+    // its text is only a draft and cannot bypass the verified final renderer.
+    instructions.push(`FASE OPERACIONAL: escolha somente as ferramentas nativas fornecidas para consultar fatos, manter rascunhos e executar operações autorizadas. Não invente ferramentas de resposta ou formatação. Quando nenhuma outra ferramenta for necessária, escreva uma resposta natural e breve; ela será verificada em uma fase separada, sem ferramentas. FATOS CONSULTADOS (fonte verificada): ${JSON.stringify(facts)}`)
+  }
   return [{ role: 'system', content: instructions.join('\n\n') }, ...messages.filter(message => message.role !== 'system')]
 }
 
@@ -106,7 +113,7 @@ export async function runLunaTurn(input: {
           try {
             budget.beforeModel()
             const rewritten = await input.provider.complete({
-              messages: composeLunaModelMessages(messages, facts, true),
+              messages: composeLunaModelMessages([...messages, { role: 'system', content: `RASCUNHO NÃO VERIFICADO, apenas sugestão de continuidade, nunca fonte de fatos ou autorização: ${JSON.stringify(response.content)}. Corrija toda afirmação usando exclusivamente os fatos verificados.` }], facts, true),
               tools: [],
             })
             budget.afterModel({ promptTokens: rewritten.usage.promptTokens, completionTokens: rewritten.usage.completionTokens, remainingRequests: rewritten.rateLimit.remainingRequests, requestLimit: rewritten.requestLimit, remainingTokens: rewritten.rateLimit.remainingTokens, tokenLimit: rewritten.tokenLimit })

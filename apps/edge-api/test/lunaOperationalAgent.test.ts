@@ -48,6 +48,44 @@ async function present(proposalId: string): Promise<string> {
 }
 
 describe('Luna operational foundation', () => {
+  it('separa tools nativas da composição final e não transforma o rascunho em fonte de preço', async () => {
+    const thread = 'phase-split-' + crypto.randomUUID(), source = 'source-' + crypto.randomUUID()
+    const ctx = { ...context, conversationId: thread, sourceMessageId: source, traceId: thread }
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(`INSERT INTO chat_threads(tenant_id,module_id,id,channel,external_thread_id,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,'internal',?2,'open',?3,?3)`).bind(TENANT,thread,NOW),
+      testEnv.DB.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?2,'inbound','customer','Quero Ração Teste.',?4)`).bind(TENANT,source,thread,NOW),
+    ])
+    let calls = 0
+    const modes: string[] = []
+    const provider = { model:'fixture', async complete(input: {messages: readonly LunaMessage[]; tools: readonly LunaToolDefinition[]}) {
+      calls += 1
+      const common = {usage:{promptTokens:100,completionTokens:20},rateLimit:{remainingRequests:900,remainingTokens:7000,resetRequests:null,resetTokens:null},requestLimit:1000}
+      if (calls === 1) {
+        expect(input.tools.length).toBeGreaterThan(0)
+        expect(input.messages[0].content).not.toContain('"blocks"')
+        return {...common,content:null,toolCalls:[{id:'catalog-split',type:'function' as const,function:{name:'search_products',arguments:'{"query":"Ração Teste"}'}}]}
+      }
+      if (calls === 2) {
+        expect(input.tools.length).toBeGreaterThan(0)
+        expect(input.messages[0].content).not.toContain('RESPOSTA FINAL VERIFICADA')
+        return {...common,content:'Essa ração custa R$ 0. Você quer retirar?',toolCalls:[]}
+      }
+      expect(calls).toBe(3)
+      expect(input.tools).toEqual([])
+      expect(input.messages[0].content).toContain('RASCUNHO NÃO VERIFICADO')
+      expect(input.messages[0].content).toContain('RESPOSTA FINAL VERIFICADA')
+      return {...common,content:'{"blocks":[{"kind":"fact","id":"catalog-split:product.0"},{"kind":"question","field":"fulfillment"}]}',toolCalls:[]}
+    }}
+    const result = await runLunaTurn({database:testEnv.DB,provider,context:ctx,observer:{tool(){},response:mode=>modes.push(mode)}})
+    expect(result.status).toBe('replied')
+    expect(result.reply).toContain('R$ 90,00')
+    expect(result.reply).not.toContain('R$ 0')
+    expect(result.reply).toContain('Você prefere retirar ou receber em casa?')
+    expect(result.usage.modelCalls).toBe(3)
+    expect(result.usage.toolCalls).toBe(1)
+    expect(result.committedOperationIds).toEqual([])
+    expect(modes).toEqual(['rewritten'])
+  })
   it('não aceita confirmação sem resumo apresentado nem para uma pergunta paralela', async () => {
     const registry = createLunaToolRegistry(testEnv.DB)
     const prepared = await registry.execute('prepare_product_order', { customer_id: 'client-1', items: [{ product_id: 'product-1', quantity: 1 }], fulfillment_type: 'counter' }, { ...context, sourceMessageId: 'unpresented-source' })
