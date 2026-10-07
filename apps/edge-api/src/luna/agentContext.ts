@@ -11,7 +11,7 @@ export function agentMemory(memory: ConversationMemory): string {
 }
 
 export function agentToolMessage(name: string, result: LunaToolResult): string {
-  if (result.ok && ['record_turn_decision','update_operation_draft'].includes(name)) {
+  if (result.ok && (name.startsWith('draft_') || ['record_turn_decision','update_operation_draft'].includes(name))) {
     const data = result.data as { state?: OperationalState }
     if (data.state) return JSON.stringify({ok:true,data:{persisted:true,version:data.state.version,commercial_effect:false}})
   }

@@ -5,7 +5,7 @@ import {
   type LunaMessageReceivedEventV1,
 } from '../../../../shared/contracts/v1/index'
 import { sendWhatsAppOutboundText } from '../whatsappOutboundService'
-import { GroqProvider } from './providers/groqProvider'
+import { GroqSdkProvider } from './providers/groqSdkProvider'
 import { runLunaTurn } from './runLunaTurn'
 import { recordProposalPresentation } from './proposalPresentation'
 
@@ -45,7 +45,7 @@ export async function executeLunaMessageEvent(
   if (!env.DB) throw new Error('LUNA_DATABASE_NOT_CONFIGURED')
   if (env.LUNA_PROVIDER !== 'groq') throw new Error('LUNA_PROVIDER_NOT_CONFIGURED')
 
-  const provider = new GroqProvider({ apiKey: env.GROQ_API_KEY, model: env.LUNA_MODEL })
+  const provider = new GroqSdkProvider({ apiKey: env.GROQ_API_KEY, model: env.LUNA_MODEL })
   const traceId = event.correlation_id
   const mode = env.APP_ENV === 'production' ? 'production' : env.APP_ENV === 'staging' ? 'staging' : 'fixture'
   const result = await runLunaTurn({

@@ -11,21 +11,16 @@ import { buildVerifiedFacts, responseContractInstruction, responseQuestion, safe
 import { loadConversationMemory,prepareResponseMemory } from './conversationalMemory'
 import { lunaNow } from './clock'
 import { createLunaQuotaPacer } from './quotaPacer'
-import { FINISH_TURN, finishTurn, finishTurnDefinition, operationalCapabilities, decisionWithResponse } from './finishTurn'
-import { agentMemory, agentToolMessage, agentContextMessages } from './agentContext'
+import { FINISH_TURN, finishTurn, operationalCapabilities } from './finishTurn'
+import { agentMemory, agentContextMessages } from './agentContext'
+import { DRAFT_TOOL_DEFINITIONS, executeDraftTool } from './draftTools'
+import { runSdkAgent } from './sdkAgent'
 
 type Provider = Readonly<{
   model: string
   operationalReplies?: boolean
   complete(input: { messages: readonly LunaMessage[]; tools: readonly LunaToolDefinition[]; maxCompletionTokens?: number; toolChoice?:'auto'|'required' }): Promise<LunaProviderResponse & { requestLimit: number | null; tokenLimit?: number | null }>
 }>
-
-function parseArguments(raw: string): Record<string, unknown> | null {
-  try {
-    const value = JSON.parse(raw)
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
-  } catch { return null }
-}
 
 // Keep the working legacy layout: instructions first, then history/user/tool
 // messages. Do not replace the current conversational turn with a trailing
@@ -76,7 +71,7 @@ export async function runLunaTurn(input: {
   const messages: LunaMessage[] = [
     { role: 'system', content: LUNA_OPERATIONAL_SYSTEM_PROMPT },
     { role: 'system', content: `RELÓGIO VERIFICADO DO WORKER: ${new Date(lunaNow(input.context)).toISOString()} (UTC). Datas relativas usam esse relógio e o fuso verificado da loja. Datas de tools: ISO8601 com fuso.` },
-    { role:'system',content:`CONTEXTO APRESENTADO E ACEITO: ${agentMemory(acceptedMemory)}. Referências seguem essa ordem; ambiguidade exige esclarecimento. Intenções independentes: record_turn_decision.` },
+    { role:'system',content:`CONTEXTO APRESENTADO E ACEITO: ${agentMemory(acceptedMemory)}. Referências seguem essa ordem; ambiguidade exige esclarecimento. Operações independentes mantêm IDs estáveis.` },
     ...(pendingProposal ? [pendingProposal] : []),
     ...await repository.loadHistory(input.context),
   ]
@@ -123,26 +118,38 @@ export async function runLunaTurn(input: {
     input.observer?.tool({ id: 'bootstrap-identity', name: 'get_customer_context', args: {}, result: identity, recovery: false })
     evidence.push({ callId: 'bootstrap-identity', tool: 'get_customer_context', result: identity })
     messages.splice(1, 0, { role: 'system', content: `IDENTIDADE CONSULTADA PELO WORKER (telefone verificado, não pelo modelo): ${JSON.stringify(identity)}. Reutilize sem repetir get_customer_context salvo mudança de cadastro ou falha desta consulta.` })
-    for (;;) {
+    let facts = buildVerifiedFacts(evidence)
+    let currentState = operational.state
+    let lastToolCount = 0
+    const definitions = input.provider.operationalReplies
+      ? [...registry.definitions.filter(d => !['record_turn_decision', 'update_operation_draft'].includes(d.name)), ...DRAFT_TOOL_DEFINITIONS, FINISH_TURN]
+      : [...registry.definitions, FINISH_TURN]
+    await runSdkAgent({
+      model: input.provider.model, definitions, messages, traceId: input.context.traceId, context: input.context, allowEmptyFixtureHistory: input.context.executionMode === 'fixture',
+      finished: () => !!reply || finalStatus === 'handoff',
+      prepare: async (sdkHistory) => {
+        facts = buildVerifiedFacts(evidence)
+        currentState = (await repository.loadState(input.context)).state
+        const capabilities = operationalCapabilities(definitions, currentState, acceptedMemory.options.map(option => option.kind), {
+          identityCurrent: identity.ok && !committed.length, hasProposal: !!pendingProposal || !!proposals.length,
+          hasAppointments: evidence.some(item => item.tool === 'get_customer_appointments' && item.result.ok && Array.isArray((item.result.data as { appointments?: unknown[] })?.appointments) && (item.result.data as { appointments: unknown[] }).appointments.length > 0),
+        })
+        return {
+          tools: finalRepairUsed ? [FINISH_TURN] : input.provider.operationalReplies ? capabilities : definitions,
+          messages: composeLunaModelMessages([...agentContextMessages([...messages.filter(m => m.role === 'system'), ...sdkHistory], currentState), { role: 'system', content: `IDs fact disponíveis para finish_turn: ${JSON.stringify(facts.map(f => ({ id: f.id, text: f.text })))}` }], facts),
+        }
+      },
+      infer: async (request) => {
       await pacer.beforeModel()
       budget.beforeModel()
-      const facts = buildVerifiedFacts(evidence)
-      const currentState=(await repository.loadState(input.context)).state
-      const capabilities=operationalCapabilities(registry.definitions,currentState,acceptedMemory.options.map(option=>option.kind),{
-        identityCurrent:identity.ok&&!committed.length,hasProposal:!!pendingProposal||!!proposals.length,
-        hasAppointments:evidence.some(item=>item.tool==='get_customer_appointments'&&item.result.ok&&Array.isArray((item.result.data as {appointments?:unknown[]})?.appointments)&&(item.result.data as {appointments:unknown[]}).appointments.length>0),
-      })
-      const finishDefinition=finishTurnDefinition(facts)
-      const tools=finalRepairUsed ? [finishDefinition] : [...capabilities.map(d=>input.provider.operationalReplies?decisionWithResponse(d,facts):d),finishDefinition]
-      const turnMessages=composeLunaModelMessages([...agentContextMessages(messages,currentState),{role:'system',content:`IDs fact disponíveis para finish_turn: ${JSON.stringify(facts.map(f=>({id:f.id,text:f.text})))}`}],facts)
       let response
-      try { response = await infer({ messages: turnMessages, tools, toolChoice:'required' }) }
+      try { response = await infer(request) }
       catch (error) {
         // A failed formatting repair cannot erase verified query/commit facts
         // or cause another action/model replay. Quota still pauses explicitly.
         if (!finalRepairUsed || error instanceof LunaBudgetError || (error instanceof GroqProviderError && error.code === 'GROQ_RATE_LIMITED')) throw error
         await completeReply(safeFactualFallback(buildVerifiedFacts(evidence.filter(item => item.callId !== 'bootstrap-identity'))), 'factual_fallback')
-        break
+        return { content: reply, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0 }, rateLimit: { remainingRequests: null, remainingTokens: null, resetRequests: null, resetTokens: null } }
       }
       pacer.observe({ promptTokens: response.usage.promptTokens, tokenLimit: response.tokenLimit ?? null, remainingTokens: response.rateLimit.remainingTokens, resetTokens: response.rateLimit.resetTokens })
       let terminalQuotaMargin = false
@@ -187,21 +194,15 @@ export async function runLunaTurn(input: {
           }
         }
         await completeReply(reply ?? '', responseMode)
-        break
+        return response
       }
-
-      // Reject the entire batch before executing anything: finish_turn cannot
-      // authorize an action alongside it, and repair must remain read-only.
-      if ((response.toolCalls.some(call => call.function.name === 'finish_turn') && response.toolCalls.length !== 1)
-        || (finalRepairUsed && response.toolCalls.some(call => call.function.name !== 'finish_turn'))) {
-        throw new GroqProviderError('GROQ_RESPONSE_INVALID')
-      }
-      messages.push({ role: 'assistant', content: response.content, tool_calls: response.toolCalls })
-      for (const call of response.toolCalls) {
+      lastToolCount = response.toolCalls.length
+      return response
+      },
+      execute: async (name, parsed, id, trustedContext) => {
+        const call = { id, function: { name } }
         budget.beforeTool()
-        const parsed = parseArguments(call.function.arguments)
-        const continuation=input.provider.operationalReplies&&call.function.name==='record_turn_decision'?parsed?.response:null
-        const args=parsed&&input.provider.operationalReplies&&call.function.name==='record_turn_decision'?Object.fromEntries(Object.entries(parsed).filter(([key])=>key!=='response')):parsed
+        const args = parsed
         if(call.function.name==='finish_turn'){
           const finish=args?finishTurn(args,currentState,facts):{ok:false as const,code:'TOOL_ARGUMENTS_INVALID',retryable:false}
           await repository.recordToolRun({context:input.context,name:call.function.name,args:args??{},result:finish,durationMs:0})
@@ -209,13 +210,12 @@ export async function runLunaTurn(input: {
           if(finish.ok){
             await completeReply(finish.data.reply, finalRepairUsed ? 'rewritten' : 'verified')
           }else{
-            messages.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(finish)})
             if(finish.code==='TURN_RESPONSE_INVALID'||finish.code==='TOOL_ARGUMENTS_INVALID'){
               if(finalRepairUsed)await completeReply(safeFactualFallback(buildVerifiedFacts(evidence.filter(item=>item.callId!=='bootstrap-identity'))),'factual_fallback')
               finalRepairUsed=true
             }
           }
-          continue
+          return finish
         }
         let result
         const signature = `${call.function.name}:${canonicalJson(args)}`
@@ -224,7 +224,10 @@ export async function runLunaTurn(input: {
         else if (callSignatures.has(signature)) result = { ok: false as const, code: 'TOOL_CALL_REPEATED', retryable: false }
         else {
           callSignatures.add(signature)
-          try { result = await registry.execute(call.function.name, args, { ...input.context, actionIndex: budget.snapshot().toolCalls - 1 }) }
+          try {
+            const context = { ...trustedContext, actionIndex: budget.snapshot().toolCalls - 1 }
+            result = call.function.name.startsWith('draft_') ? await executeDraftTool(input.database, registry, call.function.name, args, context) : await registry.execute(call.function.name, args, context)
+          }
           catch { result = { ok: false as const, code: 'TOOL_EXECUTION_FAILED', retryable: true } }
           if (!result.ok && result.retryable && retryableQueries.has(call.function.name) && !queryRecoveryUsed) {
             input.observer?.tool({ id: call.id, name: call.function.name, args, result, recovery: true })
@@ -244,34 +247,25 @@ export async function runLunaTurn(input: {
           if (typeof data.operation_id === 'string') committed.push(data.operation_id)
           if (data.status === 'handoff') finalStatus = 'handoff'
         }
-        messages.push({ role: 'tool', tool_call_id: call.id, content: agentToolMessage(call.function.name,result) })
         // A completed native command already supplies the authoritative reply.
         // No extra model call may reinterpret a financial result or consume
         // the final budget merely to acknowledge it. Multi-tool batches and
         // unsuccessful commands continue through the normal bounded loop.
-        if(input.provider.operationalReplies && response.toolCalls.length===1 && result.ok){
-          if(continuation&&typeof continuation==='object'&&!Array.isArray(continuation)){
-            const persisted=(await repository.loadState(input.context)).state
-            const finished=finishTurn(continuation as Record<string,unknown>,persisted,facts)
-            if(finished.ok)await completeReply(finished.data.reply,'native_draft_response')
-            else{
-              messages.push({role:'system',content:`O rascunho JÁ foi persistido. Corrija somente a resposta final: ${JSON.stringify(finished)}. Não repita a alteração.`})
-              finalRepairUsed=true
-            }
-          }else if(['commit_confirmed_proposal','get_operation_status'].includes(call.function.name)){
+        if(input.provider.operationalReplies && lastToolCount===1 && result.ok){
+          if(['commit_confirmed_proposal','get_operation_status'].includes(call.function.name)){
             const confirmed=buildVerifiedFacts([{callId:call.id,tool:call.function.name,result}])
             if(confirmed.length)await completeReply(confirmed.map(f=>f.text).join('\n'),'native_result')
           }else if(typeof (result.data as Record<string,unknown>)?.proposal_id==='string'){
             await completeReply('', 'native_proposal')
           }
         }
-      }
-      if(reply && finalStatus!=='failed')break
       if (finalStatus === 'handoff') {
         reply = 'Vou encaminhar esta conversa para uma pessoa da equipe continuar o atendimento.'
-        break
       }
-    }
+        return result
+      },
+    })
+    if (!reply) throw new LunaBudgetError('LUNA_MODEL_CALL_LIMIT')
   } catch (error) {
     if (error instanceof LunaBudgetError || (error instanceof GroqProviderError && error.code === 'GROQ_RATE_LIMITED')) {
       finalStatus = 'quota_paused'

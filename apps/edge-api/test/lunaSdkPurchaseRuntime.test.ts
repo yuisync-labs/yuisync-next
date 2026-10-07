@@ -6,6 +6,7 @@ import { createLunaToolRegistry } from '../src/luna/toolRegistry'
 import { recordProposalPresentation } from '../src/luna/proposalPresentation'
 import { createDesignedHarness, type Command } from './fixtures/luna/designedRuntimeHarness'
 import { LUNA_DESIGNED_SCENARIOS } from './fixtures/luna/designedScenarios'
+import { DRAFT_TOOL_DEFINITIONS } from '../src/luna/draftTools'
 
 type Harness=Awaited<ReturnType<typeof createDesignedHarness>>
 async function turn(h:Harness,index:number,message:string,commands:Command[]){
@@ -14,11 +15,12 @@ async function turn(h:Harness,index:number,message:string,commands:Command[]){
   await h.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?2,'inbound','customer',?4,?5)`)
     .bind(h.tenant,context.sourceMessageId,context.conversationId,message,Date.now()).run()
   let requests=0
-  const definitions=createLunaToolRegistry(h.db).definitions
+  const definitions=[...createLunaToolRegistry(h.db).definitions,...DRAFT_TOOL_DEFINITIONS]
   const provider=new GroqSdkProvider({apiKey:'fixture-not-real',model:'openai/gpt-oss-20b',fetchFn:async(_url,init)=>{
     const command=commands[requests++]
     if(!command)throw new Error('Unexpected SDK replay')
     const wire=JSON.parse(String(init?.body))
+    expect(wire.tools.some((t:{function:{name:string}})=>['record_turn_decision','update_operation_draft'].includes(t.function.name))).toBe(false)
     expect(wire.tools.some((t:{function:{name:string}})=>t.function.name===command.name)).toBe(true)
     const definition=definitions.find(t=>t.name===command.name)
     const args=definition?groqWireToolArguments(JSON.stringify(command.args),definition.parameters):JSON.stringify(command.args)
@@ -38,20 +40,21 @@ async function turn(h:Harness,index:number,message:string,commands:Command[]){
 }
 
 describe('vertical purchase: real SDK + Worker/D1, HTTP model simulated',()=>{
-  it('completes scenario 1 in five model calls with a pending order and no invented payment',async()=>{
+  it('completes scenario 1 through ToolLoopAgent and small draft commands with a pending order and no invented payment',async()=>{
     const h=await createDesignedHarness(1,'-sdk-vertical')
     try{
       const first=await turn(h,1,LUNA_DESIGNED_SCENARIOS[0].messages[0],[
         h.command('search_products',{query:'Ração A'}),
-        h.command('record_turn_decision',{intents:[{operation_id:'cart',kind:'cart',goal:'create'}],focus:'cart',events:[{operationId:'cart',kind:'cart',expectedVersion:0,action:'add_item',itemId:'racao-a',quantity:1}],response:{intent:'cart',operation_ids:['cart'],social:[],fact_ids:['sdk-1-1:product.0'],question:'fulfillment'}}),
+        h.command('draft_add_item',{operation_id:'cart',kind:'cart',item_id:'racao-a',quantity:1}),
+        {name:'finish_turn',args:{intent:'cart',operation_ids:['cart'],social:[],fact_ids:['sdk-1-1:product.0'],question:'fulfillment'}},
       ])
-      expect(first).toMatchObject({status:'replied',errorCode:null,usage:{modelCalls:2}})
+      expect(first).toMatchObject({status:'replied',errorCode:null,usage:{modelCalls:3}})
       expect(first.reply).toContain('Ração A: R$ 90,00')
       expect(first.reply).toContain('retirar ou receber em casa')
       expect(first.reply).not.toContain('Qual quantidade?')
       expect((await h.state()).operations.cart.items).toEqual([{id:'racao-a',quantity:1}])
       const second=await turn(h,2,LUNA_DESIGNED_SCENARIOS[0].messages[1],[
-        h.command('record_turn_decision',{intents:[{operation_id:'cart',kind:'cart',goal:'change'}],focus:'cart',events:[{operationId:'cart',kind:'cart',expectedVersion:1,action:'set_field',field:'fulfillment_type',value:'counter'}],response:null}),
+        h.command('draft_set_field',{operation_id:'cart',kind:'cart',field:'fulfillment_type',value:'counter'}),
         h.command('prepare_product_order',{customer_id:'cliente-maria',operation_id:'cart',items:[{product_id:'racao-a',quantity:1}],fulfillment_type:'counter'}),
       ])
       expect(second).toMatchObject({status:'awaiting_confirmation',errorCode:null,usage:{modelCalls:2}})
@@ -65,15 +68,16 @@ describe('vertical purchase: real SDK + Worker/D1, HTTP model simulated',()=>{
       expect(await h.db.prepare(`SELECT COUNT(*) AS n FROM payments WHERE tenant_id=?1`).bind(h.tenant).first()).toEqual({n:0})
     }finally{h.close()}
   })
-  it('restricts a bad inline response to one read-only repair without replaying the persisted draft',async()=>{
+  it('restricts a bad final response to one read-only repair without replaying the persisted draft',async()=>{
     const h=await createDesignedHarness(1,'-sdk-repair')
     try{
       const result=await turn(h,1,'Quero uma Ração A.',[
         h.command('search_products',{query:'Ração A'}),
-        h.command('record_turn_decision',{intents:[{operation_id:'cart',kind:'cart',goal:'create'}],focus:'cart',events:[{operationId:'cart',kind:'cart',expectedVersion:0,action:'add_item',itemId:'racao-a',quantity:1}],response:{intent:'cart',operation_ids:['cart'],social:['Está pago.'],fact_ids:[],question:'none'}}),
+        h.command('draft_add_item',{operation_id:'cart',kind:'cart',item_id:'racao-a',quantity:1}),
+        {name:'finish_turn',args:{intent:'cart',operation_ids:['cart'],social:['Está pago.'],fact_ids:[],question:'none'}},
         {name:'finish_turn',args:{intent:'cart',operation_ids:['cart'],social:[],fact_ids:['sdk-1-1:product.0'],question:'fulfillment'}},
       ])
-      expect(result).toMatchObject({status:'replied',errorCode:null,usage:{modelCalls:3}})
+      expect(result).toMatchObject({status:'replied',errorCode:null,usage:{modelCalls:4}})
       expect(result.reply).not.toContain('Está pago')
       expect((await h.state()).operations.cart.version).toBe(1)
       expect(await h.db.prepare(`SELECT COUNT(*) AS n FROM luna_operation_events WHERE tenant_id=?1`).bind(h.tenant).first()).toEqual({n:1})

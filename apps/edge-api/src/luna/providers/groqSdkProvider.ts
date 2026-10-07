@@ -1,12 +1,14 @@
 import { createGroq } from '@ai-sdk/groq'
-import { generateText, jsonSchema, tool, type ModelMessage, type JSONSchema7 } from 'ai'
+import type { ModelMessage, JSONSchema7 } from 'ai'
 import type { LunaMessage, LunaToolDefinition, LunaProviderResponse } from '../contracts'
 import { GroqProvider, GroqProviderError } from './groqProvider'
 import { groqDiagnostic } from './groqDiagnostic'
 import { compactToolSchema } from './compactSchema'
 import { strictGroqToolSchema, groqWireToolSchema, groqWireToolDescription, groqWireToolArguments, normalizeGroqWireArguments } from './groqToolSchema'
+import { matchesToolSchema } from '../toolSchema'
 
 type Request = Parameters<GroqProvider['complete']>[0]
+type GroqPrompt = Parameters<ReturnType<ReturnType<typeof createGroq>>['doGenerate']>[0]['prompt']
 
 export function sdkMessages(messages: readonly LunaMessage[], definitions: readonly LunaToolDefinition[]): ModelMessage[] {
   const names = new Map(messages.flatMap(m => (m.tool_calls ?? []).map(c => [c.id, c.function.name] as const)))
@@ -30,9 +32,9 @@ export function sdkMessages(messages: readonly LunaMessage[], definitions: reado
   })
 }
 
-// The SDK owns protocol parsing, not commercial execution. Tools intentionally
-// have NO execute callback: the same Worker registry remains the only executor.
-// One SDK invocation = one metered model call; no hidden retries or tool loops.
+// Single-call transport beneath ToolLoopAgent. The provider's doGenerate owns
+// HTTP/protocol parsing; it does not start a second SDK loop or execute tools.
+// Existing quota-ledger wrappers still meter exactly one complete = one request.
 export class GroqSdkProvider extends GroqProvider {
   readonly operationalReplies = true
   private readonly options: { apiKey?: string; model?: string; timeoutMs?: number; fetchFn?: typeof fetch }
@@ -67,28 +69,31 @@ export class GroqSdkProvider extends GroqProvider {
       return response
     } })
     try {
-      const tools = Object.fromEntries(input.tools.map(d => [d.name, tool({
+      const tools = input.tools.map(d => ({
+        type: 'function' as const, name: d.name,
         description: groqWireToolDescription(d.description),
-        inputSchema: jsonSchema<Record<string, unknown>>(compactToolSchema(isOss ? strictGroqToolSchema(groqWireToolSchema(d.parameters)) : groqWireToolSchema(d.parameters)) as JSONSchema7),
+        inputSchema: compactToolSchema(isOss ? strictGroqToolSchema(groqWireToolSchema(d.parameters)) : groqWireToolSchema(d.parameters)) as JSONSchema7,
         ...(isOss ? { strict: true } : {}),
-      })]))
-      const result = await generateText({
-        model: sdk(this.model),
-        instructions: input.messages.filter(m=>m.role==='system').map(m=>m.content??'').join('\n\n'),
-        messages: sdkMessages(input.messages.filter(m=>m.role!=='system'),input.tools), tools,
-        toolChoice: input.toolChoice ?? 'auto', maxRetries: 0, abortSignal: controller.signal,
+      }))
+      const prompt = sdkMessages(input.messages, input.tools).map(m => m.role === 'system' ? m : { ...m, content: typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : m.content }) as GroqPrompt
+      const result = await sdk(this.model).doGenerate({
+        prompt, tools,
+        toolChoice: { type: input.toolChoice ?? 'auto' }, abortSignal: controller.signal,
         maxOutputTokens: Math.max(128,Math.min(1200,input.maxCompletionTokens ?? 1200)), temperature: 0.2,
         providerOptions: { groq: { parallelToolCalls: false, reasoningEffort: 'low', ...(!isOss ? { reasoningFormat: 'hidden' } : {}) } },
       })
       if (!knownUsage) throw new GroqProviderError('GROQ_USAGE_UNAVAILABLE')
-      if (result.steps.length !== 1 || result.toolCalls.some(c => c.invalid || !input.tools.some(t=>t.name===c.toolName))) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
-      const toolCalls = result.toolCalls.map(c => {
-        const d = input.tools.find(t=>t.name===c.toolName)!
-        return { id:c.toolCallId,type:'function' as const,function:{name:c.toolName,arguments:normalizeGroqWireArguments(JSON.stringify(c.input),d.parameters)} }
+      const toolCalls = result.content.filter(c => c.type === 'tool-call').map(c => {
+        const d = input.tools.find(t=>t.name===c.toolName)
+        if (!d || c.providerExecuted) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
+        const args = normalizeGroqWireArguments(c.input,d.parameters)
+        if (!matchesToolSchema(JSON.parse(args), d.parameters)) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
+        return { id:c.toolCallId,type:'function' as const,function:{name:c.toolName,arguments:args} }
       })
-      if (new Set(toolCalls.map(c=>c.id)).size !== toolCalls.length || (!result.text.trim() && !toolCalls.length) || (input.toolChoice==='required'&&!toolCalls.length)) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
+      const text = result.content.filter(c => c.type === 'text').map(c => c.text).join('\n').trim()
+      if (new Set(toolCalls.map(c=>c.id)).size !== toolCalls.length || (!text && !toolCalls.length) || (input.toolChoice==='required'&&!toolCalls.length)) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
       const integer = (key:string) => { const raw=headers.get(key); const value=Number(raw); return raw?.trim()&&Number.isSafeInteger(value)&&value>=0 ? value : null }
-      return { content:result.text.trim()||null,toolCalls,usage:knownUsage,requestLimit:integer('x-ratelimit-limit-requests'),tokenLimit:integer('x-ratelimit-limit-tokens'),rateLimit:{remainingRequests:integer('x-ratelimit-remaining-requests'),remainingTokens:integer('x-ratelimit-remaining-tokens'),resetRequests:headers.get('x-ratelimit-reset-requests'),resetTokens:headers.get('x-ratelimit-reset-tokens')} }
+      return { content:text||null,toolCalls,usage:knownUsage,requestLimit:integer('x-ratelimit-limit-requests'),tokenLimit:integer('x-ratelimit-limit-tokens'),rateLimit:{remainingRequests:integer('x-ratelimit-remaining-requests'),remainingTokens:integer('x-ratelimit-remaining-tokens'),resetRequests:headers.get('x-ratelimit-reset-requests'),resetTokens:headers.get('x-ratelimit-reset-tokens')} }
     } catch (error) {
       if (error instanceof GroqProviderError && error.code !== 'GROQ_RESPONSE_INVALID') throw error
       const code = controller.signal.aborted ? 'GROQ_TIMEOUT' : knownUsage ? 'GROQ_RESPONSE_INVALID' : 'GROQ_REQUEST_FAILED'

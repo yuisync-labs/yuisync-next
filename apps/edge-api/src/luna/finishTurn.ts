@@ -25,20 +25,11 @@ export function finishTurnDefinition(facts:readonly Fact[]):LunaToolDefinition {
   return {...FINISH_TURN,parameters:{...FINISH_TURN.parameters,properties:{...properties,fact_ids:{...properties.fact_ids,...(facts.length?{items:{type:'string',enum:facts.map(f=>f.id)}}:{maxItems:0})}}}}
 }
 
-// A draft mutation and its read-only continuation may be planned in the same
-// model response. Strip this envelope before invoking the domain registry.
-// The continuation is checked AFTER persistence against the actual new state.
-export function decisionWithResponse(definition:LunaToolDefinition,facts:readonly Fact[]):LunaToolDefinition {
-  if(definition.name!=='record_turn_decision')return definition
-  const properties=definition.parameters.properties as Record<string,unknown>
-  return {...definition,description:`${definition.description} Inclua response para responder no mesmo passo após persistir; null se ainda precisar consultar/preparar. response usa somente fact_ids disponíveis e um campo realmente faltante.`,parameters:{...definition.parameters,properties:{...properties,response:{anyOf:[finishTurnDefinition(facts).parameters,{type:'null'}]}}}}
-}
-
 export function finishTurn(args: Record<string,unknown>, state: OperationalState, facts: readonly Fact[]): LunaToolResult<{reply:string}> {
   if(!matchesToolSchema(args,FINISH_TURN.parameters))return {ok:false,code:'TOOL_ARGUMENTS_INVALID',retryable:false}
   const intent=args.intent as string, ids=args.operation_ids as string[]
   if(new Set(ids).size!==ids.length || ids.some(id=>!Object.hasOwn(state.operations,id)))return {ok:false,code:'TURN_OPERATION_UNKNOWN',retryable:false}
-  if(['cart','booking','registration'].includes(intent) && !ids.some(id=>state.operations[id].kind===intent))return {ok:false,code:'TURN_NOT_READY',retryable:false,validation_errors:[{field:'operation_ids',rule:'First query the real catalog/identity as needed and persist the requested draft with record_turn_decision. Reuse that draft ID; do not ask again for explicit data.'}]}
+  if(['cart','booking','registration'].includes(intent) && !ids.some(id=>state.operations[id].kind===intent))return {ok:false,code:'TURN_NOT_READY',retryable:false,validation_errors:[{field:'operation_ids',rule:'First query the real catalog/identity as needed and persist the requested draft with an available draft tool. Reuse that draft ID; do not ask again for explicit data.'}]}
   const blocks=[...(args.social as string[]).map(text=>({kind:'social',value:text})),...(args.fact_ids as string[]).map(id=>({kind:'fact',value:id})),...(args.question==='none'?[]:[{kind:'question',value:args.question as string}])]
   const related=ids.map(id=>state.operations[id])
   for(const block of blocks){
@@ -54,9 +45,14 @@ export function finishTurn(args: Record<string,unknown>, state: OperationalState
 export function operationalCapabilities(definitions: readonly LunaToolDefinition[], state: OperationalState, presentedKinds: readonly string[], context:{identityCurrent?:boolean;hasProposal?:boolean;hasAppointments?:boolean}={}): readonly LunaToolDefinition[] {
   const active=Object.values(state.operations).filter(d=>d.status==='active')
   return definitions.filter(d=> {
-    // One model-facing draft writer. The original command remains in the
-    // registry for compatibility; record_turn_decision includes all events.
+    // The generic command remains in the registry for old replay fixtures.
+    // Real SDK providers expose small draft commands instead of either legacy
+    // writer; capabilities are recomputed from the authoritative D1 state.
     if(d.name==='update_operation_draft')return false
+    if(['draft_remove_item','draft_replace_item','draft_set_quantity'].includes(d.name))return active.some(op=>op.items.length>0)
+    if(d.name==='draft_pause')return active.length>0
+    if(d.name==='draft_resume')return Object.values(state.operations).some(op=>op.status==='paused')
+    if(d.name==='draft_cancel')return Object.values(state.operations).some(op=>op.status!=='cancelled')
     if(d.name==='get_customer_context')return !context.identityCurrent
     if(d.name==='commit_confirmed_proposal'||d.name==='present_proposal')return !!context.hasProposal
     if(d.name==='prepare_appointment_reschedule'||d.name==='prepare_appointment_cancellation')return !!context.hasAppointments
