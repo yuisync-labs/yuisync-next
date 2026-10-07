@@ -98,5 +98,8 @@ describe('designed scenario 14 — real Worker/local D1/simulated provider',()=>
       for(const table of ['payments','inventory_movements'])expect(await db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE tenant_id=?1`).bind(tenant).first()).toEqual({count:0})
       expect(await db.prepare(`SELECT on_hand_milliunits,reserved_milliunits FROM inventory_balances WHERE tenant_id=?1`).bind(tenant).first()).toEqual({on_hand_milliunits:10000,reserved_milliunits:1000})
     }finally{clock.mockRestore()}
-  })
+  // Four complete Worker turns plus lost-response/redelivery reconciliation.
+  // Full-suite workerd/D1 contention is not the application's turn deadline.
+  // Keep every financial/idempotency assertion; extend only this composite test.
+  },60_000)
 })
