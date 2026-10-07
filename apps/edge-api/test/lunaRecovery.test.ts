@@ -34,7 +34,7 @@ describe('Luna recovery on real local D1', () => {
       },
     } })
     expect(calls).toBe(2)
-    expect(result).toMatchObject({ status: 'replied', errorCode: null, reply: 'Produto: R$ 10,00; estoque disponível nesta consulta: 10.', committedOperationIds: [], usage: { modelCalls: 2, toolCalls: 1 } })
+    expect(result).toMatchObject({ status: 'replied', errorCode: null, reply: 'Produto: R$ 10,00; estoque disponível nesta consulta: 10.', committedOperationIds: [], usage: { modelCalls: 2, toolCalls: 2 } })
   })
 
   it('continua bloqueando ferramentas quando a resposta não terminal esgota a margem', async () => {
@@ -46,7 +46,7 @@ describe('Luna recovery on real local D1', () => {
       },
     } })
     expect(calls).toBe(1)
-    expect(result).toMatchObject({ status: 'quota_paused', errorCode: 'LUNA_RATE_LIMIT_MARGIN', reply: null, usage: { modelCalls: 1, toolCalls: 0 } })
+    expect(result).toMatchObject({ status: 'quota_paused', errorCode: 'LUNA_RATE_LIMIT_MARGIN', reply: null, usage: { modelCalls: 1, toolCalls: 1 } }) // only deterministic bootstrap; requested model tool blocked
   })
 
   it('não anuncia confirmação de uma proposta invalidada dentro do mesmo turno', async () => {

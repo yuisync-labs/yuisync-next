@@ -35,7 +35,7 @@ export function composeLunaModelMessages(messages: readonly LunaMessage[], facts
     // A final-response JSON contract must never compete with native function
     // generation. The operational model speaks naturally like the legacy;
     // its text is only a draft and cannot bypass the verified final renderer.
-    instructions.push(`FASE OPERACIONAL: escolha somente as ferramentas nativas fornecidas para consultar fatos, manter rascunhos e executar operações autorizadas. Não invente ferramentas de resposta ou formatação. Quando nenhuma outra ferramenta for necessária, escreva uma resposta natural e breve; ela será verificada em uma fase separada, sem ferramentas. FATOS CONSULTADOS (fonte verificada): ${JSON.stringify(facts)}`)
+    instructions.push('FASE OPERACIONAL: use tools nativas e resultados estruturados. Sem ferramenta pendente, escreva um rascunho breve; a resposta será verificada separadamente. Não invente tools de formatação.')
   }
   return [{ role: 'system', content: instructions.join('\n\n') }, ...messages.filter(message => message.role !== 'system')]
 }
@@ -71,9 +71,9 @@ export async function runLunaTurn(input: {
   catch { return { status: 'failed', reply: null, proposalIds: [], committedOperationIds: [], traceId: input.context.traceId, errorCode: 'CONVERSATION_MEMORY_UNKNOWN', usage: emptyUsage } }
   const messages: LunaMessage[] = [
     { role: 'system', content: LUNA_OPERATIONAL_SYSTEM_PROMPT },
-    { role: 'system', content: `RELÓGIO VERIFICADO DO WORKER: ${new Date(lunaNow(input.context)).toISOString()} (UTC). Resolva datas relativas usando este instante e o fuso da loja retornado por get_customer_context.store_context ou get_store_information; nunca use uma data ou fuso presumidos pelo modelo. Para múltiplas intenções, consulte identidade/catálogos e agrupe eventos em record_turn_decision. Ferramentas são sequenciais; preserve orçamento para a resposta final.` },
+    { role: 'system', content: `RELÓGIO VERIFICADO DO WORKER: ${new Date(lunaNow(input.context)).toISOString()} (UTC). Datas relativas usam esse relógio e o fuso verificado da loja. Datas de tools: ISO8601 com fuso.` },
     { role: 'system', content: `MEMÓRIA OPERACIONAL D1: ${JSON.stringify(operational.state)}\nResumo conversacional (não autoriza operações): ${operational.summary ?? ''}` },
-    { role:'system',content:`CONTEXTO APRESENTADO E ACEITO: ${JSON.stringify(acceptedMemory)}. Resolva referências pela ordem apresentada, não por uma ordem presumida. Havendo ambiguidade use resolve_context_reference e peça esclarecimento. Um novo assunto não apaga operações paralelas. Registre intenções múltiplas com record_turn_decision.` },
+    { role:'system',content:`CONTEXTO APRESENTADO E ACEITO: ${JSON.stringify(acceptedMemory)}. Referências seguem essa ordem; ambiguidade exige esclarecimento. Intenções independentes: record_turn_decision.` },
     ...(pendingProposal ? [pendingProposal] : []),
     ...await repository.loadHistory(input.context),
   ]
@@ -90,6 +90,17 @@ export async function runLunaTurn(input: {
   let errorCode: string | null = null
 
   try {
+    // Identity is a deterministic bootstrap, not an LLM planning step. It is
+    // still scoped to the verified conversation phone, metered and traced.
+    budget.beforeTool()
+    const identityStarted = Date.now()
+    let identity: LunaToolResult
+    try { identity = await registry.execute('get_customer_context', {}, input.context) }
+    catch { identity = { ok: false, code: 'TOOL_EXECUTION_FAILED', retryable: true } }
+    await repository.recordToolRun({ context: input.context, name: 'get_customer_context', args: {}, result: identity, durationMs: Date.now() - identityStarted })
+    input.observer?.tool({ id: 'bootstrap-identity', name: 'get_customer_context', args: {}, result: identity, recovery: false })
+    evidence.push({ callId: 'bootstrap-identity', tool: 'get_customer_context', result: identity })
+    messages.splice(1, 0, { role: 'system', content: `IDENTIDADE CONSULTADA PELO WORKER (telefone verificado, não pelo modelo): ${JSON.stringify(identity)}. Reutilize sem repetir get_customer_context salvo mudança de cadastro ou falha desta consulta.` })
     for (;;) {
       budget.beforeModel()
       const facts = buildVerifiedFacts(evidence)

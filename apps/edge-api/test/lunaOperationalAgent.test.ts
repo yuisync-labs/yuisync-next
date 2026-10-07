@@ -76,13 +76,15 @@ describe('Luna operational foundation', () => {
       expect(input.messages[0].content).toContain('RESPOSTA FINAL VERIFICADA')
       return {...common,content:'{"blocks":[{"kind":"fact","id":"catalog-split:product.0"},{"kind":"question","field":"fulfillment"}]}',toolCalls:[]}
     }}
-    const result = await runLunaTurn({database:testEnv.DB,provider,context:ctx,observer:{tool(){},response:mode=>modes.push(mode)}})
+    const observed: string[] = []
+    const result = await runLunaTurn({database:testEnv.DB,provider,context:ctx,observer:{tool:event=>observed.push(event.name),response:mode=>modes.push(mode)}})
     expect(result.status).toBe('replied')
     expect(result.reply).toContain('R$ 90,00')
     expect(result.reply).not.toContain('R$ 0')
     expect(result.reply).toContain('Você prefere retirar ou receber em casa?')
     expect(result.usage.modelCalls).toBe(3)
-    expect(result.usage.toolCalls).toBe(1)
+    expect(result.usage.toolCalls).toBe(2) // bootstrap identity + catalog
+    expect(observed).toEqual(['get_customer_context', 'search_products'])
     expect(result.committedOperationIds).toEqual([])
     expect(modes).toEqual(['rewritten'])
   })
@@ -154,7 +156,7 @@ describe('Luna operational foundation', () => {
       },
     }
     const result = await runLunaTurn({ database: testEnv.DB, provider, context })
-    expect(result).toMatchObject({ status: 'replied', reply: 'Pet cadastrado: Mel.\nQual dia você prefere?', usage: { modelCalls: 2, toolCalls: 1 } })
+    expect(result).toMatchObject({ status: 'replied', reply: 'Pet cadastrado: Mel.\nQual dia você prefere?', usage: { modelCalls: 2, toolCalls: 2 } })
     const toolRun = await testEnv.DB.prepare(`SELECT tool_name,status FROM luna_tool_runs WHERE tenant_id=?1 AND trace_id=?2 LIMIT 1`).bind(TENANT, context.traceId).first<{ tool_name: string; status: string }>()
     expect(toolRun).toEqual({ tool_name: 'get_customer_context', status: 'succeeded' })
   })

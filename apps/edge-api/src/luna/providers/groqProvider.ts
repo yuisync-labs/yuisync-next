@@ -5,6 +5,7 @@ import type {
 } from '../contracts'
 import { strictGroqToolSchema, normalizeGroqToolArguments } from './groqToolSchema'
 import { groqDiagnostic } from './groqDiagnostic'
+import { compactToolSchema } from './compactSchema'
 
 export class GroqProviderError extends Error {
   readonly diagnostic: ReturnType<typeof groqDiagnostic> | null
@@ -100,7 +101,7 @@ export class GroqProvider {
             function: {
               name: tool.name,
               description: tool.description,
-              parameters: /^openai\/gpt-oss-/.test(this.model) ? strictGroqToolSchema(tool.parameters) : tool.parameters,
+              parameters: compactToolSchema(/^openai\/gpt-oss-/.test(this.model) ? strictGroqToolSchema(tool.parameters) : tool.parameters),
               ...(/^openai\/gpt-oss-/.test(this.model) ? { strict: true } : {}),
             },
           })), tool_choice: 'auto' } : {}),

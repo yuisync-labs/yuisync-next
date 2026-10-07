@@ -17,7 +17,7 @@ describe('designed scenario 11 — real Worker/local D1/simulated provider',()=>
     ]})],
     [c('get_available_slots',{service_ids:['banho'],starts_at:at,ends_at:'2026-10-07T15:00:00Z'})],
    ],s.allowedTools)
-   expect(first.usage.modelCalls).toBe(6);expect(first.usage.toolCalls).toBe(5)
+   expect(first.usage.modelCalls).toBe(6);expect(first.usage.toolCalls).toBe(6) // includes deterministic identity bootstrap
    expect((await h.state()).operations.cart.items).toEqual([{id:'racao-a',quantity:1}])
    expect((await loadConversationMemory(h.db,h.ctx)).focus).toBe('booking')
    await h.turn(2,s.messages[1],[[d('booking','booking','set_field',{field:'scheduled_at',value:at})],[h.booking(at,undefined,pet)],[c('prepare_product_order',{customer_id:f.customer,items:[{product_id:'racao-a',quantity:1}],fulfillment_type:'counter',operation_id:'cart'})]],s.allowedTools)

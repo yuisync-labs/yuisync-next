@@ -161,7 +161,7 @@ async function certification(request:Request,env:Env){
    // Known usage stays known even if it reveals a budget violation.
    meter.afterModel(response.usage)
    await ledger.settleModel(upper,response.usage)
-   responses.push({usage:response.usage,toolCalls:response.toolCalls,content:response.content})
+   responses.push({usage:response.usage,toolCalls:response.toolCalls,content:response.content,limits:{requests:response.requestLimit,tokens:response.tokenLimit,remainingRequests:response.rateLimit.remainingRequests,remainingTokens:response.rateLimit.remainingTokens}})
    return response
   }}
   const timeout=scenario.id===19&&turn===0?oneAgendaTimeout(meter.db):null
