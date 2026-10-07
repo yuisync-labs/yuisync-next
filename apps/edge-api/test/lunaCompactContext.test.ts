@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { compactToolSchema } from '../src/luna/providers/compactSchema'
-import { strictGroqToolSchema } from '../src/luna/providers/groqToolSchema'
+import { strictGroqToolSchema, groqWireToolSchema } from '../src/luna/providers/groqToolSchema'
 import { createLunaToolRegistry } from '../src/luna/toolRegistry'
 import { GroqProvider } from '../src/luna/providers/groqProvider'
 import { LUNA_OPERATIONAL_SYSTEM_PROMPT } from '../src/luna/systemPrompt'
@@ -22,7 +22,7 @@ describe('Luna compact model context', () => {
     expect(body.tools).toHaveLength(22)
     let removedBytes = 0
     for (const [index, definition] of definitions.entries()) {
-      const original = strictGroqToolSchema(definition.parameters)
+      const original = strictGroqToolSchema(groqWireToolSchema(definition.parameters))
       expect(body.tools[index].function.parameters).toEqual(compactToolSchema(original))
       expect(body.tools[index].function.strict).toBe(true)
       removedBytes += JSON.stringify(original).length - JSON.stringify(body.tools[index].function.parameters).length

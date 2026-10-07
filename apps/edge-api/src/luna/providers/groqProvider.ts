@@ -3,7 +3,7 @@ import type {
   LunaProviderResponse,
   LunaToolDefinition,
 } from '../contracts'
-import { strictGroqToolSchema, normalizeGroqToolArguments } from './groqToolSchema'
+import { strictGroqToolSchema, groqWireToolSchema, groqWireToolDescription, groqWireToolArguments, normalizeGroqWireArguments } from './groqToolSchema'
 import { groqDiagnostic } from './groqDiagnostic'
 import { compactToolSchema } from './compactSchema'
 
@@ -101,13 +101,16 @@ export class GroqProvider {
           // producing either final content or another tool call.
           max_completion_tokens: Math.max(128, Math.min(1_200, input.maxCompletionTokens ?? 1_200)),
           parallel_tool_calls: false,
-          messages: input.messages,
+          messages: input.messages.map(message=>message.tool_calls ? {...message,tool_calls:message.tool_calls.map(call=>{
+            const definition=input.tools.find(tool=>tool.name===call.function.name)
+            return definition ? {...call,function:{...call.function,arguments:groqWireToolArguments(call.function.arguments,definition.parameters)}} : call
+          })} : message),
           ...(input.tools.length ? { tools: input.tools.map((tool) => ({
             type: 'function',
             function: {
               name: tool.name,
-              description: tool.description,
-              parameters: compactToolSchema(/^openai\/gpt-oss-/.test(this.model) ? strictGroqToolSchema(tool.parameters) : tool.parameters),
+              description: groqWireToolDescription(tool.description),
+              parameters: compactToolSchema(/^openai\/gpt-oss-/.test(this.model) ? strictGroqToolSchema(groqWireToolSchema(tool.parameters)) : groqWireToolSchema(tool.parameters)),
               ...(/^openai\/gpt-oss-/.test(this.model) ? { strict: true } : {}),
             },
           })), tool_choice: input.toolChoice ?? 'auto' } : {}),
@@ -145,7 +148,7 @@ export class GroqProvider {
       // machine-readable diagnostic fields for an actionable certification.
       let detail: Record<string, unknown> = {}
       try { detail = (await response.json() as { error?: Record<string, unknown> }).error ?? {} } catch { /* no trustworthy detail */ }
-      const diagnostic = groqDiagnostic(detail, response.status, input.tools.map(tool => tool.name))
+      const diagnostic = groqDiagnostic(detail, response.status, input.tools.map(tool => tool.name), input.tools.map(tool=>groqWireToolSchema(tool.parameters)))
       const code = response.status === 429 ? 'GROQ_RATE_LIMITED' : [401,403].includes(response.status) ? 'GROQ_UNAUTHORIZED' : [400,404].includes(response.status) ? 'GROQ_REQUEST_INVALID' : response.status >= 500 ? 'GROQ_UNAVAILABLE' : 'GROQ_REQUEST_FAILED'
       throw new GroqProviderError(code, response.status === 429 ? response.headers.get('retry-after') : null, diagnostic)
     }
@@ -166,7 +169,7 @@ export class GroqProvider {
           arguments: (() => {
             const raw = String(call.function?.arguments || '{}')
             const definition = input.tools.find(tool => tool.name === call.function?.name)
-            return /^openai\/gpt-oss-/.test(this.model) && definition ? normalizeGroqToolArguments(raw, definition.parameters) : raw
+            return definition ? normalizeGroqWireArguments(raw, definition.parameters) : raw
           })(),
       },
     })).filter((call) => call.id && call.function.name)

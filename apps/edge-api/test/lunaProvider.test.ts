@@ -2,8 +2,31 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { GroqProvider } from '../src/luna/providers/groqProvider'
 import { createLunaBudget, LunaBudgetError } from '../src/luna/quotaBudget'
+import { createLunaToolRegistry } from '../src/luna/toolRegistry'
 
 describe('Luna Groq provider and budget', () => {
+  it('reports only known argument key names for a failed generation, never customer values or unknown keys',async()=>{
+    const tool=createLunaToolRegistry({} as D1Database).definitions.find(t=>t.name==='record_turn_decision')!
+    const error={type:'invalid_request_error',code:'tool_use_failed',message:'additionalProperties validation failed',failed_generation:JSON.stringify({name:tool.name,arguments:{events:[{operationId:'private@example.com',expectedVersion:0,itemId:'gsk_secret','secret-key-that-must-not-escape':'private'}]}})}
+    const provider=new GroqProvider({apiKey:'fixture',model:'openai/gpt-oss-20b',fetchFn:async()=>Response.json({error},{status:400})})
+    try{await provider.complete({messages:[],tools:[tool],toolChoice:'required'});throw new Error('Expected rejection')}catch(thrown){
+      expect(thrown).toMatchObject({code:'GROQ_REQUEST_INVALID',diagnostic:{generatedArgumentKeys:['events','operationId','expectedVersion','itemId','[unexpected]']}})
+      expect(JSON.stringify(thrown)).not.toMatch(/private|gsk_secret|secret-key/)
+    }
+  })
+  it('round-trips the real draft command and its history through one wire convention', async () => {
+    const tool=createLunaToolRegistry({} as D1Database).definitions.find(t=>t.name==='update_operation_draft')!
+    const wire={operation_id:'cart',kind:'cart',expected_version:1,action:'set_field',field:'fulfillment_type',value:'counter',item_id:null,replacement_id:null,quantity:null}
+    const fetchFn=vi.fn(async (_url:Parameters<typeof fetch>[0],_init?:Parameters<typeof fetch>[1])=>new Response(JSON.stringify({choices:[{message:{tool_calls:[{id:'draft',function:{name:tool.name,arguments:JSON.stringify(wire)}}]}}],usage:{prompt_tokens:100,completion_tokens:20}}),{status:200}))
+    const provider=new GroqProvider({apiKey:'fixture',model:'openai/gpt-oss-20b',fetchFn})
+    const domain={operationId:'cart',kind:'cart',expectedVersion:1,action:'set_field',field:'fulfillment_type',value:'counter'}
+    const response=await provider.complete({messages:[{role:'assistant',content:null,tool_calls:[{id:'old',type:'function',function:{name:tool.name,arguments:JSON.stringify(domain)}}]}],tools:[tool],toolChoice:'required'})
+    expect(JSON.parse(response.toolCalls[0].function.arguments)).toEqual(domain)
+    const body=JSON.parse(String(fetchFn.mock.calls[0][1]?.body))
+    expect(body.tools[0].function.parameters.properties).toHaveProperty('expected_version')
+    expect(body.tools[0].function.parameters.properties).not.toHaveProperty('expectedVersion')
+    expect(JSON.parse(body.messages[0].tool_calls[0].function.arguments)).toMatchObject({operation_id:'cart',expected_version:1})
+  })
   it('requires native termination and accounts prose violations without hiding usage', async () => {
     const fetchFn=vi.fn(async (_url:Parameters<typeof fetch>[0],_init?:Parameters<typeof fetch>[1])=>new Response(JSON.stringify({choices:[{message:{content:'Certo!'}}],usage:{prompt_tokens:100,completion_tokens:20}}),{status:200}))
     const provider=new GroqProvider({apiKey:'fixture',model:'openai/gpt-oss-20b',fetchFn})

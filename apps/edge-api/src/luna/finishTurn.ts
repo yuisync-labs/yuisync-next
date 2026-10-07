@@ -7,7 +7,7 @@ import { matchesToolSchema } from './toolSchema'
 // of operational facts remain server-owned; the model selects references.
 export const FINISH_TURN: LunaToolDefinition = {
   name: 'finish_turn',
-  description: 'Encerra o turno sem ação comercial. Declare a intenção e os IDs reais dos rascunhos relacionados. Compra/agendamento/cadastro exigem rascunho persistido antes de encerrar; consulta informativa usa information. Não substitua catálogo por pergunta repetida. Blocos: fact usa ID verificado, question usa campo faltante, social só ligação não operacional (ex.: Claro, vamos por partes.). Nunca invente valores. Se TURN_NOT_READY, conclua a etapa indicada usando tools.',
+  description: 'Encerra o turno sem ação comercial. Declare a intenção e os IDs reais dos rascunhos relacionados. Compra/agendamento/cadastro exigem rascunho persistido antes de encerrar; consulta informativa usa information. Não substitua catálogo por pergunta repetida. Blocos: fact usa ID verificado; question usa date, period, pet, service, product, quantity, address, city, fulfillment, choice, clarify, machine, name ou human; social só ligação não operacional (ex.: Claro, vamos por partes.). Nunca invente valores. Se TURN_NOT_READY, conclua a etapa indicada usando tools.',
   parameters: {
     type:'object',additionalProperties:false,required:['intent','operation_ids','blocks'],
     properties:{
