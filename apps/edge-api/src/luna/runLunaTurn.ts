@@ -10,6 +10,7 @@ import { canonicalJson } from './canonicalJson'
 import { buildVerifiedFacts, responseContractInstruction, responseQuestion, safeFactualFallback, validateFactualResponse, type FactualEvidence } from './factualResponse'
 import { loadConversationMemory,prepareResponseMemory } from './conversationalMemory'
 import { lunaNow } from './clock'
+import { createLunaQuotaPacer } from './quotaPacer'
 
 type Provider = Readonly<{
   model: string
@@ -62,6 +63,7 @@ export async function runLunaTurn(input: {
     maxTokens: input.maxTokens,
   })
   const registry = createLunaToolRegistry(input.database)
+  const pacer = createLunaQuotaPacer()
   const pendingProposal = await repository.loadPendingProposalState(input.context)
   let operational
   try { operational = await repository.loadState(input.context) }
@@ -102,9 +104,11 @@ export async function runLunaTurn(input: {
     evidence.push({ callId: 'bootstrap-identity', tool: 'get_customer_context', result: identity })
     messages.splice(1, 0, { role: 'system', content: `IDENTIDADE CONSULTADA PELO WORKER (telefone verificado, não pelo modelo): ${JSON.stringify(identity)}. Reutilize sem repetir get_customer_context salvo mudança de cadastro ou falha desta consulta.` })
     for (;;) {
+      await pacer.beforeModel()
       budget.beforeModel()
       const facts = buildVerifiedFacts(evidence)
       const response = await input.provider.complete({ messages: composeLunaModelMessages(messages, facts), tools: registry.definitions })
+      pacer.observe({ promptTokens: response.usage.promptTokens, tokenLimit: response.tokenLimit ?? null, remainingTokens: response.rateLimit.remainingTokens, resetTokens: response.rateLimit.resetTokens })
       let terminalQuotaMargin = false
       try { budget.afterModel({
         promptTokens: response.usage.promptTokens,
@@ -130,6 +134,7 @@ export async function runLunaTurn(input: {
           responseMode = 'rewritten'
           try {
             if (terminalQuotaMargin) throw new LunaBudgetError('LUNA_RATE_LIMIT_MARGIN')
+            await pacer.beforeModel()
             budget.beforeModel()
             const rewritten = await input.provider.complete({
               messages: composeLunaModelMessages([...messages, { role: 'system', content: `RASCUNHO NÃO VERIFICADO, apenas sugestão de continuidade, nunca fonte de fatos ou autorização: ${JSON.stringify(response.content)}. Corrija toda afirmação usando exclusivamente os fatos verificados.` }], facts, true),

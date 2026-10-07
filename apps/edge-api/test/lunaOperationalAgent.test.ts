@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { runLunaTurn } from '../src/luna/runLunaTurn'
 import type { LunaMessage, LunaProviderResponse, LunaToolDefinition } from '../src/luna/contracts'
@@ -10,8 +10,13 @@ const testEnv = env as EdgeEnv & { DB: D1Database }
 const TENANT = 'tenant-luna-agent-test'
 const THREAD = 'wa:5532999990000'
 const NOW = 1_789_000_000_000
+let clock: ReturnType<typeof vi.spyOn>
+let fixtureNow = Date.parse('2026-10-06T12:00:00.000Z')
 
 beforeAll(async () => {
+  // Scheduling assertions must not depend on the wall clock: after 23:00 a
+  // one-hour appointment would legitimately cross the fixture's 23:59 close.
+  clock = vi.spyOn(Date, 'now').mockReturnValue(fixtureNow)
   await testEnv.DB.batch([
     testEnv.DB.prepare(`INSERT OR REPLACE INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(?1,?1,'Luna Test','active',?2,?2)`).bind(TENANT, NOW),
     testEnv.DB.prepare(`INSERT OR REPLACE INTO module_settings_extensions(tenant_id,module_id,data_json,updated_at_ms) VALUES(?1,'petshop',?2,?3)`).bind(TENANT, JSON.stringify({ petbot_timezone: 'America/Sao_Paulo', petbot_business_hours: Object.fromEntries(Array.from({ length: 7 }, (_, i) => [String(i + 1), [{ open: '00:00', close: '23:59' }]])) }), NOW),
@@ -24,6 +29,8 @@ beforeAll(async () => {
     testEnv.DB.prepare(`INSERT OR REPLACE INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop','msg-1',?2,'wamid.test','inbound','customer','Quero banho para a Mel',?3)`).bind(TENANT, THREAD, NOW),
   ])
 })
+beforeEach(() => { fixtureNow += 10000; clock.mockReturnValue(fixtureNow) })
+afterAll(() => clock.mockRestore())
 
 const context = {
   tenantId: TENANT,
