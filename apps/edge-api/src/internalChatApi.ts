@@ -24,6 +24,31 @@ type PersistedMessage = {
 const identifier = (value: unknown): value is string =>
   typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(value)
 
+
+export async function searchInternalChatProducts(
+  db: D1Database,
+  tenantId: string,
+  moduleId: string,
+  query: string,
+): Promise<Array<{ id: string; name: string; price_reais: number; stock_quantity: number }>> {
+  const rows = await db.prepare(`SELECT p.id,p.name,p.price_cents,
+    MAX(0, COALESCE(i.on_hand_milliunits,0) - COALESCE(i.reserved_milliunits,0)) AS stock_milliunits
+    FROM catalog_products p LEFT JOIN inventory_balances i
+      ON i.tenant_id=p.tenant_id AND i.module_id=p.module_id AND i.product_id=p.id
+    WHERE p.tenant_id=?1 AND p.module_id=?2 AND p.status='active'
+      AND LOWER(p.name) LIKE ?3 ORDER BY p.name LIMIT 8`)
+    .bind(tenantId, moduleId, `%${query.toLowerCase()}%`).all<{
+      id: string; name: string; price_cents: number; stock_milliunits: number
+    }>()
+  return rows.results.map(row => ({
+    id: row.id,
+    name: row.name,
+    price_reais: row.price_cents / 100,
+    // Reserved stock belongs to another order; never offer it as available.
+    stock_quantity: row.stock_milliunits / 1000,
+  }))
+}
+
 function json(body: unknown, status = 200) {
   return Response.json(body, { status, headers: { 'cache-control': 'no-store' } })
 }
@@ -140,19 +165,7 @@ export async function executeInternalChatTurn(request: Request, env: Bindings): 
       description: 'Procura produtos no catálogo real do petshop. Use antes de responder valores de produtos.',
       inputSchema: z.object({ query: z.string().min(1).max(80) }),
       execute: async ({ query }) => {
-        const rows = await db.prepare(`SELECT p.id,p.name,p.price_cents,
-          MAX(0, COALESCE(i.on_hand_milliunits,0) - COALESCE(i.reserved_milliunits,0)) AS stock_milliunits
-          FROM catalog_products p LEFT JOIN inventory_balances i
-            ON i.tenant_id=p.tenant_id AND i.module_id=p.module_id AND i.product_id=p.id
-          WHERE p.tenant_id=?1 AND p.module_id=?2 AND p.status='active'
-            AND LOWER(p.name) LIKE ?3 ORDER BY p.name LIMIT 8`)
-          .bind(tenantId, moduleId, `%${query.toLowerCase()}%`).all<{
-            id: string; name: string; price_cents: number; stock_milliunits: number
-          }>()
-        return rows.results.map(row => ({
-          id: row.id, name: row.name, price_reais: row.price_cents / 100,
-          stock_quantity: row.stock_milliunits / 1000,
-        }))
+        return searchInternalChatProducts(db, tenantId, moduleId, query)
       },
     }),
     search_services: tool({
