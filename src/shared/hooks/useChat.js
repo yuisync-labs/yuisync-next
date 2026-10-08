@@ -326,6 +326,8 @@ export function useChat() {
     try {
       const result = await requestChatReply(sessionId, trimmed, {
         clientMessageId: optimisticMessage.id,
+        tenantId: activeTenantId,
+        moduleId: activeModuleId,
       })
 
       const persistedMessage = (result?.savedUserMessages || []).find((message) => (
