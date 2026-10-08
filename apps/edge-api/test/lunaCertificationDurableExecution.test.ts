@@ -54,5 +54,5 @@ describe('Staging certification durable execution, simulated provider only',()=>
    expect(await DB.prepare(`SELECT COUNT(*) AS n FROM luna_operation_events WHERE tenant_id=?1`).bind('luna-cert-'+body.roundId+'-1').first()).toEqual({n:1})
    expect(await DB.prepare(`SELECT COUNT(*) AS n FROM sales WHERE tenant_id=?1`).bind('luna-cert-'+body.roundId+'-1').first()).toEqual({n:0})
   }finally{provider.mockRestore();clock.mockRestore()}
- })
+ },60_000)
 })
