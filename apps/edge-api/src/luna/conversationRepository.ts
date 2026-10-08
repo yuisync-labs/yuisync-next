@@ -105,11 +105,11 @@ export class LunaConversationRepository {
   async loadHistory(context: LunaExecutionContext, limit = 12): Promise<LunaMessage[]> {
     const result = await this.database.prepare(`
       SELECT direction,actor_type,content_text FROM (
-        SELECT direction,actor_type,content_text,created_at_ms,id
+        SELECT direction,actor_type,content_text,created_at_ms,rowid AS insertion_order
         FROM chat_messages
         WHERE tenant_id=?1 AND module_id=?2 AND thread_id=?3 AND trim(content_text)<>''
-        ORDER BY created_at_ms DESC,id DESC LIMIT ?4
-      ) ORDER BY created_at_ms,id
+        ORDER BY created_at_ms DESC,rowid DESC LIMIT ?4
+      ) ORDER BY created_at_ms,insertion_order
     `).bind(context.tenantId, context.moduleId, context.conversationId, Math.max(1, Math.min(30, limit))).all<{
       direction: string
       actor_type: string

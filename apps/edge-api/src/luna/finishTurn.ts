@@ -1,6 +1,6 @@
 import type { LunaToolDefinition, LunaToolResult } from './contracts'
 import type { OperationalState } from './operationalState'
-import { validateFactualResponse, type Fact } from './factualResponse'
+import { safeFactualFallback, validateFactualResponse, type Fact } from './factualResponse'
 import { matchesToolSchema } from './toolSchema'
 
 // A turn ends through a read-only command, not arbitrary model prose. Values
@@ -49,6 +49,19 @@ export function finishTurn(args: Record<string,unknown>, state: OperationalState
   const payload={blocks:blocks.map(b=>b.kind==='fact'?{kind:'fact',id:b.value}:b.kind==='question'?{kind:'question',field:b.value}:{kind:'social',text:b.value})}
   const reply=validateFactualResponse(JSON.stringify(payload),facts)
   return reply ? {ok:true,data:{reply}} : {ok:false,code:'TURN_RESPONSE_INVALID',retryable:false,validation_errors:[{field:'blocks',rule:'Operational claims must reference exact verified fact IDs. Social blocks cannot contain product names, prices, quantities or questions. Use question blocks for missing fields.'}]}
+}
+
+// A failed wording repair must not throw away a valid question or the state.
+// Strip free prose and unknown references, then apply the SAME domain checks.
+// This never prepares or confirms a commercial operation on the model's behalf.
+export function safeFinishTurn(args: Record<string,unknown>, state: OperationalState, facts: readonly Fact[], progress: { enforce?: boolean; preparedOperationIds?: readonly string[] } = {}): string {
+  const indexed = new Set(facts.map(f => f.id))
+  const ids = Array.isArray(args.fact_ids) ? [...new Set(args.fact_ids.filter((id): id is string => typeof id === 'string' && indexed.has(id)))] : []
+  const related = Array.isArray(args.operation_ids) ? args.operation_ids.filter((id): id is string => typeof id === 'string' && Object.hasOwn(state.operations,id)).map(id => state.operations[id]) : []
+  const question = args.intent === 'cart' && related.some(d => d.kind === 'cart' && d.status === 'active' && d.items.length && !['counter','delivery'].includes(d.fields.fulfillment_type)) ? 'fulfillment' : args.question
+  const selected = ids.length ? ids : facts.filter(f => f.reference?.kind !== 'pet').slice(-6).map(f => f.id)
+  const verified = finishTurn({...args,social:[],fact_ids:selected,question},state,facts,progress)
+  return verified.ok ? verified.data.reply : safeFactualFallback(facts.filter(f => f.reference?.kind !== 'pet'))
 }
 
 export function operationalCapabilities(definitions: readonly LunaToolDefinition[], state: OperationalState, presentedKinds: readonly string[], context:{identityCurrent?:boolean;hasProposal?:boolean;hasAppointments?:boolean}={}): readonly LunaToolDefinition[] {

@@ -11,7 +11,7 @@ import { buildVerifiedFacts, responseContractInstruction, responseQuestion, safe
 import { loadConversationMemory,prepareResponseMemory } from './conversationalMemory'
 import { lunaNow } from './clock'
 import { createLunaQuotaPacer,resetDurationMs } from './quotaPacer'
-import { FINISH_TURN, finishTurn, finishTurnDefinition, operationalCapabilities } from './finishTurn'
+import { FINISH_TURN, finishTurn, safeFinishTurn, finishTurnDefinition, operationalCapabilities } from './finishTurn'
 import { agentMemory, agentContextMessages } from './agentContext'
 import { DRAFT_TOOL_DEFINITIONS, executeDraftTool } from './draftTools'
 import { runSdkAgent } from './sdkAgent'
@@ -229,7 +229,8 @@ export async function runLunaTurn(input: {
             await completeReply(finish.data.reply, finalRepairUsed ? 'rewritten' : 'verified')
           }else{
             if(finish.code==='TURN_RESPONSE_INVALID'||finish.code==='TOOL_ARGUMENTS_INVALID'||finish.code==='TURN_NEXT_STEP_MISSING'){
-              if(finalRepairUsed)await completeReply(safeFactualFallback(buildVerifiedFacts(evidence.filter(item=>item.callId!=='bootstrap-identity'))),'factual_fallback')
+              if(finalRepairUsed)await completeReply(safeFinishTurn(args,currentState,buildVerifiedFacts(evidence.filter(item=>item.callId!=='bootstrap-identity')),{enforce:!!input.provider.operationalReplies,preparedOperationIds}),'factual_fallback')
+              if(!finalRepairUsed)input.observer?.response('factual_repair_requested')
               finalRepairUsed=true
             }
           }

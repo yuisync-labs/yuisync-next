@@ -1,8 +1,9 @@
 import {hashCanonicalJson} from '../../apps/edge-api/src/luna/canonicalJson'
 import {LUNA_SCENARIO_FIXTURE as fixture} from '../../apps/edge-api/test/fixtures/luna/designedScenarios'
+import {responseQuestion} from '../../apps/edge-api/src/luna/factualResponse'
 // Assertions consume authoritative snapshots; they never plan tools or answers.
-export async function operationalAssertions(input:{id:number;turn:number;total:number;tenant:string;before:any;after:any;tools:any[];faults:any[]}){
- const {id,turn,total,tenant,before,after,tools,faults}=input,violations:string[]=[]
+export async function operationalAssertions(input:{id:number;turn:number;total:number;tenant:string;before:any;after:any;tools:any[];faults:any[];result?:{reply?:string|null}}){
+ const {id,turn,total,tenant,before,after,tools,faults,result}=input,violations:string[]=[]
  const check=(ok:unknown,code:string)=>{if(!ok)violations.push(code)}
  const rows=(name:string)=>after.tables[name]??[]
  for(const list of Object.values(after.tables) as any[][])for(const row of list)check(row.tenant_id===tenant&&row.module_id==='petshop','CROSS_SCOPE_ROW')
@@ -25,6 +26,7 @@ export async function operationalAssertions(input:{id:number;turn:number;total:n
   }
  }
  const operations=Object.values(after.operational.operations??{}) as any[],cart=operations.find(o=>o.kind==='cart'),booking=operations.find(o=>o.kind==='booking')
+ if(id===1&&turn===0&&result)check(responseQuestion(result.reply??'')==='fulfillment','PURCHASE_NEXT_QUESTION_MISSING')
  if(id===1&&turn===1){
   check(cart?.fields.fulfillment_type==='counter','PICKUP_FULFILLMENT_INVALID')
   check(cart?.items.length===1&&cart.items[0].id==='racao-a'&&cart.items[0].quantity===1,'PICKUP_CART_CHANGED')

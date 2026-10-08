@@ -8,7 +8,8 @@ import { sendWhatsAppOutboundText } from '../whatsappOutboundService'
 import { GroqSdkProvider } from './providers/groqSdkProvider'
 import { runLunaTurn } from './runLunaTurn'
 import { recordProposalPresentation } from './proposalPresentation'
-import { createD1TurnJournal,LunaCheckpointError,type LunaTurnJournal } from './turnJournal'
+import { LunaCheckpointError,type LunaTurnJournal } from './turnJournal'
+import {createDurableTurnJournal} from './durableTurnJournal'
 import { durableTurnQueue,type DurableTurnJob } from './durableTurnQueue'
 import { hashCanonicalJson } from './canonicalJson'
 import { executeLunaPlaygroundJob,type LunaPlaygroundJob } from './playgroundTurn'
@@ -124,14 +125,14 @@ export class LunaConversationDurableObject extends DurableObject<EdgeEnv> {
     if((job.payload as {kind?:string})?.kind==='playground'){
       const payload=job.payload as LunaPlaygroundJob,env=this.env as LunaRuntimeBindings
       if(!env.DB)throw new LunaCheckpointError('LUNA_DATABASE_NOT_CONFIGURED')
-      const journal=createD1TurnJournal(env.DB,payload.context,lunaJournalConfiguration(env,`${env.RELEASE_SHA??'local'}:${env.LUNA_MODEL}:durable-v1`))
-      return executeLunaPlaygroundJob(payload,env,journal)
+      const journal=createDurableTurnJournal(this.ctx.storage,env.DB,payload.context,lunaJournalConfiguration(env,`${env.RELEASE_SHA??'local'}:${env.LUNA_MODEL}:durable-v1`))
+      try{return await executeLunaPlaygroundJob(payload,env,journal)}finally{await journal.flush()}
     }
     const event=parseLunaMessageReceivedEventV1(job.payload),env=this.env as LunaRuntimeBindings
     if(!env.DB)throw new Error('LUNA_DATABASE_NOT_CONFIGURED')
     const context={tenantId:event.tenant_id,moduleId:'petshop' as const,conversationId:event.payload.conversation_id,sourceMessageId:event.payload.source_message_id,customerAddress:event.payload.customer_address,phoneNumberId:event.payload.phone_number_id,traceId:event.correlation_id,executionMode:env.APP_ENV==='production'?'production' as const:'staging' as const}
-    const journal=createD1TurnJournal(env.DB,context,`${env.RELEASE_SHA??'local'}:${env.LUNA_MODEL}:durable-v1`)
-    return executeLunaMessageEvent(event,env,journal)
+    const journal=createDurableTurnJournal(this.ctx.storage,env.DB,context,`${env.RELEASE_SHA??'local'}:${env.LUNA_MODEL}:durable-v1`)
+    try{return await executeLunaMessageEvent(event,env,journal)}finally{await journal.flush()}
   }
 
   protected jobs() {return durableTurnQueue(this.ctx.storage,job=>this.executeJob(job),Date.now,job=>console.info('luna.turn.lifecycle',{jobId:job.id,status:job.status,errorCode:job.errorCode??null,attempts:job.attempts,activeDurationMs:job.activeDurationMs,quotaWaitMs:job.quotaWaitMs??0}))}

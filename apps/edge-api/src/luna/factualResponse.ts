@@ -1,5 +1,6 @@
 import type { LunaToolResult } from './contracts'
 import { normalizeBusinessHours } from '../businessHours'
+import { loadOperationalState } from './operationalState'
 
 export type FactualEvidence = { callId: string; tool: string; result: LunaToolResult }
 export type Fact = { id: string; text: string; reference?:import('./conversationalMemory').PresentedOption }
@@ -33,6 +34,9 @@ export function buildVerifiedFacts(evidence: readonly FactualEvidence[]): Fact[]
   const add = (e: FactualEvidence, suffix: string, text: string | null,reference?:Fact['reference']) => { if (text) facts.push({ id: `${e.callId}:${suffix}`, text,...(reference?{reference}:{}) }) }
   for (const e of evidence) {
     if (!e.result.ok) {
+      // A deduplicated attempt did not undo the earlier successful action.
+      // It remains in the execution trace, not a claim that the cart failed.
+      if (e.result.code === 'TOOL_CALL_REPEATED') continue
       // No code or argument supplied by the model becomes a customer claim.
       add(e, 'unavailable', e.result.code === 'COMMIT_STATE_UNCERTAIN'
         ? 'Não consegui verificar o resultado da operação. Não vou repetir a gravação sem conferência.'
@@ -40,7 +44,15 @@ export function buildVerifiedFacts(evidence: readonly FactualEvidence[]): Fact[]
       continue
     }
     const data = obj(e.result.data)
-    if (e.tool === 'search_products') {
+    if (e.tool.startsWith('draft_') && data.state) {
+      try {
+        const state = loadOperationalState(JSON.stringify(data.state))
+        const draft = state.focus ? state.operations[state.focus] : null
+        if (draft?.kind === 'cart' && draft.status === 'active') add(e, 'draft', 'Seu carrinho foi atualizado. Ainda não é um pedido nem um pagamento.')
+        else if (draft?.kind === 'booking' && draft.status === 'active') add(e, 'draft', 'O rascunho do agendamento foi atualizado. O horário ainda não foi reservado.')
+        else if (draft?.kind === 'registration' && draft.status === 'active') add(e, 'draft', 'O rascunho do cadastro foi atualizado. O cadastro ainda precisa de confirmação.')
+      } catch { /* Unknown states are not evidence of a successful draft. */ }
+    } else if (e.tool === 'search_products') {
       const rows = Array.isArray(data.products) ? data.products : []
       if (!rows.length) add(e, 'empty', 'Nenhum produto foi encontrado nessa consulta.')
       rows.forEach((raw, i) => {

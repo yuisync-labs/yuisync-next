@@ -88,3 +88,20 @@ Fontes oficiais:
 - https://developers.cloudflare.com/workers-ai/models/glm-4.7-flash/
 - https://developers.cloudflare.com/workers-ai/platform/pricing/
 - https://developers.cloudflare.com/workers-ai/configuration/ai-sdk/
+# Follow-up after the real 2e35f9f sample
+
+Both GLM and Groq exposed a shared finalization defect: rejected operational
+wording caused the fallback to discard a valid fulfillment question. The safe
+renderer now rechecks the same domain contract after removing unverified prose.
+Draft acknowledgments come only from validated persisted state. A deduplicated
+tool attempt remains in the trace but no longer implies that the saved cart failed.
+
+History now breaks equal timestamps by SQLite insertion order, not random UUID.
+Migration `0046_luna_chat_causal_history.sql` adds the matching index without
+changing or deleting historical messages. New checkpoints are persisted before
+effects in the existing Durable Object's SQLite storage, then mirrored to D1
+in bounded batches on quota suspension or completion. Pre-upgrade D1 receipts
+are loaded once per turn; uncertain/failed calls are never automatically retried.
+The certification UI retains earlier transcripts when advancing a scenario.
+These changes invalidate prior real-model behavioral proofs; old rounds and
+their consumption remain preserved and must not be counted as approvals.

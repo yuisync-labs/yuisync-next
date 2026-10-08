@@ -19,8 +19,10 @@ export function agentToolMessage(name: string, result: LunaToolResult): string {
 }
 
 export function agentContextMessages(messages: readonly LunaMessage[], state: OperationalState): LunaMessage[] {
+  const missing = Object.values(state.operations).filter(d => d.status === 'active').map(d => ({operation_id:d.id,kind:d.kind,fields:d.kind==='cart'? [...(!d.items.length?['product']:[]),...(!['counter','delivery'].includes(d.fields.fulfillment_type)?['fulfillment']:[]),...(d.fields.fulfillment_type==='delivery'&&!d.fields.address?['address']:[])]:d.kind==='booking'?[...(!d.items.length?['service']:[]),...(!d.fields.pet_id?['pet']:[]),...(!d.fields.scheduled_at?['date']:[])]:[...(!d.fields.pet_name?['name']:[]),...(!d.fields.species?['species']:[])]}))
   return [
     ...messages.filter(m => m.role !== 'system' || !m.content?.startsWith('MEMÓRIA OPERACIONAL D1:')),
     {role:'system',content:`ESTADO ATUAL DO RASCUNHO (D1, autoritativo): ${JSON.stringify(state)}`},
+    {role:'system',content:`CAMPOS AINDA AUSENTES (não perguntar dados presentes): ${JSON.stringify(missing)}. Rascunhos completos exigem prepare_* para apresentar resumo, nunca finish_turn como confirmação de sucesso. Perguntas paralelas não são ações de compra.`},
   ]
 }

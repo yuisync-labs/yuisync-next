@@ -8,9 +8,10 @@ describe('agent context uses one authoritative state',()=>{
     const memory={schemaVersion:1 as const,options:[{id:'real-product',kind:'product' as const,label:'Ração A',observedAtMs:1000}],question:'fulfillment',targetOperationId:'cart',focus:'cart',paused:[],summary:JSON.stringify(state)}
     expect(JSON.parse(agentMemory(memory))).toEqual({...memory,summary:undefined})
     const messages=agentContextMessages([{role:'system',content:`MEMÓRIA OPERACIONAL D1: ${JSON.stringify(state)}`},{role:'user',content:'Troque por esse e entregue na Rua completa 123'}],state)
-    expect(messages).toHaveLength(2)
+    expect(messages).toHaveLength(3)
     expect(messages[0].content).toContain('Rua completa 123')
     expect(messages[1].content).toContain(JSON.stringify(state))
+    expect(messages[2].content).toContain('"fields":["fulfillment"]')
   })
   it('compacts a successful draft acknowledgment, never an error or query result',()=>{
     const raw={ok:true as const,data:{decision:{events:[state]},state,commercial_effect:false}}

@@ -25,6 +25,7 @@ import { browserCheckpoint } from './browserCheckpoint'
 import { certificationBlock } from './certificationBlocks'
 import { LunaConversationDurableObject as NativeConversation } from '../../apps/edge-api/src/luna/conversationDurableObject'
 import { createD1TurnJournal,LunaCheckpointError,LunaTurnSuspended,type LunaTurnJournal } from '../../apps/edge-api/src/luna/turnJournal'
+import {createDurableTurnJournal,type DurableLunaTurnJournal} from '../../apps/edge-api/src/luna/durableTurnJournal'
 import type { DurableTurnJob } from '../../apps/edge-api/src/luna/durableTurnQueue'
 import { hashCanonicalJson } from '../../apps/edge-api/src/luna/canonicalJson'
 type Env=EdgeEnv & {LUNA_CERT_DB?:D1Database;LUNA_CERT_TOKEN?:string;RELEASE_SHA?:string;GROQ_API_KEY?:string;LUNA_CERT_ENV?:string;LUNA_CERT_DATABASE_ID?:string;LUNA_CERT_OPERATOR_ID?:string;LUNA_CERT_GATES_SHA?:string;LUNA_CERT_SAMPLE_ONLY?:string}
@@ -105,7 +106,7 @@ function validate(id:number,turn:number,total:number,before:any,after:any,tools:
  // Complex fault/race branches must never be silently treated as certified.
  return{passed:violations.length===0,violations}
 }
-type Execution={jobId:string;previous?:any;saveProgress:(value:unknown)=>Promise<void>}
+type Execution={jobId:string;previous?:any;storage?:Pick<DurableObjectStorage,'get'|'put'>;saveProgress:(value:unknown)=>Promise<void>}
 const certificationObject=(env:Env,roundId:string)=>{if(!env.LUNA_AGENT)throw new LunaCheckpointError('LUNA_AGENT_NOT_CONFIGURED');return env.LUNA_AGENT.get(env.LUNA_AGENT.idFromName(`certification:${env.RELEASE_SHA}:${roundId}`))}
 async function certification(request:Request,env:Env,execution?:Execution){
  if(env.APP_ENV!=='staging'||env.LUNA_ENABLED!=='false'||env.LUNA_CERT_ENV!=='isolated-luna-v2'||!env.LUNA_CERT_DATABASE_ID||!env.LUNA_CERT_DB||env.LUNA_CERT_DB===env.DB||env.LUNA_CERT_DB===env.AUTH_DB||!env.LUNA_CERT_TOKEN)return json({code:'CERTIFICATION_DISABLED'},404)
@@ -178,7 +179,13 @@ async function certification(request:Request,env:Env,execution?:Execution){
  if(existing&&!execution)return reply({code:'TURN_STATE_UNCERTAIN'},409)
  const meter=certificationMeter(db,body.limits,execution?.previous?.metrics),tenant=`luna-cert-${body.roundId}-${scenario.id}`,conversation=`scenario-${scenario.id}`
  const context:LunaExecutionContext={tenantId:tenant,moduleId:'petshop',conversationId:conversation,customerAddress:f.phone,phoneNumberId:'fixture-no-whatsapp',sourceMessageId:`source-${scenario.id}-${turn}`,traceId:`trace-${scenario.id}-${turn}`,executionMode:'staging',nowMs:Date.parse(LUNA_SCENARIO_CLOCK.now)+(turn+1)*1000}
- const journalFor=(ctx:LunaExecutionContext)=>execution?createD1TurnJournal(meter.db,ctx,`${configuration.fingerprint}:durable-v1`):undefined
+ const durableJournals:DurableLunaTurnJournal[]=[]
+ const flushJournals=async()=>{for(const journal of durableJournals)await journal.flush()}
+ const journalFor=(ctx:LunaExecutionContext)=>{
+  if(!execution)return undefined
+  if(!execution.storage)return createD1TurnJournal(meter.db,ctx,`${configuration.fingerprint}:durable-v1`)
+  const journal=createDurableTurnJournal(execution.storage,meter.db,ctx,`${configuration.fingerprint}:durable-v1`);durableJournals.push(journal);return journal
+ }
  const journal=journalFor(context)
  const maxTokens=certificationTurnTokens(env.LUNA_MAX_TOKENS_PER_TURN)
  const checkpoint=<T>(name:string,input:unknown,run:()=>Promise<T>,j:LunaTurnJournal|undefined=journal)=>j?j.run(name,input,run):run()
@@ -272,9 +279,10 @@ async function certification(request:Request,env:Env,execution?:Execution){
    ledger.category('runtime');const prepared=await peer('benefit-peer',1,'Quero usar o último banho do pacote para a Mel amanhã às 09h.');if(prepared.status!=='awaiting_confirmation')throw new Error('CERTIFICATION_BENEFIT_RACE_PREPARATION_FAILED');ledger.category('admin')
   }
   stateAfter=await certificationSnapshot(meter.db,tenant,conversation)
- }catch(error){if(execution&&(error instanceof LunaTurnSuspended||error instanceof LunaCheckpointError)){await execution.saveProgress({started,responses,faults,metrics:meter.metrics,budget:ledger.usage()});throw error}errors.push(error instanceof Error?error.message:'CERTIFICATION_EXECUTION_FAILED');ledger.category('admin');try{stateAfter=await certificationSnapshot(meter.db,tenant,conversation)}catch{errors.push('CERTIFICATION_POST_FAILURE_SNAPSHOT_UNAVAILABLE')}}
+ }catch(error){if(execution&&(error instanceof LunaTurnSuspended||error instanceof LunaCheckpointError)){await flushJournals();await execution.saveProgress({started,responses,faults,metrics:meter.metrics,budget:ledger.usage()});throw error}errors.push(error instanceof Error?error.message:'CERTIFICATION_EXECUTION_FAILED');ledger.category('admin');try{stateAfter=await certificationSnapshot(meter.db,tenant,conversation)}catch{errors.push('CERTIFICATION_POST_FAILURE_SNAPSHOT_UNAVAILABLE')}}
+ await flushJournals()
  const validation=validate(scenario.id,turn,scenario.messages.length,stateBefore,stateAfter,tools,result?.errorCode??errors[0]??null)
- validation.violations.push(...await operationalAssertions({id:scenario.id,turn,total:scenario.messages.length,tenant,before:stateBefore,after:stateAfter,tools,faults}))
+ validation.violations.push(...await operationalAssertions({id:scenario.id,turn,total:scenario.messages.length,tenant,before:stateBefore,after:stateAfter,tools,faults,result:result??{reply:null}}))
  if(scenario.id===19&&turn===0&&!faults.some(f=>f.injected&&f.attempts===2))validation.violations.push('AGENDA_RECOVERY_NOT_EXERCISED')
  if(scenario.id===16&&turn===1&&(stateAfter.tables.luna_proposals??[]).some((p:any)=>p.status==='awaiting_confirmation'&&JSON.parse(p.payload_json).scheduled_at_ms===Date.parse('2026-10-07T17:00:00Z')))validation.violations.push('OCCUPIED_SLOT_PROPOSED')
  if(meter.unknown())validation.violations.push('CERTIFICATION_ACCOUNTING_UNCERTAIN')
@@ -288,7 +296,7 @@ async function certification(request:Request,env:Env,execution?:Execution){
   // message and commit tool result. There are no generic confirmation tables.
   confirmations:tools.filter(t=>t.name==='commit_confirmed_proposal').map(t=>({sourceMessageId:context.sourceMessageId,args:t.args,result:t.result})),
   commits:(stateAfter.tables.luna_proposals??[]).filter((p:any)=>p.status==='completed').map((p:any)=>({proposalId:p.id,operationId:p.committed_operation_id,fingerprint:p.fingerprint,version:p.version})),
-  fallbacks:responseModes.filter(m=>m==='factual_fallback'),responseModes,reformulations:responseModes.filter(m=>m==='rewritten').length,errors,faults,result,responses,checkpoint:{tenant,conversation,nextTurn:turn+1},validation})
+  fallbacks:responseModes.filter(m=>m==='factual_fallback'),responseModes,reformulations:responseModes.filter(m=>m==='factual_repair_requested'||m==='rewritten').length-(responseModes.includes('factual_repair_requested')&&responseModes.includes('rewritten')?1:0),errors,faults,result,responses,checkpoint:{tenant,conversation,nextTurn:turn+1},validation})
  await db.prepare(`UPDATE luna_cert_turns SET status='complete',evidence_json=?2 WHERE idempotency_key=?1 AND status='running'`).bind(key,JSON.stringify(evidence)).run()
  return reply({...evidence as Record<string,unknown>,budget:ledger.usage()})
 }
@@ -300,7 +308,7 @@ export class LunaConversationDurableObject extends NativeConversation {
   if(!payload.body)return super.executeJob(job)
   const env=this.env as Env,previous=await this.ctx.storage.get(`cert-progress:${job.id}`)
   if(payload.body.sha!==env.RELEASE_SHA||payload.configuration!==(await identity(env)).fingerprint)throw new LunaCheckpointError('CERTIFICATION_JOB_RELEASE_CHANGED')
-  const response=await certification(new Request('https://luna.internal/internal/luna-certification/turn',{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${env.LUNA_CERT_TOKEN}`},body:JSON.stringify(payload.body)}),env,{jobId:job.id,previous,saveProgress:value=>this.ctx.storage.put(`cert-progress:${job.id}`,value)})
+  const response=await certification(new Request('https://luna.internal/internal/luna-certification/turn',{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${env.LUNA_CERT_TOKEN}`},body:JSON.stringify(payload.body)}),env,{jobId:job.id,previous,storage:this.ctx.storage,saveProgress:value=>this.ctx.storage.put(`cert-progress:${job.id}`,value)})
   const result=await response.json()
   if(!response.ok)throw new LunaCheckpointError((result as {code?:string}).code??'CERTIFICATION_EXECUTION_FAILED')
   return result

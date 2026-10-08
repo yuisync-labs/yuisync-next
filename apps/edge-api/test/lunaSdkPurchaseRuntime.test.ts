@@ -43,6 +43,25 @@ async function turn(h:Harness,index:number,message:string,commands:Command[],tra
 }
 
 describe('vertical purchase: real SDK + Worker/D1, HTTP model simulated',()=>{
+  it.each(['groq','workers-ai'] as const)('preserves the next question after the observed %s wording failures and duplicate attempt',async(transport)=>{
+    const h=await createDesignedHarness(1,'-observed-final-'+transport)
+    try{
+      const result=await turn(h,1,'Quero uma Ração A.',[
+        h.command('search_products',{query:'Ração A'}),
+        h.command('draft_add_item',{operation_id:'cart',kind:'cart',item_id:'racao-a',quantity:1}),
+        h.command('draft_add_item',{operation_id:'cart',kind:'cart',item_id:'racao-a',quantity:1}),
+        {name:'finish_turn',args:{intent:'cart',operation_ids:['cart'],social:['A Ração A foi adicionada ao carrinho.'],fact_ids:['sdk-1-1:product.0'],question:'none'}},
+        {name:'finish_turn',args:{intent:'cart',operation_ids:['cart'],social:['Já adicionei, prefere retirar?'],fact_ids:['sdk-1-1:product.0'],question:'fulfillment'}},
+      ],transport)
+      expect(result.reply).toContain('Ração A: R$ 90,00')
+      expect(result.reply).toContain('Você prefere retirar ou receber em casa?')
+      expect(result.reply).not.toContain('não pôde ser concluída')
+      expect(result.reply).not.toContain('Já adicionei')
+      expect((await h.state()).operations.cart.version).toBe(1)
+      expect(await h.db.prepare('SELECT COUNT(*) AS n FROM luna_operation_events WHERE tenant_id=?1').bind(h.tenant).first()).toEqual({n:1})
+      expect(await h.db.prepare('SELECT COUNT(*) AS n FROM sales WHERE tenant_id=?1').bind(h.tenant).first()).toEqual({n:0})
+    }finally{h.close()}
+  })
   it('recovers the observed missing question and premature finish without a second draft mutation or invented sale',async()=>{
     const h=await createDesignedHarness(1,'-sdk-browser-regression')
     try{

@@ -1,7 +1,8 @@
 import { Agent } from 'agents'
 import { executeInternalChatJob, type InternalChatJob, type NativeLunaBindings } from './internalChatTurn'
 import { durableTurnQueue } from './durableTurnQueue'
-import { createD1TurnJournal, LunaCheckpointError } from './turnJournal'
+import { LunaCheckpointError } from './turnJournal'
+import {createDurableTurnJournal} from './durableTurnJournal'
 import { hashCanonicalJson } from './canonicalJson'
 import { lunaJournalConfiguration } from './providers/providerFactory'
 
@@ -45,7 +46,8 @@ export class LunaNativeAgent extends Agent<NativeLunaBindings> {
   }, async job => {
     const payload = job.payload as InternalChatJob
     if (!this.env.DB) throw new LunaCheckpointError('DATABASE_NOT_CONFIGURED')
-    return executeInternalChatJob(payload, this.env, createD1TurnJournal(this.env.DB, payload.context, lunaJournalConfiguration(this.env, `internal:${payload.releaseSha}:${payload.model}`)))
+    const journal=createDurableTurnJournal(this.ctx.storage,this.env.DB,payload.context,lunaJournalConfiguration(this.env,`internal:${payload.releaseSha}:${payload.model}`))
+    try{return await executeInternalChatJob(payload,this.env,journal)}finally{await journal.flush()}
   })
   private readonly serial = serializeAgentTurns((execute: () => Promise<unknown>) => execute())
   private readonly processing = serializeAgentTurns(() => this.pendingTurns.process())
