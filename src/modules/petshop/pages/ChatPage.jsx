@@ -10,6 +10,7 @@ import { useAuthCtx } from '../../../context/AuthContext'
 import { useModuleCtx } from '../../../context/ModuleContext'
 import { fmtDateTime } from '../../../lib/supabase'
 import { resetChatHistory } from '../../../lib/api'
+import { lunaTurnLabels } from '../../../lib/lunaTurnPolling'
 
 // ── Message Bubble ────────────────────────────────────────────────────────────
 function isImageUrl(value = '') {
@@ -279,7 +280,7 @@ function HandoffAlerts({ alerts, onDismiss, onOpen }) {
 
 export default function ChatPage() {
   const {
-    sessions, messages, activeSession, botTyping, quickReplies,
+    sessions, messages, activeSession, botTyping, botTurn, quickReplies,
     handoffAlerts,
     loadSessions, loadMessages, loadQuickReplies, openSession, createSession,
     sendClientMessage, sendHumanMessage,
@@ -580,6 +581,13 @@ export default function ChatPage() {
               </div>
 
               {/* Status bar & input */}
+              {botTurn && (
+                <div role="status" className="px-4 py-2 text-xs text-muted border-t border-[var(--border2)]">
+                  {lunaTurnLabels[botTurn.status] || 'Estado do turno'}
+                  {botTurn.errorCode ? ` · ${botTurn.errorCode} — turno preservado; não reenvie.` : ''}
+                  {botTurn.diagnostic ? ` · ${botTurn.diagnostic}` : ''}
+                </div>
+              )}
               {activeSession.status !== 'closed' && (
                 <div className="border-t border-[var(--border2)] flex-shrink-0">
                   {/* Quick Replies */}

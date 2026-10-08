@@ -22,4 +22,13 @@ describe('Luna status polling, never submitting an operation',()=>{
    expect(fetchStatus).toHaveBeenCalledOnce()
   }
  })
+ it('aborts a hidden tab subscription without querying or resubmitting',async()=>{
+  const controller=new AbortController(),fetchStatus=vi.fn()
+  Object.defineProperty(document,'hidden',{configurable:true,value:true})
+  const waiting=waitForLunaTurn({fetchStatus,signal:controller.signal})
+  controller.abort()
+  await expect(waiting).rejects.toMatchObject({name:'AbortError'})
+  expect(fetchStatus).not.toHaveBeenCalled()
+  Object.defineProperty(document,'hidden',{configurable:true,value:false})
+ })
 })

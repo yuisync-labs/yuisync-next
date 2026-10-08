@@ -5,6 +5,7 @@ import staging,{LunaConversationDurableObject,initializeCertificationSchema} fro
 import { certificationBlock } from '../../../scripts/luna/certificationBlocks'
 import { GroqSdkProvider } from '../src/luna/providers/groqSdkProvider'
 import { LUNA_SCENARIO_CLOCK } from './fixtures/luna/designedScenarios'
+import { hashCanonicalJson } from '../src/luna/canonicalJson'
 
 describe('Staging certification durable execution, simulated provider only',()=>{
  it('admits exactly five fixed blocks, without alternate budget-reset round IDs',()=>{
@@ -23,7 +24,7 @@ describe('Staging certification durable execution, simulated provider only',()=>
   // Use real SQLite DO storage and a real eviction. Alarm dispatch is explicit
   // in this clock-controlled test, not background execution of the native entrypoint.
   const invoke=<T>(fn:(instance:LunaConversationDurableObject)=>Promise<T>)=>runInDurableObject(stub,async(_instance,state)=>{try{return await fn(new LunaConversationDurableObject(state,bindings))}finally{await state.storage.deleteAlarm()}})
-  const jobId='e'.repeat(64),submit=()=>new Request('https://luna.internal/certification/submit',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jobId,body,configuration:config.fingerprint})})
+  const jobId=await hashCanonicalJson({key:body.idempotencyKey,configuration:config.fingerprint}),submit=()=>new Request('https://luna.internal/certification/submit',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jobId,body,configuration:config.fingerprint})})
   const start=Date.parse(LUNA_SCENARIO_CLOCK.now),clock=vi.spyOn(Date,'now').mockReturnValue(start)
   let calls=0
   const provider=vi.spyOn(GroqSdkProvider.prototype,'complete').mockImplementation(async()=>{
@@ -32,9 +33,17 @@ describe('Staging certification durable execution, simulated provider only',()=>
    return {content:null,toolCalls:[{id:`cert-model-${calls}`,type:'function',function:{name:command.name,arguments:JSON.stringify(command.args)}}],usage:{promptTokens:100,completionTokens:20},requestLimit:1000,tokenLimit:6000,rateLimit:{remainingRequests:900,remainingTokens:calls===1?0:6000,resetRequests:null,resetTokens:'1s'}}
   })
   try {
-   expect((await invoke(instance=>instance.fetch(submit()))).status).toBe(202)
+   const invalid=await invoke(instance=>instance.fetch(new Request('https://luna.internal/certification/submit',{method:'POST',body:JSON.stringify({jobId:'e'.repeat(64),body,configuration:config.fingerprint})})))
+   expect(invalid.status).toBe(409);expect(await invalid.json()).toEqual({code:'CERTIFICATION_JOB_ID_MISMATCH'})
+   // runInDurableObject forwards Response streams. Reading only status leaves
+   // an in-flight response reference alive, so graceful eviction cannot drain.
+   const accepted=await invoke(instance=>instance.fetch(submit()))
+   expect(accepted.status).toBe(202)
+   expect(await accepted.json()).toMatchObject({accepted:true,turn_id:jobId,status:'queued'})
    expect(calls).toBe(0)
-   expect((await invoke(instance=>instance.fetch(submit()))).status).toBe(202)
+   const duplicate=await invoke(instance=>instance.fetch(submit()))
+   expect(duplicate.status).toBe(202)
+   expect(await duplicate.json()).toMatchObject({accepted:true,turn_id:jobId,status:'queued'})
    await invoke(instance=>instance.alarm())
    const pending=await invoke(async instance=>await (await instance.fetch(new Request(`https://luna.internal/turns/${jobId}`))).json()) as any
    expect(pending.status).toBe('waiting_quota');expect(calls).toBe(1)
@@ -54,5 +63,5 @@ describe('Staging certification durable execution, simulated provider only',()=>
    expect(await DB.prepare(`SELECT COUNT(*) AS n FROM luna_operation_events WHERE tenant_id=?1`).bind('luna-cert-'+body.roundId+'-1').first()).toEqual({n:1})
    expect(await DB.prepare(`SELECT COUNT(*) AS n FROM sales WHERE tenant_id=?1`).bind('luna-cert-'+body.roundId+'-1').first()).toEqual({n:0})
   }finally{provider.mockRestore();clock.mockRestore()}
- },60_000)
+ })
 })

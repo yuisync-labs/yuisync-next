@@ -9,6 +9,17 @@ function store(){
 }
 const id='a'.repeat(64),second='b'.repeat(64)
 describe('Durable turn lifecycle independent of browser',()=>{
+ it('preserves a turn appended while the previous external inference is running',async()=>{
+  const s=store();let release!:()=>void
+  const gate=new Promise<void>(resolve=>{release=resolve})
+  const q=durableTurnQueue(s.storage,async()=>{await gate;return{status:'replied'}})
+  await q.submit(id,{first:true})
+  const running=q.process()
+  while((await q.load(id))?.status!=='running')await Promise.resolve()
+  await q.submit(second,{second:true});release();await running
+  expect(s.values.get('luna-job-queue')).toEqual([second])
+  await q.process();expect((await q.load(second))?.status).toBe('complete')
+ })
  it('accepts once, survives reconstruction and processes independently of the submitting connection',async()=>{
   const s=store(),execute=vi.fn(async()=>({status:'replied',reply:'fixture'}))
   const q=durableTurnQueue(s.storage,execute,()=>1000)

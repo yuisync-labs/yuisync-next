@@ -7,7 +7,8 @@ import {build} from 'esbuild'
 import {certificationManifestHash} from './realCertificationRunner.mjs'
 const root=process.cwd(),out=resolve(root,'.artifacts/luna-certification-staging')
 await mkdir(out,{recursive:true})
-const npm=resolve(process.execPath,'..','node_modules/npm/bin/npm-cli.js')
+// npm run supplies the invoking CLI path, including npx-managed Node 22.
+const npm=process.env.npm_execpath??resolve(process.execPath,'..','node_modules/npm/bin/npm-cli.js')
 async function execute(bin,args,name){
  const started=Date.now()
  return await new Promise((done,reject)=>{

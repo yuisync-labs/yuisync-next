@@ -1,6 +1,7 @@
 import { expect } from 'vitest'
 import { runLunaTurn } from '../../../src/luna/runLunaTurn'
 import { recordProposalPresentation } from '../../../src/luna/proposalPresentation'
+import { createD1TurnJournal } from '../../../src/luna/turnJournal'
 import type { LunaMessage,LunaProviderResponse } from '../../../src/luna/contracts'
 import type { Command } from './designedRuntimeHarness'
 import { scenarioDB as db } from './designedRuntimeHarness'
@@ -20,7 +21,7 @@ export async function peerRuntime(input:{tenantId:string;conversationId:string;p
   const fact=results.some(r=>r.ok&&r.data?.operation_id)?['peer-call:result']:[]
   return{content:toolCalls.length?null:JSON.stringify({opening:'acknowledge',facts:fact,question:'none'}),toolCalls,usage:{promptTokens:10,completionTokens:10},rateLimit:{remainingRequests:900,remainingTokens:7000,resetRequests:null,resetTokens:null},requestLimit:1000}
  }}
- const result=await runLunaTurn({database:db,context:ctx,provider})
+ const result=await runLunaTurn({database:db,context:ctx,provider,journal:createD1TurnJournal(db,ctx,'designed-final-durable-v1')})
  expect(result.errorCode,JSON.stringify({input,result,failures})).toBeNull()
  for(const code of failures)expect(input.expectedFailures??[],JSON.stringify({input,failures})).toContain(code)
  const outbound=`${input.conversationId}-out-${input.step}`

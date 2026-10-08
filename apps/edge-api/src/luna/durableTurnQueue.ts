@@ -7,7 +7,9 @@ export type DurableTurnJob = {
  resumeAtMs?: number; result?: unknown; errorCode?: string
  attempts?:number; activeDurationMs?:number; quotaWaitMs?:number; waitingSinceMs?:number
 }
-type Storage = Pick<DurableObjectStorage,'get'|'put'|'setAlarm'>
+type Storage = Pick<DurableObjectStorage,'get'|'put'|'setAlarm'> & {
+ withMutation?: <T>(execute: () => Promise<T>) => Promise<T>
+}
 
 // Called under the existing DO serial executor. Only one conversation turn is
 // active; later inbound messages cannot rewrite drafts while an earlier turn
@@ -15,9 +17,10 @@ type Storage = Pick<DurableObjectStorage,'get'|'put'|'setAlarm'>
 export function durableTurnQueue(storage: Storage, execute: (job: DurableTurnJob) => Promise<unknown>, now=Date.now,observe?:(job:DurableTurnJob)=>void) {
  const jobKey=(id:string)=>`luna-job:${id}`
  const load=(id:string)=>storage.get<DurableTurnJob>(jobKey(id))
+ const mutate=<T>(execute:()=>Promise<T>)=>storage.withMutation?storage.withMutation(execute):execute()
  return {
   load,
-  async submit(id:string,payload:unknown) {
+  async submit(id:string,payload:unknown) {return mutate(async()=>{
    if(!/^[a-f0-9]{64}$/.test(id))throw new LunaCheckpointError('LUNA_JOB_ID_INVALID')
    const previous=await load(id)
    if(previous){if(canonicalJson(previous.payload)!==canonicalJson(payload))throw new LunaCheckpointError('LUNA_JOB_PAYLOAD_CONFLICT');return previous}
@@ -29,7 +32,7 @@ export function durableTurnQueue(storage: Storage, execute: (job: DurableTurnJob
    await storage.setAlarm(now()+1)
    await storage.put({[jobKey(id)]:job,'luna-job-queue':[...queued,id],'luna-job-latest':id})
    return job
-  },
+  })},
   async process() {
    const queued=await storage.get<string[]>('luna-job-queue')??[]
    if(!queued.length)return
@@ -56,8 +59,14 @@ export function durableTurnQueue(storage: Storage, execute: (job: DurableTurnJob
     observe?.(job)
    }
    if(job.status==='complete') {
-    if(queued.length>1)await storage.setAlarm(now()+1)
-    await storage.put('luna-job-queue',queued.slice(1))
+    await mutate(async()=>{
+     // Requests may append while inference is in progress. Never replace
+     // that newer queue with the snapshot taken before the external call.
+     const latest=await storage.get<string[]>('luna-job-queue')??[]
+     if(latest[0]!==job.id)throw new LunaCheckpointError('LUNA_QUEUE_HEAD_CHANGED')
+     if(latest.length>1)await storage.setAlarm(now()+1)
+     await storage.put('luna-job-queue',latest.slice(1))
+    })
    }
   },
  }

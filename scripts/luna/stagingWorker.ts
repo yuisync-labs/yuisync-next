@@ -285,6 +285,8 @@ export class LunaConversationDurableObject extends NativeConversation {
    if(env.APP_ENV!=='staging'||env.LUNA_ENABLED!=='false'||env.LUNA_CERT_ENV!=='isolated-luna-v2')return json({code:'CERTIFICATION_DISABLED'},404)
    const payload=await request.json() as {jobId:string;body:any;configuration:string}
    if(payload.body.sha!==env.RELEASE_SHA||payload.configuration!==(await identity(env)).fingerprint)return json({code:'CERTIFICATION_JOB_RELEASE_CHANGED'},409)
+   const expectedId=await hashCanonicalJson({key:`${payload.body.roundId}:${env.RELEASE_SHA}:${payload.body.scenarioId}:${payload.body.turn}`,configuration:payload.configuration})
+   if(payload.jobId!==expectedId)return json({code:'CERTIFICATION_JOB_ID_MISMATCH'},409)
    const job=await this.enqueue(()=>this.jobs().submit(payload.jobId,{body:payload.body,configuration:payload.configuration}))
    return json({accepted:true,turn_id:job.id,status:job.status},202)
   }

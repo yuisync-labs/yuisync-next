@@ -180,5 +180,8 @@ export async function dispatchLunaMessageEvent(eventInput: unknown, env: LunaQue
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(event),
   })
+  // Drain the response, including rejection: an unread DO response stream
+  // keeps an active reference and prevents graceful eviction/recovery.
+  await response.arrayBuffer()
   if (!response.ok) throw new Error('LUNA_AGENT_REJECTED_EVENT')
 }
