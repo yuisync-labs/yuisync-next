@@ -3,6 +3,7 @@ import { AlertCircle, Bot, CheckCircle2, FileText, RefreshCw, Save, Send, Sparkl
 import { supabase } from '../../lib/supabase'
 import { useAuthCtx } from '../../context/AuthContext'
 import { useModuleCtx } from '../../context/ModuleContext'
+import { waitForLunaTurn,lunaTurnLabels } from '../../lib/lunaTurnPolling'
 
 function parseTags(raw) {
   return String(raw || '').split(',').map((tag) => tag.trim()).filter(Boolean)
@@ -18,7 +19,8 @@ function moduleKey(activeModule) {
   return activeModule?.id || activeModule?.key || activeModule?.module_id || 'petshop'
 }
 
-async function runEdgePlayground({ tenantId, moduleId, companyId, customerPhone, message }) {
+async function runEdgePlayground({ tenantId, moduleId, companyId, customerPhone, message,onStatus }) {
+  const idempotencyKey=crypto.randomUUID()
   const request = (path) => fetch(path, {
       method: 'POST',
       credentials: 'include',
@@ -27,7 +29,7 @@ async function runEdgePlayground({ tenantId, moduleId, companyId, customerPhone,
         'x-tenant-id': tenantId,
         'x-module-id': moduleId,
       },
-      body: JSON.stringify({ company_id: companyId, customer_phone: customerPhone, message }),
+      body: JSON.stringify({ company_id: companyId, customer_phone: customerPhone, message,idempotency_key:idempotencyKey }),
     })
   let response = await request('/api/ai-lab/luna/playground')
   let payload = await response.json().catch(() => ({}))
@@ -38,6 +40,18 @@ async function runEdgePlayground({ tenantId, moduleId, companyId, customerPhone,
     engine = 'legacy-preview'
   }
   if (!response.ok) throw new Error(payload?.message || payload?.code || 'Falha ao executar playground no Edge.')
+  if(response.status===202){
+    const accepted=payload?.data??payload
+    if(!accepted.accepted||!accepted.turn_id)throw new Error('Aceitação incerta; consulte o turno sem reenviar.')
+    onStatus?.(accepted)
+    const result=await waitForLunaTurn({onStatus,fetchStatus:async()=>{
+      const status=await fetch('/api/ai-lab/luna/playground/status?'+new URLSearchParams({customer_phone:customerPhone,turn_id:accepted.turn_id}),{credentials:'include',headers:{'x-tenant-id':tenantId,'x-module-id':moduleId}})
+      const value=await status.json()
+      if(!status.ok)throw new Error((value.code||'Falha ao consultar turno')+' — não reenvie.')
+      return value
+    }})
+    return{...result,engine}
+  }
   return { ...(payload?.data || payload), engine }
 }
 
@@ -61,6 +75,7 @@ export default function AiLabPage() {
   const [savingLayer, setSavingLayer] = useState('')
   const [uploading, setUploading] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [playgroundState,setPlaygroundState]=useState('')
   const [docForm, setDocForm] = useState({ title: '', tags: '', contentText: '', file: null })
   const [playgroundMessage, setPlaygroundMessage] = useState('')
   const [playgroundPhone, setPlaygroundPhone] = useState('+5511999999999')
@@ -270,6 +285,7 @@ export default function AiLabPage() {
         companyId: selectedCompany.id,
         customerPhone: playgroundPhone,
         message: playgroundMessage.trim(),
+        onStatus:job=>setPlaygroundState(lunaTurnLabels[job.status]||job.status),
       })
       setRuns((current) => [{
         id: run.id || `edge-${Date.now()}`,
@@ -347,7 +363,7 @@ export default function AiLabPage() {
             <p className="text-xs text-muted">Usa o mesmo motor, ferramentas, confirmação e banco do agente. Operações confirmadas alteram somente os dados de staging.</p>
             <input className="inp" value={playgroundPhone} onChange={(event) => setPlaygroundPhone(event.target.value)} placeholder="Telefone de teste" />
             <textarea className="inp min-h-[130px]" value={playgroundMessage} onChange={(event) => setPlaygroundMessage(event.target.value)} placeholder="Mensagem para testar o bot" />
-            <button onClick={runPlayground} disabled={testing || !playgroundMessage.trim()} className="btn btn-primary w-full gap-2"><Send size={14} />{testing ? 'Executando...' : 'Testar no Edge'}</button>
+            <button onClick={runPlayground} disabled={testing || !playgroundMessage.trim()} className="btn btn-primary w-full gap-2"><Send size={14} />{testing ? (playgroundState||'Enviando...') : 'Testar no Edge'}</button>
             <div className="space-y-2 max-h-[380px] overflow-auto">{runs.map((run) => <div key={run.id} className="rounded-xl border border-white/10 p-3 space-y-2"><p className="text-xs text-muted">{toDateTime(run.created_at)} · {run.action || 'preview'}</p><p className="text-sm"><strong>Entrada:</strong> {run.input_message}</p><p className="text-sm whitespace-pre-wrap"><strong>Resposta:</strong> {run.reply || '-'}</p></div>)}</div>
           </div>
         </section>

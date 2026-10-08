@@ -1,7 +1,8 @@
 // Used exclusively by the isolated staging adapter, not by production.
 export type Metrics={calls:number;tokens:number;rowsRead:number;promptTokens:number;completionTokens:number}
-export function certificationMeter(database:D1Database,limits:{calls:number;tokens:number;rowsRead:number}){
- const metrics:Metrics={calls:0,tokens:0,rowsRead:0,promptTokens:0,completionTokens:0}
+export function certificationMeter(database:D1Database,limits:{calls:number;tokens:number;rowsRead:number},initial?:Metrics){
+ const metrics:Metrics={calls:0,tokens:0,rowsRead:0,promptTokens:0,completionTokens:0,...initial}
+ if(Object.values(metrics).some(value=>!Number.isSafeInteger(value)||value<0))throw new Error('CERTIFICATION_MODEL_METRICS_UNAVAILABLE')
  let unknown=false
  const reserveRows=(count=1)=>{if(metrics.rowsRead+count*512>limits.rowsRead)throw new Error('CERTIFICATION_READ_RESERVATION_EXHAUSTED')}
  const account=(result:D1Result)=>{

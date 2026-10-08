@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it, vi } from 'vitest'
 import { runLunaTurn } from '../src/luna/runLunaTurn'
+import { createD1TurnJournal } from '../src/luna/turnJournal'
 import { loadOperationalState } from '../src/luna/operationalState'
 import { recordProposalPresentation } from '../src/luna/proposalPresentation'
 import { LUNA_DESIGNED_SCENARIOS, LUNA_SCENARIO_CLOCK, LUNA_SCENARIO_FIXTURE } from './fixtures/luna/designedScenarios'
@@ -37,6 +38,7 @@ describe('designed scenario 14 — real Worker/local D1/simulated provider',()=>
         },
       })
       const toolNames:string[]=[],reconciled:boolean[]=[]
+      let inferences=0
       for(const turn of [1,2,2,3]){
         const redelivery=turn===2&&faultInjected
         clock.mockReturnValue(start+turn*10000+(redelivery?100:0))
@@ -45,6 +47,7 @@ describe('designed scenario 14 — real Worker/local D1/simulated provider',()=>
         let called=false
         if(turn===2&&!redelivery)faultArmed=true
         const provider={model:'offline-scripted-provider',async complete(input:{messages:readonly LunaMessage[]}):Promise<LunaProviderResponse & {requestLimit:number}>{
+          inferences++
           const results=input.messages.filter(m=>m.role==='tool').map(m=>JSON.parse(m.content!))
           expect(results.every(r=>r.ok),JSON.stringify({turn,redelivery,results})).toBe(true)
           const prepared=results.find(r=>r.data?.proposal_id&&Number.isSafeInteger(r.data?.proposal_version))
@@ -66,7 +69,7 @@ describe('designed scenario 14 — real Worker/local D1/simulated provider',()=>
           })
           return{content:toolCalls.length?null:JSON.stringify({opening:'acknowledge',facts:turn===1?[]:[`call-${turn}-1:result`],question:'none'}),toolCalls,usage:{promptTokens:10,completionTokens:10},rateLimit:{remainingRequests:900,remainingTokens:7000,resetRequests:null,resetTokens:null},requestLimit:1000}
         }}
-        const result=await runLunaTurn({database:faultyDB,provider,context})
+        const result=await runLunaTurn({database:faultyDB,provider,context,journal:createD1TurnJournal(db,context,'designed-final-durable-v1')})
         expect(result.errorCode,JSON.stringify({turn,redelivery,result,toolNames})).toBeNull()
         if(turn===1){
           expect(result.status).toBe('awaiting_confirmation')
@@ -92,8 +95,9 @@ describe('designed scenario 14 — real Worker/local D1/simulated provider',()=>
         expect(loadOperationalState(state!.state_json).operations.cart.items).toEqual([{id:'racao-a',quantity:1}])
       }
       expect(faultInjected).toBe(true);expect(saleBatchCount).toBe(1)
-      expect(reconciled).toEqual([true,true,true])
-      expect(toolNames.filter(n=>n==='commit_confirmed_proposal')).toHaveLength(3)
+      expect(reconciled).toEqual([true,true])
+      expect(toolNames.filter(n=>n==='commit_confirmed_proposal')).toHaveLength(2)
+      expect(inferences).toBe(6) // No model invocation on redelivery of in-2.
       expect(await db.prepare(`SELECT COUNT(*) AS count FROM luna_proposal_presentations WHERE tenant_id=?1`).bind(tenant).first()).toEqual({count:1})
       for(const table of ['payments','inventory_movements'])expect(await db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE tenant_id=?1`).bind(tenant).first()).toEqual({count:0})
       expect(await db.prepare(`SELECT on_hand_milliunits,reserved_milliunits FROM inventory_balances WHERE tenant_id=?1`).bind(tenant).first()).toEqual({on_hand_milliunits:10000,reserved_milliunits:1000})

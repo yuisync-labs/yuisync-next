@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it, vi } from 'vitest'
 import { runLunaTurn } from '../src/luna/runLunaTurn'
+import { createD1TurnJournal } from '../src/luna/turnJournal'
 import { loadOperationalState } from '../src/luna/operationalState'
 import { LUNA_DESIGNED_SCENARIOS, LUNA_SCENARIO_CLOCK, LUNA_SCENARIO_FIXTURE } from './fixtures/luna/designedScenarios'
 import type { LunaMessage, LunaProviderResponse } from '../src/luna/contracts'
@@ -65,7 +66,7 @@ describe('designed scenario 19 — real Worker/local D1/simulated provider',()=>
           })
           return{content:toolCalls.length?null:JSON.stringify({opening:'acknowledge',facts:turn===2?['call-2-0:slot.0']:[],question:'none'}),toolCalls,usage:{promptTokens:10,completionTokens:10},rateLimit:{remainingRequests:900,remainingTokens:7000,resetRequests:null,resetTokens:null},requestLimit:1000}
         }}
-        const result=await runLunaTurn({database:faultyDB,provider,context})
+        const result=await runLunaTurn({database:faultyDB,provider,context,journal:createD1TurnJournal(db,context,'designed-final-durable-v1')})
         expect(result.errorCode,JSON.stringify({turn,result})).toBeNull()
         expect(result.proposalIds).toEqual([]);expect(result.committedOperationIds).toEqual([])
         const row=await db.prepare(`SELECT state_json,status FROM luna_conversations WHERE tenant_id=?1 AND conversation_id=?2`).bind(tenant,ctx.conversationId).first<{state_json:string;status:string}>()

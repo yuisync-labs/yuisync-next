@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { expect,vi } from 'vitest'
 import { runLunaTurn } from '../../../src/luna/runLunaTurn'
+import { createD1TurnJournal } from '../../../src/luna/turnJournal'
 import { recordProposalPresentation } from '../../../src/luna/proposalPresentation'
 import { loadOperationalState } from '../../../src/luna/operationalState'
 import type { LunaMessage,LunaProviderResponse,LunaTurnResult } from '../../../src/luna/contracts'
@@ -53,7 +54,7 @@ export async function createDesignedHarness(id:number,suffix=''){
    const blocks=[{kind:'social',text:number%2?'Claro, vamos por partes.':'Entendi, podemos continuar.'},...facts.map(id=>({kind:'fact',id})),...(question==='none'?[]:[{kind:'question',field:question}])]
    return{content:toolCalls.length?null:JSON.stringify({blocks}),toolCalls,usage:{promptTokens:10,completionTokens:10},rateLimit:{remainingRequests:900,remainingTokens:7000,resetRequests:null,resetTokens:null},requestLimit:1000}
   }}
-  const result=await runLunaTurn({database:db,provider,context})
+  const result=await runLunaTurn({database:db,provider,context,journal:createD1TurnJournal(db,context,'designed-final-durable-v1')})
   expect(result.errorCode,JSON.stringify({number,result})).toBeNull()
   clock.mockReturnValue(Date.now()+1)
   const outbound=`out-${number}`

@@ -19,7 +19,7 @@ export function createLunaQuotaPacer(options: { now?:()=>number; sleep?:(ms:numb
   const maxWait = Math.min(120000,Math.max(0,options.maxWaitMs ?? 120000))
   let previous: (QuotaObservation & { at:number }) | null = null, waited = 0
   return {
-    observe(value: QuotaObservation) { previous = {...value,at:now()} },
+    observe(value: QuotaObservation, receivedAtMs = now()) { previous = {...value,at:receivedAtMs} },
     async beforeModel() {
       const value = previous
       if (!value || !value.tokenLimit || value.remainingTokens == null) return
@@ -28,7 +28,7 @@ export function createLunaQuotaPacer(options: { now?:()=>number; sleep?:(ms:numb
       if (value.remainingTokens >= headroom) return
       const reset = resetDurationMs(value.resetTokens)
       if (reset == null || reset > 60000) throw new LunaBudgetError('LUNA_RATE_LIMIT_MARGIN')
-      const delay = Math.max(0,reset - Math.max(0,now()-value.at)) + 250
+      const delay = Math.max(0,value.at + reset + 250 - now())
       if (waited + delay > maxWait) throw new LunaBudgetError('LUNA_RATE_LIMIT_MARGIN')
       waited += delay
       await sleep(delay)
