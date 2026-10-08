@@ -286,8 +286,13 @@ export function useChat() {
   const createSession = useCallback(async ({ customer_phone, customer_name, pet_id, channel = 'whatsapp' }) => {
     if (!activeModuleId) throw new Error('Modulo nao definido')
 
+    // The D1 compatibility endpoint re-selects rows after an insert.
+    // Without an ID filter, .single() fails when the tenant already has chats,
+    // even if the insert succeeded. Reuse this ID across scoped retries.
+    const sessionId = crypto.randomUUID()
     const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
       const payload = buildTenantPayload({
+        id: sessionId,
         customer_phone,
         customer_name,
         client_id: pet_id,
@@ -299,6 +304,7 @@ export function useChat() {
       return supabase
         .from('chat_sessions')
         .insert(payload)
+        .eq('id', sessionId)
         .select()
         .single()
     })
