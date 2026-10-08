@@ -4,6 +4,7 @@ import { resolveRequestId, requestRouteFamily } from './requestContext'
 import { emitEdgeLog } from './observability'
 import { handleAdminMaintenanceRequest } from './adminMaintenance'
 import { handleAiLabApiRequest } from './aiLabApi'
+import { handleInternalChatApiRequest } from './internalChatApi'
 import { handleAppApiRequest } from './appApi'
 import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
 import { handleAppointmentBillingIntentCompat } from './appointmentBillingIntentCompat'
@@ -98,6 +99,9 @@ async function dispatch(request: Request, env: EdgeEnv, context: ExecutionContex
 
     const aiLabResponse = await handleAiLabApiRequest(request, bindings)
     if (aiLabResponse) return respond(aiLabResponse)
+
+    const internalChatResponse = await handleInternalChatApiRequest(request, bindings)
+    if (internalChatResponse) return respond(internalChatResponse)
 
     const checkoutResponse = await handleCheckoutApiRequest(request, bindings)
     if (checkoutResponse) return respond(checkoutResponse)
