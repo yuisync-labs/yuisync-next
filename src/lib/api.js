@@ -167,6 +167,10 @@ export function updatePetshopServiceRules(serviceId, { tenantId, moduleId = 'pet
 export function requestChatReply(sessionId, message, options = {}) {
   return apiRequest('/chat/respond', {
     method: 'POST',
+    headers: {
+      'x-tenant-id': options.tenantId || '',
+      'x-module-id': options.moduleId || '',
+    },
     body: JSON.stringify({
       sessionId,
       message,
