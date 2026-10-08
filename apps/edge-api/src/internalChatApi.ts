@@ -141,7 +141,7 @@ export async function executeInternalChatTurn(request: Request, env: Bindings): 
       inputSchema: z.object({ query: z.string().min(1).max(80) }),
       execute: async ({ query }) => {
         const rows = await db.prepare(`SELECT p.id,p.name,p.price_cents,
-          COALESCE(i.on_hand_milliunits,0) AS stock_milliunits
+          MAX(0, COALESCE(i.on_hand_milliunits,0) - COALESCE(i.reserved_milliunits,0)) AS stock_milliunits
           FROM catalog_products p LEFT JOIN inventory_balances i
             ON i.tenant_id=p.tenant_id AND i.module_id=p.module_id AND i.product_id=p.id
           WHERE p.tenant_id=?1 AND p.module_id=?2 AND p.status='active'
