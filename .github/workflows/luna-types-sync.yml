@@ -1,0 +1,28 @@
+name: Luna Worker type sync
+on:
+  push:
+    branches: [codex/luna-operational-foundation]
+    paths:
+      - apps/edge-api/wrangler.jsonc
+      - .github/workflows/luna-types-sync.yml
+permissions:
+  contents: write
+jobs:
+  generate:
+    if: github.repository == 'yuisync-labs/yuisync-next'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run types --workspace @yuisync/edge-api
+      - name: Commit generated Worker types
+        run: |
+          if git diff --quiet -- apps/edge-api/worker-configuration.d.ts; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/edge-api/worker-configuration.d.ts
+          git commit -m 'build(luna): regenerate native Agent Worker environment types'
+          git push origin HEAD:codex/luna-operational-foundation
