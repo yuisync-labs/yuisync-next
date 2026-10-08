@@ -356,7 +356,7 @@ export function useChat() {
       botRequestsInFlightRef.current = Math.max(0, botRequestsInFlightRef.current - 1)
       if (botRequestsInFlightRef.current === 0) setBotTyping(false)
     }
-  }, [loadMessages])
+  }, [loadMessages, activeTenantId, activeModuleId])
 
   const sendHumanMessage = useCallback(async (sessionId, text) => {
     const trimmed = String(text || '').trim()
