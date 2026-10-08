@@ -39,6 +39,7 @@ import { handleWhatsappTemplateApiRequest } from './whatsappTemplateApi'
 
 export { CoordinationDurableObject } from './coordination/coordinationDurableObject'
 export { LunaConversationDurableObject } from './luna/conversationDurableObject'
+export { LunaNativeAgent } from './luna/nativeCloudflareAgent'
 
 async function dispatch(request: Request, env: EdgeEnv, context: ExecutionContext): Promise<Response> {
     const bindings = env as EdgeAppEnvironment['Bindings']
