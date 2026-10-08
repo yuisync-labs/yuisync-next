@@ -174,7 +174,23 @@ export async function executeInternalChatTurn(request: Request, env: Bindings): 
   }
 
   try {
-    const groq = createGroq({ apiKey: env.GROQ_API_KEY })
+    const groq = createGroq({
+      apiKey: env.GROQ_API_KEY,
+      // Match the tested GPT-OSS wire contract already used by the operational
+      // provider. Do not request private reasoning or silently retry API calls.
+      fetch: async (url, init) => {
+        const body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+        if (/^openai\/gpt-oss-/.test(env.LUNA_MODEL || '')) {
+          delete body.reasoning_format
+          body.include_reasoning = false
+        }
+        if (body.max_tokens !== undefined) {
+          body.max_completion_tokens = body.max_tokens
+          delete body.max_tokens
+        }
+        return fetch(url, { ...init, body: JSON.stringify(body) })
+      },
+    })
     const answer = await generateText({
       model: groq(env.LUNA_MODEL),
       system,
