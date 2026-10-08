@@ -27,9 +27,16 @@ describe('Browser certification recovery — read only', () => {
  })
  it('renders a blocked scenario separately from the authorized next turn', async () => {
   const html = await certificationPlayground('fixture').text()
-  expect(html).toContain('const visible=current||state.blocked')
+  expect(html).toMatch(/\bvisible=current\|\|state\.blocked/)
   expect(html).toContain('lastCompletedReceipt')
   expect(html).toContain('Estado e consumo foram preservados; não reenvie')
   expect(html).toContain('busy||!current')
+ })
+ it('keeps every prior receipt visible when advancing or completing a block', async () => {
+  const html = await certificationPlayground('fixture').text()
+  expect(html).toContain('for(const receipt of state.receipts)')
+  expect(html).toContain('for(const m of receipt.messages)showMessage')
+  expect(html).toContain("scenarioId:last.scenario_id,turn:last.turn_id")
+  expect(html).toContain('Bloco executado. Revise as respostas e evidências abaixo; não há próximo envio.')
  })
 })
