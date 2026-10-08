@@ -146,6 +146,10 @@
           {
             "name": "LUNA_AGENT",
             "class_name": "LunaConversationDurableObject"
+          },
+          {
+            "name": "LUNA_NATIVE",
+            "class_name": "LunaNativeAgent"
           }
         ]
       },
@@ -155,6 +159,10 @@
           "storage": "sqlite"
         },
         "LunaConversationDurableObject": {
+          "type": "durable-object",
+          "storage": "sqlite"
+        },
+        "LunaNativeAgent": {
           "type": "durable-object",
           "storage": "sqlite"
         }
