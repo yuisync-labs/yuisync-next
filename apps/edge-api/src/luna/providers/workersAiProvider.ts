@@ -5,6 +5,7 @@ import { sdkMessages } from './groqSdkProvider'
 import { matchesToolSchema } from '../toolSchema'
 import { LunaProviderError } from './providerError'
 import { compactToolSchema } from './compactSchema'
+import { FINISH_TURN } from '../finishTurn'
 
 export const GLM_FLASH_MODEL = '@cf/zai-org/glm-4.7-flash'
 type Input = { messages: readonly LunaMessage[]; tools: readonly LunaToolDefinition[]; maxCompletionTokens?: number; toolChoice?: 'auto' | 'required' }
@@ -48,7 +49,11 @@ export class WorkersAiProvider {
           let args: unknown
           try {args = JSON.parse(call.function.arguments)} catch {throw new LunaProviderError('WORKERS_AI_RESPONSE_INVALID', null, knownUsage)}
           const definition = input.tools.find(t => t.name === call.function!.name)
-          if (!definition || !matchesToolSchema(args, definition.parameters)) throw new LunaProviderError('WORKERS_AI_RESPONSE_INVALID', null, knownUsage)
+          // The enum is a generation hint. This read-only terminal command's
+          // factual references are rejected by finishTurn, where the single
+          // controlled reformulation/fallback can run without commercial effects.
+          const schema = definition?.name === FINISH_TURN.name ? FINISH_TURN.parameters : definition?.parameters
+          if (!schema || !matchesToolSchema(args, schema)) throw new LunaProviderError('WORKERS_AI_RESPONSE_INVALID', null, knownUsage)
           return {id: call.id, name: call.function.name, args}
         })
         if (new Set(nativeCalls.map(c => c.id)).size !== nativeCalls.length || (input.toolChoice === 'required' && !nativeCalls.length)) throw new LunaProviderError('WORKERS_AI_RESPONSE_INVALID', null, knownUsage)
@@ -74,7 +79,8 @@ export class WorkersAiProvider {
         const native = nativeCalls[index]
         // The official adapter adds a private suffix to each tool ID. Match
         // the full structured batch instead and retain the provider's real ID.
-        if (!definition || p.providerExecuted || native.name !== p.toolName || JSON.stringify(native.args) !== JSON.stringify(args) || !matchesToolSchema(args, definition.parameters)) throw new LunaProviderError('WORKERS_AI_RESPONSE_INVALID', null, knownUsage)
+        const schema = definition?.name === FINISH_TURN.name ? FINISH_TURN.parameters : definition?.parameters
+        if (!schema || p.providerExecuted || native.name !== p.toolName || JSON.stringify(native.args) !== JSON.stringify(args) || !matchesToolSchema(args, schema)) throw new LunaProviderError('WORKERS_AI_RESPONSE_INVALID', null, knownUsage)
         return {id: native.id, type: 'function' as const, function: {name: p.toolName, arguments: JSON.stringify(args)}}
       })
       const text = result.content.filter(p => p.type === 'text').map(p => p.text).join('\n').trim()

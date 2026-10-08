@@ -25,6 +25,10 @@ interrompeu quatro chamadas com 15.516 tokens). Os tetos da rodada não mudaram.
 O runtime fornece os IDs factuais no schema de encerramento e explicita ações
 de rascunho já aplicadas. A auditoria usa consultas limitadas em lote e atualiza
 o ledger antes da validação; reservas realmente desconhecidas não são apagadas.
+O enum factual orienta a geração, mas a rejeição de uma referência desconhecida
+ocorre na fronteira somente-leitura de `finish_turn`, permitindo exatamente uma
+reformulação e depois fallback factual. Os schemas de comandos comerciais
+continuam obrigatórios antes de qualquer execução.
 
 ## Amostra inicial
 

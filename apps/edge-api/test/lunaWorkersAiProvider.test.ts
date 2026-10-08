@@ -3,6 +3,8 @@ import { WorkersAiProvider, GLM_FLASH_MODEL, glmNeurons } from '../src/luna/prov
 import { createLunaProvider, lunaJournalConfiguration, lunaProviderConfigured } from '../src/luna/providers/providerFactory'
 import { createLunaToolRegistry } from '../src/luna/toolRegistry'
 import { GroqSdkProvider } from '../src/luna/providers/groqSdkProvider'
+import { finishTurnDefinition, finishTurn } from '../src/luna/finishTurn'
+import { loadOperationalState } from '../src/luna/operationalState'
 
 const query=createLunaToolRegistry({} as D1Database).definitions.find(t=>t.name==='search_products')!
 const input={messages:[{role:'user' as const,content:'Uma Ração A'}],tools:[query],toolChoice:'required' as const}
@@ -41,6 +43,16 @@ describe('Workers AI GLM single-step transport',()=>{
   const f=fixture(output(name,args))
   await expect(f.provider.complete(input)).rejects.toMatchObject({code:'WORKERS_AI_RESPONSE_INVALID',usage:{promptTokens:100,completionTokens:20}})
   expect(f.run).toHaveBeenCalledTimes(1)
+ })
+ it('lets only the read-only factual boundary reject invented fact IDs and request repair',async()=>{
+  const facts=[{id:'catalog:product.0',text:'Ração A: R$ 90,00.'}]
+  const definition=finishTurnDefinition(facts)
+  const args={intent:'information',operation_ids:[],social:[],fact_ids:['invented:price'],question:'none'}
+  const f=fixture(output('finish_turn',args))
+  const result=await f.provider.complete({...input,tools:[definition]})
+  expect(result.toolCalls).toHaveLength(1)
+  expect(finishTurn(args,loadOperationalState('{}'),facts)).toMatchObject({ok:false,code:'TURN_RESPONSE_INVALID'})
+  await expect(fixture(output('finish_turn',{...args,question:'invented'})).provider.complete({...input,tools:[definition]})).rejects.toMatchObject({code:'WORKERS_AI_RESPONSE_INVALID'})
  })
  it('does not salvage tool-shaped prose into a commercial action',async()=>{
   const f=fixture({choices:[{message:{content:'{"name":"search_products","arguments":{"query":"A"}}'}}],usage:{prompt_tokens:100,completion_tokens:20}})

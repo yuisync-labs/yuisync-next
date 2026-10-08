@@ -4,6 +4,7 @@ import { GroqProviderError } from './providers/groqProvider'
 import { sdkMessages } from './providers/groqSdkProvider'
 import { agentToolMessage } from './agentContext'
 import { matchesToolSchema } from './toolSchema'
+import { FINISH_TURN } from './finishTurn'
 
 type LanguageModelV3 = Extract<LanguageModel, { specificationVersion: 'v3' }>
 type LanguageModelV3Prompt = Parameters<LanguageModelV3['doGenerate']>[0]['prompt']
@@ -50,7 +51,11 @@ export async function runSdkAgent(options: {
       for (const call of response.toolCalls) {
         let args: unknown
         try { args = JSON.parse(call.function.arguments) } catch { throw new GroqProviderError('GROQ_RESPONSE_INVALID') }
-        if (!matchesToolSchema(args, current.find(d => d.name === call.function.name)!.parameters)) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
+        // Generated fact enums guide the model; the read-only termination
+        // boundary verifies those references and owns one repair/fallback.
+        // Mutating commands still require their complete current schema.
+        const definition = current.find(d => d.name === call.function.name)!
+        if (!matchesToolSchema(args, definition.name === FINISH_TURN.name ? FINISH_TURN.parameters : definition.parameters)) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
       }
       return {
         content: [...(response.content ? [{ type: 'text' as const, text: response.content }] : []), ...response.toolCalls.map(c => ({ type: 'tool-call' as const, toolCallId: c.id, toolName: c.function.name, input: c.function.arguments }))],

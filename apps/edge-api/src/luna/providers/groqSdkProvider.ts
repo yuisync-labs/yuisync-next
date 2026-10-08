@@ -6,6 +6,7 @@ import { groqDiagnostic } from './groqDiagnostic'
 import { compactToolSchema } from './compactSchema'
 import { strictGroqToolSchema, groqWireToolSchema, groqWireToolDescription, groqWireToolArguments, normalizeGroqWireArguments } from './groqToolSchema'
 import { matchesToolSchema } from '../toolSchema'
+import { FINISH_TURN } from '../finishTurn'
 
 type Request = Parameters<GroqProvider['complete']>[0]
 type GroqPrompt = Parameters<ReturnType<ReturnType<typeof createGroq>>['doGenerate']>[0]['prompt']
@@ -87,7 +88,7 @@ export class GroqSdkProvider extends GroqProvider {
         const d = input.tools.find(t=>t.name===c.toolName)
         if (!d || c.providerExecuted) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
         const args = normalizeGroqWireArguments(c.input,d.parameters)
-        if (!matchesToolSchema(JSON.parse(args), d.parameters)) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
+        if (!matchesToolSchema(JSON.parse(args), d.name === FINISH_TURN.name ? FINISH_TURN.parameters : d.parameters)) throw new GroqProviderError('GROQ_RESPONSE_INVALID')
         return { id:c.toolCallId,type:'function' as const,function:{name:c.toolName,arguments:args} }
       })
       const text = result.content.filter(c => c.type === 'text').map(c => c.text).join('\n').trim()
