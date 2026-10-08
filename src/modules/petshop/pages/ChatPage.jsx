@@ -139,15 +139,22 @@ function SessionCard({ session, active, onClick, statusConfig }) {
 function NewSessionModal({ onClose, onCreate }) {
   const [form, setForm] = useState({ customer_name:'', customer_phone:'', channel:'whatsapp' })
   const [saving, setSaving] = useState(false)
+  const [creationError, setCreationError] = useState('')
 
   const set = (k,v) => setForm(f => ({...f,[k]:v}))
 
   async function handleSubmit() {
-    if (!form.customer_phone.trim()) return
+    if (!form.customer_phone.trim() || saving) return
+    setCreationError('')
     setSaving(true)
-    await onCreate(form)
-    setSaving(false)
-    onClose()
+    try {
+      await onCreate(form)
+      onClose()
+    } catch {
+      setCreationError('Não foi possível iniciar a conversa. Verifique os dados e tente novamente.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return createPortal(
@@ -188,6 +195,7 @@ function NewSessionModal({ onClose, onCreate }) {
             </div>
           </div>
 
+          {creationError && <p role="alert" className="text-sm text-red-400">{creationError}</p>}
           <div className="flex gap-3 pt-2">
             <button onClick={onClose} className="btn btn-secondary flex-1 justify-center border-white/5">Cancelar</button>
             <button onClick={handleSubmit} disabled={saving || !form.customer_phone}
