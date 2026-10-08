@@ -6,8 +6,9 @@ import type {
 import { strictGroqToolSchema, groqWireToolSchema, groqWireToolDescription, groqWireToolArguments, normalizeGroqWireArguments } from './groqToolSchema'
 import { groqDiagnostic } from './groqDiagnostic'
 import { compactToolSchema } from './compactSchema'
+import { LunaProviderError } from './providerError'
 
-export class GroqProviderError extends Error {
+export class GroqProviderError extends LunaProviderError {
   readonly diagnostic: ReturnType<typeof groqDiagnostic> | null
   readonly code:
     | 'GROQ_NOT_CONFIGURED'
@@ -24,7 +25,7 @@ export class GroqProviderError extends Error {
   readonly responseShape: { messagePresent: boolean; finishReason: string | null; contentPresent: boolean; toolCount: number } | null
 
   constructor(code: GroqProviderError['code'], retryAfter: string | null = null, diagnostic: GroqProviderError['diagnostic'] = null, metadata?: {usage: GroqProviderError['usage']; responseShape: GroqProviderError['responseShape']}) {
-    super(code)
+    super(code, retryAfter, metadata?.usage ?? null)
     this.name = 'GroqProviderError'
     this.code = code
     this.retryAfter = retryAfter

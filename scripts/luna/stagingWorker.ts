@@ -4,8 +4,9 @@
 import application from '../../apps/edge-api/src/index'
 export * from '../../apps/edge-api/src/index'
 import { runLunaTurn } from '../../apps/edge-api/src/luna/runLunaTurn'
-import { GroqProvider, GroqProviderError } from '../../apps/edge-api/src/luna/providers/groqProvider'
-import { GroqSdkProvider } from '../../apps/edge-api/src/luna/providers/groqSdkProvider'
+import { LunaProviderError } from '../../apps/edge-api/src/luna/providers/providerError'
+import { createLunaProvider, lunaProviderIdentity, lunaProviderConfigured } from '../../apps/edge-api/src/luna/providers/providerFactory'
+import { glmNeurons } from '../../apps/edge-api/src/luna/providers/workersAiProvider'
 import { recordProposalPresentation } from '../../apps/edge-api/src/luna/proposalPresentation'
 import { LUNA_DESIGNED_SCENARIOS,LUNA_SCENARIO_FIXTURE as f,LUNA_SCENARIO_CLOCK } from '../../apps/edge-api/test/fixtures/luna/designedScenarios'
 import { seedCertificationFixture } from './certificationFixtures'
@@ -26,7 +27,7 @@ import { LunaConversationDurableObject as NativeConversation } from '../../apps/
 import { createD1TurnJournal,LunaCheckpointError,LunaTurnSuspended,type LunaTurnJournal } from '../../apps/edge-api/src/luna/turnJournal'
 import type { DurableTurnJob } from '../../apps/edge-api/src/luna/durableTurnQueue'
 import { hashCanonicalJson } from '../../apps/edge-api/src/luna/canonicalJson'
-type Env=EdgeEnv & {LUNA_CERT_DB?:D1Database;LUNA_CERT_TOKEN?:string;RELEASE_SHA?:string;GROQ_API_KEY?:string;LUNA_CERT_ENV?:string;LUNA_CERT_DATABASE_ID?:string;LUNA_CERT_OPERATOR_ID?:string;LUNA_CERT_GATES_SHA?:string}
+type Env=EdgeEnv & {LUNA_CERT_DB?:D1Database;LUNA_CERT_TOKEN?:string;RELEASE_SHA?:string;GROQ_API_KEY?:string;LUNA_CERT_ENV?:string;LUNA_CERT_DATABASE_ID?:string;LUNA_CERT_OPERATOR_ID?:string;LUNA_CERT_GATES_SHA?:string;LUNA_CERT_SAMPLE_ONLY?:string}
 const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{'cache-control':'no-store'}})
 function sanitized(value:unknown):unknown{
  if(typeof value==='string'&&/^[\[{]/.test(value.trim())){try{return JSON.stringify(sanitized(JSON.parse(value)))}catch{/* ordinary text */}}
@@ -37,9 +38,10 @@ function sanitized(value:unknown):unknown{
 }
 export async function initializeCertificationSchema(db:D1Database){return await db.batch(CERTIFICATION_SCHEMA.map(sql=>db.prepare(sql)))}
 async function identity(env:Env){
- const payload={sha:env.RELEASE_SHA,provider:'groq',model:env.LUNA_MODEL,protocol:2,prompt:LUNA_OPERATIONAL_SYSTEM_PROMPT,scenarios:LUNA_DESIGNED_SCENARIOS,fixture:f,clock:LUNA_SCENARIO_CLOCK,databaseId:env.LUNA_CERT_DATABASE_ID}
+ const selection=lunaProviderIdentity(env)
+ const payload={sha:env.RELEASE_SHA,provider:selection.provider,model:env.LUNA_MODEL,protocol:2,prompt:LUNA_OPERATIONAL_SYSTEM_PROMPT,scenarios:LUNA_DESIGNED_SCENARIOS,fixture:f,clock:LUNA_SCENARIO_CLOCK,databaseId:env.LUNA_CERT_DATABASE_ID,...(selection.provider==='workers-ai'?{thinking:false,transportVersion:1}:{})}
  const fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(payload))))).map(b=>b.toString(16).padStart(2,'0')).join('')
- return{fingerprint,provider:'groq',model:env.LUNA_MODEL,scenarioVersion:2,promptVersion:env.RELEASE_SHA}
+ return{fingerprint,...selection,scenarioVersion:2,promptVersion:env.RELEASE_SHA}
 }
 const tables=['chat_messages','luna_operation_events','luna_proposals','luna_proposal_presentations','luna_registration_receipts','luna_conversation_memory','luna_response_drafts','luna_turn_decisions','sales','sale_items','sale_delivery_addresses','payments','appointments','inventory_movements','pending_order_stock_reservations','subscription_benefit_allocations','appointment_transport_reservations','inventory_balances','clients','pets']
 export async function certificationSnapshot(db:D1Database,tenant:string,conversation:string){
@@ -105,8 +107,10 @@ async function certification(request:Request,env:Env,execution?:Execution){
  const path=new URL(request.url).pathname,configuration=await identity(env)
  const body=await request.json() as any
  if(!/^[a-zA-Z0-9_-]{1,100}$/.test(body.roundId??''))return json({code:'INVALID_ROUND'},400)
- const block=certificationBlock(env.RELEASE_SHA??'',body.roundId)
- if(browserRequest&&!block&&body.roundId!==`groq-ui-${env.RELEASE_SHA?.slice(0,12)}`)return json({code:'INVALID_ROUND'},400)
+ const block=certificationBlock(env.RELEASE_SHA??'',body.roundId,configuration.provider)
+ const sample=block&&'sample' in block&&block.sample
+ if(env.LUNA_CERT_SAMPLE_ONLY==='true'&&!sample)return json({code:'CERTIFICATION_SAMPLE_ONLY'},409)
+ if(browserRequest&&!block&&body.roundId!==`${configuration.provider}-ui-${env.RELEASE_SHA?.slice(0,12)}`)return json({code:'INVALID_ROUND'},400)
  // Tables are provisioned once before the round. Never issue recurring DDL or
  // unmetered schema scans on cold starts. Missing tables fail closed.
  const ledger=await openCertificationLedger(env.LUNA_CERT_DB,body.roundId,configuration.fingerprint),db=ledger.db
@@ -123,7 +127,7 @@ async function certification(request:Request,env:Env,execution?:Execution){
  if(path.endsWith('/capabilities'))return reply({environment:'staging',isolated:true,fixtureOnly:true,whatsappEnabled:false,releaseSha:env.RELEASE_SHA,...configuration})
  if(path.endsWith('/budget'))return reply(ledger.usage())
  if(path.endsWith('/browser-state')){
-  const scenarios=block?LUNA_DESIGNED_SCENARIOS.filter(s=>s.id>=block.first&&s.id<=block.last):LUNA_DESIGNED_SCENARIOS
+  const scenarios=sample?LUNA_DESIGNED_SCENARIOS.filter(s=>block.scenarioIds.includes(s.id)):block?LUNA_DESIGNED_SCENARIOS.filter(s=>s.id>=block.first&&s.id<=block.last):LUNA_DESIGNED_SCENARIOS
   const keys=scenarios.flatMap(s=>s.messages.map((_,turn)=>`${body.roundId}:${env.RELEASE_SHA}:${s.id}:${turn}`))
   const rows=await db.prepare(`SELECT scenario_id,turn_id,status,evidence_json,created_at_ms FROM luna_cert_turns WHERE round_id=?1 AND idempotency_key IN (${keys.map((_,i)=>'?'+(i+2)).join(',')}) ORDER BY scenario_id,turn_id LIMIT 201`).bind(body.roundId,...keys).all<any>()
   const state=browserCheckpoint(scenarios,rows.results),active=state.blocked??state.next
@@ -131,8 +135,8 @@ async function certification(request:Request,env:Env,execution?:Execution){
   if(block&&active){const jobId=await hashCanonicalJson({key:`${body.roundId}:${env.RELEASE_SHA}:${active.scenarioId}:${active.turn}`,configuration:configuration.fingerprint});const status=await certificationObject(env,body.roundId).fetch(`https://luna.internal/turns/${jobId}`);if(status.ok)job=await status.json()}
   let progress:unknown=null
   if(job&&active){const tenant=`luna-cert-${body.roundId}-${active.scenarioId}`;progress=await db.prepare(`SELECT step_key,status,updated_at_ms,error_code FROM luna_turn_steps WHERE tenant_id=?1 AND module_id='petshop' AND conversation_id=?2 AND source_message_id=?3 AND status='complete' ORDER BY updated_at_ms DESC LIMIT 1`).bind(tenant,`scenario-${active.scenarioId}`,`source-${active.scenarioId}-${active.turn}`).first()}
-  const blockRounds=Array.from({length:5},(_,index)=>`groq-ui-${env.RELEASE_SHA?.slice(0,12)}-b${index+1}`)
-  const aggregate=await db.prepare(`SELECT SUM(calls) AS calls,SUM(input_tokens+output_tokens) AS tokens,SUM(runtime_reads+admin_reads+setup_reads) AS rowsRead,SUM(reserved_calls) AS reservedCalls,SUM(reserved_tokens) AS reservedTokens,SUM(reserved_reads) AS reservedReads FROM luna_cert_budget WHERE round_id IN (?1,?2,?3,?4,?5)`).bind(...blockRounds).first()
+  const blockRounds=[...Array.from({length:5},(_,index)=>`${configuration.provider}-ui-${env.RELEASE_SHA?.slice(0,12)}-b${index+1}`),`${configuration.provider}-ui-${env.RELEASE_SHA?.slice(0,12)}-sample`]
+  const aggregate=await db.prepare(`SELECT SUM(calls) AS calls,SUM(input_tokens+output_tokens) AS tokens,SUM(runtime_reads+admin_reads+setup_reads) AS rowsRead,SUM(reserved_calls) AS reservedCalls,SUM(reserved_tokens) AS reservedTokens,SUM(reserved_reads) AS reservedReads FROM luna_cert_budget WHERE round_id IN (?1,?2,?3,?4,?5,?6)`).bind(...blockRounds).first()
   return reply({...state,job,progress,block,aggregate,budget:ledger.usage()})
  }
  if(path.endsWith('/store/load')){const row=await db.prepare(`SELECT checkpoint_json FROM luna_cert_store WHERE round_id=?1`).bind(body.roundId).first<{checkpoint_json:string}>();return reply(row?JSON.parse(row.checkpoint_json):null)}
@@ -145,15 +149,17 @@ async function certification(request:Request,env:Env,execution?:Execution){
  if(path.endsWith('/reconcile')){const row=await db.prepare(`SELECT evidence_json FROM luna_cert_turns WHERE idempotency_key=?1 AND round_id=?2 AND status='complete'`).bind(body.idempotencyKey,body.roundId).first<{evidence_json:string}>();return reply(row?JSON.parse(row.evidence_json):null)}
  if(!path.endsWith('/turn'))return json({code:'NOT_FOUND'},404)
  const scenario=LUNA_DESIGNED_SCENARIOS.find(s=>s.id===body.scenarioId),turn=body.turn
- if(!scenario||!Number.isInteger(turn)||scenario.messages[turn]!==body.message||body.sha!==env.RELEASE_SHA||!env.GROQ_API_KEY)return json({code:'INVALID_CERTIFICATION_REQUEST'},400)
+ if(!scenario||!Number.isInteger(turn)||scenario.messages[turn]!==body.message||body.sha!==env.RELEASE_SHA||!lunaProviderConfigured(env))return json({code:'INVALID_CERTIFICATION_REQUEST'},400)
  if(block&&(scenario.id<block.first||scenario.id>block.last))return json({code:'SCENARIO_OUTSIDE_BLOCK'},400)
+ if(sample&&!block.scenarioIds.includes(scenario.id))return json({code:'SCENARIO_OUTSIDE_SAMPLE'},400)
  if(browserRequest&&!block)return json({code:'LEGACY_ROUND_PRESERVED_READ_ONLY'},409)
  if(!['calls','tokens','rowsRead'].every(k=>Number.isSafeInteger(body.limits?.[k])&&body.limits[k]>0)||body.limits.calls>36||body.limits.tokens>250000||body.limits.rowsRead>100000)return json({code:'INVALID_BUDGET'},400)
  const key=`${body.roundId}:${body.sha}:${scenario.id}:${turn}`
  if(key!==body.idempotencyKey)return json({code:'INVALID_IDEMPOTENCY_KEY'},400)
  if(browserRequest){
-  const preceding=turn>0?{id:scenario.id,turn:turn-1}:scenario.id>1?{id:scenario.id-1,turn:LUNA_DESIGNED_SCENARIOS.find(s=>s.id===scenario.id-1)!.messages.length-1}:null
-  if(preceding){const precedingRound=preceding.id<block!.first?`groq-ui-${env.RELEASE_SHA?.slice(0,12)}-b${block!.block-1}`:body.roundId;const precedingKey=`${precedingRound}:${env.RELEASE_SHA}:${preceding.id}:${preceding.turn}`;const row=await db.prepare(`SELECT evidence_json FROM luna_cert_turns WHERE idempotency_key=?1 AND round_id=?2 AND status='complete'`).bind(precedingKey,precedingRound).first<{evidence_json:string}>();const evidence=row?JSON.parse(row.evidence_json):null;if(!evidence?.validation.passed||!evidence?.metrics)return json({code:'PREVIOUS_CHECKPOINT_NOT_APPROVED'},409)}
+  const priorId=sample?block.scenarioIds[block.scenarioIds.indexOf(scenario.id)-1]:scenario.id-1
+  const preceding=turn>0?{id:scenario.id,turn:turn-1}:priorId>0?{id:priorId,turn:LUNA_DESIGNED_SCENARIOS.find(s=>s.id===priorId)!.messages.length-1}:null
+  if(preceding){const precedingRound=preceding.id<block!.first?`${configuration.provider}-ui-${env.RELEASE_SHA?.slice(0,12)}-b${block!.block-1}`:body.roundId;const precedingKey=`${precedingRound}:${env.RELEASE_SHA}:${preceding.id}:${preceding.turn}`;const row=await db.prepare(`SELECT evidence_json FROM luna_cert_turns WHERE idempotency_key=?1 AND round_id=?2 AND status='complete'`).bind(precedingKey,precedingRound).first<{evidence_json:string}>();const evidence=row?JSON.parse(row.evidence_json):null;if(!evidence?.validation.passed||!evidence?.metrics)return json({code:'PREVIOUS_CHECKPOINT_NOT_APPROVED'},409)}
   const jobId=await hashCanonicalJson({key,configuration:configuration.fingerprint})
   return certificationObject(env,body.roundId).fetch('https://luna.internal/certification/submit',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jobId,body,configuration:configuration.fingerprint})})
  }
@@ -173,17 +179,24 @@ async function certification(request:Request,env:Env,execution?:Execution){
   if(turn===0){ledger.category('setup');await checkpoint('cert-fixture',{tenant,scenario:scenario.id},async()=>{await seedCertificationFixture(meter.db,tenant,conversation,scenario.id);return true});ledger.category('admin')}
   stateBefore=await checkpoint('cert-before',{},()=>certificationSnapshot(meter.db,tenant,conversation))
   await checkpoint('cert-inbound',{message:body.message},async()=>{await meter.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?4,'inbound','customer',?5,?6)`).bind(tenant,crypto.randomUUID(),conversation,context.sourceMessageId,body.message,lunaNow(context)).run();return true})
-  const groq=new GroqSdkProvider({apiKey:env.GROQ_API_KEY,model:env.LUNA_MODEL})
-  const provider={model:groq.model,operationalReplies:groq.operationalReplies,async complete(input:any){
-   const upper=groq.reservationTokens(input)
+  const transport=createLunaProvider(env)
+  const provider={model:transport.model,operationalReplies:transport.operationalReplies,async complete(input:any){
+   const upper=transport.reservationTokens(input)
    const current=ledger.usage()
+   if(configuration.provider==='workers-ai'){
+    // Conservative per-SHA test budget, not the account's remaining daily
+    // allowance. Include unknown reserved tokens at the higher output rate.
+    const rounds=[...Array.from({length:5},(_,i)=>`workers-ai-ui-${env.RELEASE_SHA?.slice(0,12)}-b${i+1}`),`workers-ai-ui-${env.RELEASE_SHA?.slice(0,12)}-sample`]
+    const spent=await db.prepare(`SELECT COALESCE(SUM(input_tokens),0) AS p,COALESCE(SUM(output_tokens),0) AS c,COALESCE(SUM(reserved_tokens),0) AS reserved FROM luna_cert_budget WHERE round_id IN (?1,?2,?3,?4,?5,?6)`).bind(...rounds).first<{p:number;c:number;reserved:number}>()
+    if(!spent||glmNeurons({promptTokens:spent.p,completionTokens:spent.c+spent.reserved+upper})>8000)throw new Error('CERTIFICATION_NEURON_RESERVATION_EXHAUSTED')
+   }
    if(current.calls+current.reserved_calls-baseline.calls+1>body.limits.calls||current.input_tokens+current.output_tokens+current.reserved_tokens-baseline.input_tokens-baseline.output_tokens+upper>body.limits.tokens)throw new Error('CERTIFICATION_MODEL_RESERVATION_EXHAUSTED')
    meter.beforeModel(input,upper)
    await ledger.reserveModel(upper)
    let response
-   try{response=await groq.complete(input)}catch(error){
-    if(error instanceof GroqProviderError && error.usage){meter.afterModel(error.usage);await ledger.settleModel(upper,error.usage)}else meter.modelUncertain()
-    responses.push({providerError:error instanceof Error?error.message:'GROQ_REQUEST_FAILED',diagnostic:(error as {diagnostic?:unknown})?.diagnostic??null,...(error instanceof GroqProviderError?{usage:error.usage,responseShape:error.responseShape}:{})});throw error
+   try{response=await transport.complete(input)}catch(error){
+    if(error instanceof LunaProviderError && error.usage){meter.afterModel(error.usage);await ledger.settleModel(upper,error.usage)}else meter.modelUncertain()
+    responses.push({providerError:error instanceof LunaProviderError?error.code:'LUNA_PROVIDER_REQUEST_FAILED',...(error instanceof LunaProviderError?{usage:error.usage}:{})});throw error
    }
    // Known usage stays known even if it reveals a budget violation.
    meter.afterModel(response.usage)
@@ -256,7 +269,7 @@ async function certification(request:Request,env:Env,execution?:Execution){
  const cumulative=ledger.usage(),turnMetrics={calls:cumulative.calls-baseline.calls,promptTokens:cumulative.input_tokens-baseline.input_tokens,completionTokens:cumulative.output_tokens-baseline.output_tokens,tokens:cumulative.input_tokens+cumulative.output_tokens-baseline.input_tokens-baseline.output_tokens,rowsRead:cumulative.totalReads-baseline.totalReads}
  if(cumulative.reserved_calls||cumulative.reserved_tokens||cumulative.reserved_reads||cumulative.uncertain){validation.violations.push('CERTIFICATION_ACCOUNTING_UNCERTAIN');validation.passed=false}
  const evidence=sanitized({scenario_id:scenario.id,turn_id:turn,source_message_id:context.sourceMessageId,conversation_id:conversation,operationIds:result?.committedOperationIds??[],timestamp:new Date(started).toISOString(),model:env.LUNA_MODEL,
-  configuration,metrics:meter.unknown()?null:turnMetrics,readBreakdown:ledger.local,durationMs:Date.now()-started,messages:[{role:'user',content:body.message},{role:'assistant',content:result?.reply}],toolCalls:tools.map(t=>({id:t.id,name:t.name,args:t.args})),toolResults:tools.map(t=>({id:t.id,result:t.result,recovery:t.recovery})),
+  configuration,sampleOnly:!!sample,metrics:meter.unknown()?null:turnMetrics,...(configuration.provider==='workers-ai'?{estimatedNeurons:glmNeurons(turnMetrics),neuronEstimateNotInvoice:true}:{}),readBreakdown:ledger.local,durationMs:Date.now()-started,messages:[{role:'user',content:body.message},{role:'assistant',content:result?.reply}],toolCalls:tools.map(t=>({id:t.id,name:t.name,args:t.args})),toolResults:tools.map(t=>({id:t.id,result:t.result,recovery:t.recovery})),
   stateBefore,stateAfter,events:stateAfter.tables.luna_operation_events??[],proposals:stateAfter.tables.luna_proposals??[],presentations:stateAfter.tables.luna_proposal_presentations??[],
   // Native authorization evidence is the presented fingerprint, inbound
   // message and commit tool result. There are no generic confirmation tables.
@@ -295,7 +308,7 @@ export class LunaConversationDurableObject extends NativeConversation {
 }
 export default{...application,async fetch(request:Request,env:Env,ctx:ExecutionContext){
  const path=new URL(request.url).pathname
- if(path==='/luna-certification'&&request.method==='GET'&&env.APP_ENV==='staging'&&env.LUNA_CERT_ENV==='isolated-luna-v2')return certificationPlayground(env.RELEASE_SHA??'')
+ if(path==='/luna-certification'&&request.method==='GET'&&env.APP_ENV==='staging'&&env.LUNA_CERT_ENV==='isolated-luna-v2')return certificationPlayground(env.RELEASE_SHA??'',lunaProviderIdentity(env),env.LUNA_CERT_SAMPLE_ONLY==='true')
  if(path.startsWith('/internal/luna-certification/')||path.startsWith('/api/ai-lab/luna/certification/')){try{return await certification(request,env)}catch{return json({code:'CERTIFICATION_INTERNAL_FAILURE'},503)}}
  return application.fetch(request,env,ctx)
 }}

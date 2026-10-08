@@ -3,8 +3,9 @@ import type { LunaExecutionContext } from './luna/contracts'
 import type { LunaConversationDurableObject } from './luna/conversationDurableObject'
 import type { LunaPlaygroundJob } from './luna/playgroundTurn'
 import { authorizeOperation } from './operationAuthorization'
+import { lunaProviderConfigured, lunaProviderIdentity, type LunaProviderBindings } from './luna/providers/providerFactory'
 
-type AiLabBindings = BetterAuthRuntimeBindings & {
+type AiLabBindings = BetterAuthRuntimeBindings & LunaProviderBindings & {
   DB?: D1Database
   OPENAI_API_KEY?: string
   GROQ_API_KEY?: string
@@ -132,7 +133,7 @@ async function lunaPlayground(request: Request, bindings: AiLabBindings): Promis
   if (!resolved.scope) return resolved.error || json({ code: 'FORBIDDEN' }, 403)
   if (resolved.scope.moduleId !== 'petshop') return json({ code: 'LUNA_MODULE_NOT_SUPPORTED' }, 400)
   if (bindings.LUNA_PLAYGROUND_ENABLED !== 'true') return json({ code: 'LUNA_PLAYGROUND_DISABLED' }, 404)
-  if (bindings.LUNA_PROVIDER !== 'groq' || !bindings.GROQ_API_KEY || !bindings.LUNA_MODEL) {
+  if (!lunaProviderConfigured(bindings)) {
     return json({ code: 'LUNA_PROVIDER_NOT_CONFIGURED' }, 503)
   }
   if(!bindings.LUNA_AGENT)return json({code:'LUNA_AGENT_NOT_CONFIGURED'},503)
@@ -162,7 +163,7 @@ async function lunaPlayground(request: Request, bindings: AiLabBindings): Promis
     traceId,
     executionMode: 'staging',
   }
-  const payload:LunaPlaygroundJob={kind:'playground',context,companyId,principalId:resolved.scope.principalId,message,releaseSha:bindings.RELEASE_SHA??'local'}
+  const payload:LunaPlaygroundJob={kind:'playground',context,companyId,principalId:resolved.scope.principalId,message,releaseSha:bindings.RELEASE_SHA??'local',...lunaProviderIdentity(bindings)}
   const stub=bindings.LUNA_AGENT.getByName(`${context.tenantId}:petshop:${conversationId}`)
   const response=await stub.fetch('https://luna.internal/playground',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)})
   return json({data:await response.json()},response.status)

@@ -1,5 +1,5 @@
 import { runLunaTurn } from './runLunaTurn'
-import { GroqSdkProvider } from './providers/groqSdkProvider'
+import { createLunaProvider, lunaProviderIdentity } from './providers/providerFactory'
 import { recordProposalPresentation } from './proposalPresentation'
 import { LunaCheckpointError, type LunaTurnJournal } from './turnJournal'
 import type { LunaExecutionContext } from './contracts'
@@ -7,7 +7,7 @@ import { membershipAllows, type OperationMembership } from '../operationAuthoriz
 
 export type InternalChatJob = {
   kind: 'internal-chat'; context: LunaExecutionContext; principalId: string;
-  message: string; releaseSha: string; model: string
+  message: string; releaseSha: string; model: string; provider?: string
 }
 export type NativeLunaBindings = EdgeEnv & {RELEASE_SHA?: string; GROQ_API_KEY?: string}
 
@@ -16,7 +16,8 @@ export type NativeLunaBindings = EdgeEnv & {RELEASE_SHA?: string; GROQ_API_KEY?:
 export async function executeInternalChatJob(job: InternalChatJob, env: NativeLunaBindings, journal: LunaTurnJournal) {
   const db = env.DB, ctx = job.context
   if (!db || env.APP_ENV !== 'staging' || env.LUNA_INTERNAL_CHAT_ENABLED !== 'true'
-    || job.releaseSha !== (env.RELEASE_SHA ?? 'local') || job.model !== env.LUNA_MODEL) {
+    || job.releaseSha !== (env.RELEASE_SHA ?? 'local') || job.model !== env.LUNA_MODEL
+    || (job.provider ?? 'groq') !== lunaProviderIdentity(env).provider) {
     throw new LunaCheckpointError('LUNA_INTERNAL_CONFIGURATION_CHANGED')
   }
   const principal = await db.prepare(`SELECT id FROM identity_principals WHERE id=?1 AND status='active' LIMIT 1`).bind(job.principalId).first()
@@ -45,7 +46,7 @@ export async function executeInternalChatJob(job: InternalChatJob, env: NativeLu
   }, readInbound)
   const positive = (value: string | undefined, fallback: number) => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : fallback
   const result = await runLunaTurn({
-    database: db, context: ctx, provider: new GroqSdkProvider({apiKey: env.GROQ_API_KEY, model: job.model}), journal,
+    database: db, context: ctx, provider: createLunaProvider(env), journal,
     maxModelCalls: positive(env.LUNA_MAX_MODEL_CALLS_PER_TURN, 6), maxToolCalls: positive(env.LUNA_MAX_TOOL_CALLS_PER_TURN, 10), maxTokens: positive(env.LUNA_MAX_TOKENS_PER_TURN, 12000),
   })
   if (result.reply) {

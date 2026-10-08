@@ -83,6 +83,7 @@
     },
     "staging": {
       "name": "yuisync-edge-api-staging",
+      "ai": { "binding": "AI" },
       "vars": {
         "APP_ENV": "staging",
         "SERVICE_NAME": "yuisync-edge-api",

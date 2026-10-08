@@ -1,7 +1,7 @@
 import type { LunaMessage, LunaProviderResponse, LunaTurnResult, LunaToolResult } from './contracts'
 import { LunaConversationRepository } from './conversationRepository'
 import { createLunaBudget, LunaBudgetError } from './quotaBudget'
-import { GroqProviderError } from './providers/groqProvider'
+import { LunaProviderError } from './providers/providerError'
 import { LUNA_OPERATIONAL_SYSTEM_PROMPT } from './systemPrompt'
 import { createLunaToolRegistry } from './toolRegistry'
 import type { LunaExecutionContext, LunaToolDefinition } from './contracts'
@@ -107,7 +107,7 @@ export async function runLunaTurn(input: {
     catch (error) {
       // An unusable completion can still have valid billed usage. Never turn
       // that known consumption into zero or force an unnecessary replay.
-      if (error instanceof GroqProviderError && error.usage) budget.afterModel({...error.usage,remainingRequests:null,requestLimit:null})
+      if (error instanceof LunaProviderError && error.usage) budget.afterModel({...error.usage,remainingRequests:null,requestLimit:null})
       throw error
     }
   }
@@ -153,7 +153,7 @@ export async function runLunaTurn(input: {
       catch (error) {
         // A failed formatting repair cannot erase verified query/commit facts
         // or cause another action/model replay. Quota still pauses explicitly.
-        if (!finalRepairUsed || error instanceof LunaCheckpointError || error instanceof LunaTurnSuspended || error instanceof LunaBudgetError || (error instanceof GroqProviderError && error.code === 'GROQ_RATE_LIMITED')) throw error
+        if (!finalRepairUsed || error instanceof LunaCheckpointError || error instanceof LunaTurnSuspended || error instanceof LunaBudgetError || (error instanceof LunaProviderError && error.rateLimited)) throw error
         await completeReply(safeFactualFallback(buildVerifiedFacts(evidence.filter(item => item.callId !== 'bootstrap-identity'))), 'factual_fallback')
         return { content: reply, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0 }, rateLimit: { remainingRequests: null, remainingTokens: null, resetRequests: null, resetTokens: null } }
       }
@@ -293,14 +293,14 @@ export async function runLunaTurn(input: {
     if (!reply) throw new LunaBudgetError('LUNA_MODEL_CALL_LIMIT')
   } catch (error) {
     if(error instanceof LunaCheckpointError||error instanceof LunaTurnSuspended)throw error
-    if (error instanceof LunaBudgetError || (error instanceof GroqProviderError && error.code === 'GROQ_RATE_LIMITED')) {
+    if (error instanceof LunaBudgetError || (error instanceof LunaProviderError && error.rateLimited)) {
       finalStatus = 'quota_paused'
       reply = null
-      errorCode = error instanceof GroqProviderError ? error.code : error.code
+      errorCode = error.code
     } else {
       finalStatus = 'failed'
       reply = null
-      errorCode = error instanceof GroqProviderError ? error.code : 'LUNA_EXECUTION_FAILED'
+      errorCode = error instanceof LunaProviderError ? error.code : 'LUNA_EXECUTION_FAILED'
     }
   }
 

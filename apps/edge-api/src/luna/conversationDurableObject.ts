@@ -12,6 +12,7 @@ import { createD1TurnJournal,LunaCheckpointError,type LunaTurnJournal } from './
 import { durableTurnQueue,type DurableTurnJob } from './durableTurnQueue'
 import { hashCanonicalJson } from './canonicalJson'
 import { executeLunaPlaygroundJob,type LunaPlaygroundJob } from './playgroundTurn'
+import { lunaJournalConfiguration } from './providers/providerFactory'
 
 export type LunaRuntimeBindings = Readonly<{
   DB?: D1Database
@@ -19,6 +20,7 @@ export type LunaRuntimeBindings = Readonly<{
   LUNA_PROVIDER?: string
   LUNA_MODEL?: string
   GROQ_API_KEY?: string
+  AI?: EdgeEnv['AI']
   LUNA_MAX_MODEL_CALLS_PER_TURN?: string
   LUNA_MAX_TOOL_CALLS_PER_TURN?: string
   LUNA_MAX_TOKENS_PER_TURN?: string
@@ -122,7 +124,7 @@ export class LunaConversationDurableObject extends DurableObject<EdgeEnv> {
     if((job.payload as {kind?:string})?.kind==='playground'){
       const payload=job.payload as LunaPlaygroundJob,env=this.env as LunaRuntimeBindings
       if(!env.DB)throw new LunaCheckpointError('LUNA_DATABASE_NOT_CONFIGURED')
-      const journal=createD1TurnJournal(env.DB,payload.context,`${env.RELEASE_SHA??'local'}:${env.LUNA_MODEL}:durable-v1`)
+      const journal=createD1TurnJournal(env.DB,payload.context,lunaJournalConfiguration(env,`${env.RELEASE_SHA??'local'}:${env.LUNA_MODEL}:durable-v1`))
       return executeLunaPlaygroundJob(payload,env,journal)
     }
     const event=parseLunaMessageReceivedEventV1(job.payload),env=this.env as LunaRuntimeBindings

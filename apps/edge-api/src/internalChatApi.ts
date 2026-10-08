@@ -2,8 +2,9 @@ import { authorizeOperation } from './operationAuthorization'
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 import type { LunaNativeAgent } from './luna/nativeCloudflareAgent'
 import type { InternalChatJob } from './luna/internalChatTurn'
+import { lunaProviderConfigured, lunaProviderIdentity, type LunaProviderBindings } from './luna/providers/providerFactory'
 
-type Bindings = BetterAuthRuntimeBindings & {
+type Bindings = BetterAuthRuntimeBindings & LunaProviderBindings & {
   DB?: D1Database; APP_ENV?: string; LUNA_INTERNAL_CHAT_ENABLED?: string;
   GROQ_API_KEY?: string; LUNA_MODEL?: string; RELEASE_SHA?: string;
   LUNA_NATIVE?: DurableObjectNamespace<LunaNativeAgent>
@@ -53,12 +54,12 @@ export async function handleInternalChatApiRequest(request: Request, env: Bindin
   if (thread.status !== 'open' || thread.channel !== 'internal') return json({code: 'CHAT_NOT_IN_BOT_MODE'}, 409)
   const phone = (thread.external_thread_id ?? '').replace(/\D/g, '')
   if (!/^\d{8,15}$/.test(phone)) return json({code: 'CHAT_CUSTOMER_PHONE_REQUIRED'}, 409)
-  if (!env.GROQ_API_KEY || !env.LUNA_MODEL) return json({code: 'LUNA_PROVIDER_NOT_CONFIGURED'}, 503)
+  if (!lunaProviderConfigured(env)) return json({code: 'LUNA_PROVIDER_NOT_CONFIGURED'}, 503)
   const session = await getBetterAuthSession(request, env)
   const principal = session?.user.id ? await env.DB!.prepare(`SELECT id FROM identity_principals WHERE provider='better-auth' AND subject=?1 AND status='active' LIMIT 1`).bind(session.user.id).first<{id: string}>() : null
   if (!principal) return json({code: 'UNAUTHENTICATED'}, 401)
   const job: InternalChatJob = {
-    kind: 'internal-chat', principalId: principal.id, message, releaseSha: env.RELEASE_SHA ?? 'local', model: env.LUNA_MODEL,
+    kind: 'internal-chat', principalId: principal.id, message, releaseSha: env.RELEASE_SHA ?? 'local', ...lunaProviderIdentity(env),
     context: {tenantId, moduleId: 'petshop', conversationId: sessionId, customerAddress: phone,
       phoneNumberId: 'internal-no-whatsapp', sourceMessageId: body.clientMessageId as string,
       traceId: `internal:${body.clientMessageId}`, executionMode: 'staging'},

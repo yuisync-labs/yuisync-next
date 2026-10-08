@@ -10,7 +10,7 @@ import { matchesToolSchema } from '../toolSchema'
 type Request = Parameters<GroqProvider['complete']>[0]
 type GroqPrompt = Parameters<ReturnType<ReturnType<typeof createGroq>>['doGenerate']>[0]['prompt']
 
-export function sdkMessages(messages: readonly LunaMessage[], definitions: readonly LunaToolDefinition[]): ModelMessage[] {
+export function sdkMessages(messages: readonly LunaMessage[], definitions: readonly LunaToolDefinition[], groqWire = true): ModelMessage[] {
   const names = new Map(messages.flatMap(m => (m.tool_calls ?? []).map(c => [c.id, c.function.name] as const)))
   return messages.map(m => {
     if (m.role === 'tool') {
@@ -23,7 +23,7 @@ export function sdkMessages(messages: readonly LunaMessage[], definitions: reado
         ...(m.content ? [{ type: 'text' as const, text: m.content }] : []),
         ...m.tool_calls.map(c => {
           const definition = definitions.find(d => d.name === c.function.name)
-          const raw = definition ? groqWireToolArguments(c.function.arguments, definition.parameters) : c.function.arguments
+          const raw = definition && groqWire ? groqWireToolArguments(c.function.arguments, definition.parameters) : c.function.arguments
           return { type: 'tool-call' as const, toolCallId: c.id, toolName: c.function.name, input: JSON.parse(raw) }
         }),
       ],

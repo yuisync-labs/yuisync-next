@@ -1,19 +1,21 @@
 import { runLunaTurn } from './runLunaTurn'
-import { GroqSdkProvider } from './providers/groqSdkProvider'
+import { createLunaProvider, lunaProviderIdentity, type LunaProviderBindings } from './providers/providerFactory'
 import { recordProposalPresentation } from './proposalPresentation'
 import type { LunaExecutionContext } from './contracts'
 import type { LunaTurnJournal } from './turnJournal'
 import { LunaCheckpointError } from './turnJournal'
 import { membershipAllows,type OperationMembership } from '../operationAuthorization'
 
-export type LunaPlaygroundJob={kind:'playground';context:LunaExecutionContext;companyId:string;principalId:string;message:string;releaseSha:string}
-type Bindings={DB?:D1Database;GROQ_API_KEY?:string;LUNA_MODEL?:string;LUNA_PLAYGROUND_ENABLED?:string;RELEASE_SHA?:string;LUNA_MAX_MODEL_CALLS_PER_TURN?:string;LUNA_MAX_TOOL_CALLS_PER_TURN?:string;LUNA_MAX_TOKENS_PER_TURN?:string}
+export type LunaPlaygroundJob={kind:'playground';context:LunaExecutionContext;companyId:string;principalId:string;message:string;releaseSha:string;provider?:string;model?:string}
+type Bindings=LunaProviderBindings & {DB?:D1Database;LUNA_PLAYGROUND_ENABLED?:string;RELEASE_SHA?:string;LUNA_MAX_MODEL_CALLS_PER_TURN?:string;LUNA_MAX_TOOL_CALLS_PER_TURN?:string;LUNA_MAX_TOKENS_PER_TURN?:string}
 const positive=(value:string|undefined,fallback:number)=>Number.isSafeInteger(Number(value))&&Number(value)>0?Number(value):fallback
 
 // Administrative playground uses exactly the native runtime/provider. It has
 // no WhatsApp outbound path. Authorization is rechecked after every alarm.
 export async function executeLunaPlaygroundJob(job:LunaPlaygroundJob,env:Bindings,journal:LunaTurnJournal){
  if(!env.DB||env.LUNA_PLAYGROUND_ENABLED!=='true'||job.releaseSha!==(env.RELEASE_SHA??'local'))throw new LunaCheckpointError('LUNA_PLAYGROUND_JOB_DISABLED_OR_CHANGED')
+ const identity=lunaProviderIdentity(env)
+ if((job.provider??'groq')!==identity.provider||(job.model!==undefined&&job.model!==identity.model))throw new LunaCheckpointError('LUNA_PLAYGROUND_JOB_DISABLED_OR_CHANGED')
  const db=env.DB,ctx=job.context
  const principal=await db.prepare(`SELECT id FROM identity_principals WHERE id=?1 AND status='active' LIMIT 1`).bind(job.principalId).first()
  const tenant=await db.prepare(`SELECT status FROM tenants WHERE id=?1 LIMIT 1`).bind(ctx.tenantId).first<{status:string}>()
@@ -27,7 +29,7 @@ export async function executeLunaPlaygroundJob(job:LunaPlaygroundJob,env:Binding
    db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?2,'inbound','customer',?4,?5)`).bind(ctx.tenantId,ctx.sourceMessageId,ctx.conversationId,job.message,now),
   ]);return true
  })
- const provider=new GroqSdkProvider({apiKey:env.GROQ_API_KEY,model:env.LUNA_MODEL})
+ const provider=createLunaProvider(env)
  const result=await runLunaTurn({database:db,provider,context:ctx,journal,maxModelCalls:positive(env.LUNA_MAX_MODEL_CALLS_PER_TURN,6),maxToolCalls:positive(env.LUNA_MAX_TOOL_CALLS_PER_TURN,10),maxTokens:positive(env.LUNA_MAX_TOKENS_PER_TURN,12000)})
  if(result.reply){
   const out=await journal.run('playground-outbound',{reply:result.reply},async()=>{const id=crypto.randomUUID();await db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,'outbound','assistant',?4,?5)`).bind(ctx.tenantId,id,ctx.conversationId,result.reply,Date.now()).run();return id})

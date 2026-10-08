@@ -94,13 +94,13 @@ export async function runSdkAgent(options: {
     prepareStep: async ({ messages }) => {
       const prepared = await options.prepare(lunaMessages(messages))
       current = prepared.tools
-      return { instructions: prepared.messages.filter(m => m.role === 'system').map(m => m.content ?? '').join('\n\n'), messages: sdkMessages(prepared.messages.filter(m => m.role !== 'system'), options.definitions), activeTools: current.map(d => d.name) }
+      return { instructions: prepared.messages.filter(m => m.role === 'system').map(m => m.content ?? '').join('\n\n'), messages: sdkMessages(prepared.messages.filter(m => m.role !== 'system'), options.definitions, false), activeTools: current.map(d => d.name) }
     },
     onStepEnd: ({ toolCalls }) => {
       if (toolCalls.some(c => c.invalid)) fatal = new GroqProviderError('GROQ_RESPONSE_INVALID')
     },
   })
-  const history = sdkMessages(options.messages.filter(m => m.role !== 'system'), options.definitions)
+  const history = sdkMessages(options.messages.filter(m => m.role !== 'system'), options.definitions, false)
   // Old unit fixtures predate persisted inbound messages. This scaffold is
   // test-only; production never fabricates a customer message or confirmation.
   if (!history.length && options.allowEmptyFixtureHistory) history.push({ role: 'user', content: '[Fixture sem histórico; usar somente o provedor simulado.]' })

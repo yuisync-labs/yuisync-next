@@ -12,6 +12,11 @@ describe('Staging certification durable execution, simulated provider only',()=>
   for(let n=1;n<=5;n++)expect(certificationBlock('abcdef1234567890',`groq-ui-abcdef123456-b${n}`)).toEqual({block:n,first:(n-1)*4+1,last:n*4})
   for(const suffix of ['0','6','01','1-retry','1.0',''])expect(certificationBlock('abcdef1234567890','groq-ui-abcdef123456-b'+suffix)).toBeNull()
  })
+ it('isolates the fixed Workers AI sample without arbitrary round IDs or Groq checkpoint reuse',()=>{
+  expect(certificationBlock('abcdef1234567890','workers-ai-ui-abcdef123456-sample','workers-ai')).toEqual({block:0,first:1,last:13,scenarioIds:[1,6,11,13],sample:true})
+  for(const round of ['workers-ai-ui-abcdef123456-sample-retry','groq-ui-abcdef123456-sample','workers-ai-ui-abcdef123456-b01'])expect(certificationBlock('abcdef1234567890',round,'workers-ai')).toBeNull()
+  expect(certificationBlock('abcdef1234567890','workers-ai-ui-abcdef123456-b5','workers-ai')).toEqual({block:5,first:17,last:20})
+ })
  it('returns 202 before any inference and resumes the same job after quota without duplicate messages or tools',async()=>{
   const DB=env.DB!,fixture={prepare:(sql:string)=>DB.prepare(sql),batch:(s:D1PreparedStatement[])=>DB.batch(s)} as D1Database
   await initializeCertificationSchema(DB)

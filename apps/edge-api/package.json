@@ -20,7 +20,8 @@
     "better-auth": "1.6.25",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.8",
-    "agents": "0.27.0"
+    "agents": "0.27.0",
+    "workers-ai-provider": "4.0.0"
   },
   "engines": {
     "node": "22.x"

@@ -3,6 +3,7 @@ import { executeInternalChatJob, type InternalChatJob, type NativeLunaBindings }
 import { durableTurnQueue } from './durableTurnQueue'
 import { createD1TurnJournal, LunaCheckpointError } from './turnJournal'
 import { hashCanonicalJson } from './canonicalJson'
+import { lunaJournalConfiguration } from './providers/providerFactory'
 
 // The Durable Object may receive another request while the current request
 // awaits Groq or D1. Serialize turns so retries and simultaneous messages
@@ -44,7 +45,7 @@ export class LunaNativeAgent extends Agent<NativeLunaBindings> {
   }, async job => {
     const payload = job.payload as InternalChatJob
     if (!this.env.DB) throw new LunaCheckpointError('DATABASE_NOT_CONFIGURED')
-    return executeInternalChatJob(payload, this.env, createD1TurnJournal(this.env.DB, payload.context, `internal:${payload.releaseSha}:${payload.model}`))
+    return executeInternalChatJob(payload, this.env, createD1TurnJournal(this.env.DB, payload.context, lunaJournalConfiguration(this.env, `internal:${payload.releaseSha}:${payload.model}`)))
   })
   private readonly serial = serializeAgentTurns((execute: () => Promise<unknown>) => execute())
   private readonly processing = serializeAgentTurns(() => this.pendingTurns.process())
