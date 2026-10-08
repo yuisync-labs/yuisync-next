@@ -3,6 +3,7 @@ import { generateText, isStepCount, tool } from 'ai'
 import { z } from 'zod'
 import { authorizeOperation } from './operationAuthorization'
 import type { BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import type { LunaNativeAgent } from './luna/nativeCloudflareAgent'
 
 type Bindings = BetterAuthRuntimeBindings & {
   DB?: D1Database
@@ -10,6 +11,7 @@ type Bindings = BetterAuthRuntimeBindings & {
   LUNA_INTERNAL_CHAT_ENABLED?: string
   GROQ_API_KEY?: string
   LUNA_MODEL?: string
+  LUNA_NATIVE?: DurableObjectNamespace<LunaNativeAgent>
 }
 
 type PersistedMessage = {
@@ -28,9 +30,36 @@ function json(body: unknown, status = 200) {
 
 // Staging-only internal chat. This endpoint never calls the WhatsApp provider,
 // never commits commercial operations, and always scopes D1 by authenticated tenant.
-// It is a conversational bridge for the actual Chat IA tab while the full
-// Cloudflare Agents SDK operational runtime is being integrated.
+// It provides a native Agents SDK instance for each authenticated test thread,
+// without using the WhatsApp provider or running commercial write tools.
 export async function handleInternalChatApiRequest(request: Request, env: Bindings): Promise<Response | null> {
+  const path = new URL(request.url).pathname
+  if (path !== '/api/chat/respond') return null
+  if (request.method !== 'POST') return json({ code: 'METHOD_NOT_ALLOWED' }, 405)
+  if (env.APP_ENV !== 'staging' || env.LUNA_INTERNAL_CHAT_ENABLED !== 'true') {
+    return json({ code: 'LUNA_INTERNAL_CHAT_DISABLED' }, 404)
+  }
+  const auth = await authorizeOperation(request, env, 'operational')
+  if (auth) return auth
+  if (!env.LUNA_NATIVE) return json({ code: 'LUNA_NATIVE_AGENT_NOT_CONFIGURED' }, 503)
+  let input: unknown
+  try { input = await request.clone().json() } catch { return json({ code: 'INVALID_JSON' }, 400) }
+  const body = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Record<string, unknown> : {}
+  if (!identifier(body.sessionId)) return json({ code: 'INVALID_CHAT_REQUEST' }, 400)
+  const tenantId = request.headers.get('x-tenant-id')!
+  const moduleId = request.headers.get('x-module-id')!
+  const instance = env.LUNA_NATIVE.get(
+    env.LUNA_NATIVE.idFromName(`${tenantId}:${moduleId}:${body.sessionId}`),
+  )
+  return instance.fetch(new Request('https://luna.internal/api/chat/respond', {
+    method: 'POST',
+    headers: request.headers,
+    body: JSON.stringify(body),
+  }))
+}
+
+export async function executeInternalChatTurn(request: Request, env: Bindings): Promise<Response | null> {
   const path = new URL(request.url).pathname
   if (path !== '/api/chat/respond') return null
   if (request.method !== 'POST') return json({ code: 'METHOD_NOT_ALLOWED' }, 405)
