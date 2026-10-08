@@ -18,6 +18,14 @@ chamadas paralelas são desativados. Uso ausente mantém consumo incerto, nunca
 zero. Ferramentas devem vir no campo estruturado nativo, com IDs existentes,
 schemas válidos e lote íntegro; JSON em texto não autoriza execução.
 
+O transporte remove somente descrições redundantes dentro dos schemas; os
+contratos e a validação no servidor continuam íntegros. O teto explícito do
+GLM na certificação é 24 mil tokens por turno (antes, o padrão interno de 12 mil
+interrompeu quatro chamadas com 15.516 tokens). Os tetos da rodada não mudaram.
+O runtime fornece os IDs factuais no schema de encerramento e explicita ações
+de rascunho já aplicadas. A auditoria usa consultas limitadas em lote e atualiza
+o ledger antes da validação; reservas realmente desconhecidas não são apagadas.
+
 ## Amostra inicial
 
 Quatro cenários fixos: 1 (compra), 6 (pergunta paralela), 11 (compra e agenda) e

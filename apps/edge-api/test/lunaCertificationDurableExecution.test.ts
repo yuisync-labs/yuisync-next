@@ -1,13 +1,18 @@
 import { env } from 'cloudflare:workers'
 import { evictDurableObject,runInDurableObject } from 'cloudflare:test'
 import { describe,expect,it,vi } from 'vitest'
-import staging,{LunaConversationDurableObject,initializeCertificationSchema} from '../../../scripts/luna/stagingWorker'
+import staging,{LunaConversationDurableObject,initializeCertificationSchema,certificationTurnTokens} from '../../../scripts/luna/stagingWorker'
 import { certificationBlock } from '../../../scripts/luna/certificationBlocks'
 import { GroqSdkProvider } from '../src/luna/providers/groqSdkProvider'
 import { LUNA_SCENARIO_CLOCK } from './fixtures/luna/designedScenarios'
 import { hashCanonicalJson } from '../src/luna/canonicalJson'
 
 describe('Staging certification durable execution, simulated provider only',()=>{
+ it('keeps explicit token ceilings bounded and rejects malformed configuration instead of disabling the budget',()=>{
+  expect(certificationTurnTokens()).toBe(12000)
+  expect(certificationTurnTokens('24000')).toBe(24000)
+  for(const value of ['NaN','','0','999','32001','Infinity','12.5'])expect(()=>certificationTurnTokens(value)).toThrow('CERTIFICATION_TURN_TOKEN_LIMIT_INVALID')
+ })
  it('admits exactly five fixed blocks, without alternate budget-reset round IDs',()=>{
   for(let n=1;n<=5;n++)expect(certificationBlock('abcdef1234567890',`groq-ui-abcdef123456-b${n}`)).toEqual({block:n,first:(n-1)*4+1,last:n*4})
   for(const suffix of ['0','6','01','1-retry','1.0',''])expect(certificationBlock('abcdef1234567890','groq-ui-abcdef123456-b'+suffix)).toBeNull()

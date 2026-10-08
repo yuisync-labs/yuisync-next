@@ -11,7 +11,7 @@ import { buildVerifiedFacts, responseContractInstruction, responseQuestion, safe
 import { loadConversationMemory,prepareResponseMemory } from './conversationalMemory'
 import { lunaNow } from './clock'
 import { createLunaQuotaPacer,resetDurationMs } from './quotaPacer'
-import { FINISH_TURN, finishTurn, operationalCapabilities } from './finishTurn'
+import { FINISH_TURN, finishTurn, finishTurnDefinition, operationalCapabilities } from './finishTurn'
 import { agentMemory, agentContextMessages } from './agentContext'
 import { DRAFT_TOOL_DEFINITIONS, executeDraftTool } from './draftTools'
 import { runSdkAgent } from './sdkAgent'
@@ -141,8 +141,8 @@ export async function runLunaTurn(input: {
           hasAppointments: evidence.some(item => item.tool === 'get_customer_appointments' && item.result.ok && Array.isArray((item.result.data as { appointments?: unknown[] })?.appointments) && (item.result.data as { appointments: unknown[] }).appointments.length > 0),
         })
         return {
-          tools: finalRepairUsed ? [FINISH_TURN] : input.provider.operationalReplies ? capabilities : definitions,
-          messages: composeLunaModelMessages([...agentContextMessages([...messages.filter(m => m.role === 'system'), ...sdkHistory], currentState), { role: 'system', content: `IDs fact disponíveis para finish_turn: ${JSON.stringify(facts.map(f => ({ id: f.id, text: f.text })))}` }], facts),
+          tools: (finalRepairUsed ? [FINISH_TURN] : input.provider.operationalReplies ? capabilities : definitions).map(d => d.name === FINISH_TURN.name ? finishTurnDefinition(facts) : d),
+          messages: composeLunaModelMessages([...agentContextMessages([...messages.filter(m => m.role === 'system'), ...sdkHistory], currentState), { role: 'system', content: `IDs fact disponíveis para finish_turn: ${JSON.stringify(facts.map(f => ({ id: f.id, text: f.text })))}. Ações já aplicadas neste turno (não repetir sem nova mudança explícita): ${JSON.stringify(evidence.filter(e => e.result.ok && e.tool.startsWith('draft_')).map(e => ({tool:e.tool,call_id:e.callId})))}. Em finish_turn, social contém somente ligação social, não nomes de produtos ou afirmações de cadastro/adição/conclusão; esses fatos pertencem às referências verificadas.` }], facts),
         }
       },
       infer: async (request) => {

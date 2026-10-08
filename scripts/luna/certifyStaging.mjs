@@ -24,7 +24,10 @@ if(stage.name!=='yuisync-edge-api-staging'||stage.vars.APP_ENV!=='staging'||stag
 const providerArg=process.argv.find(arg=>arg.startsWith('--provider=')),provider=providerArg?.slice('--provider='.length)??'groq'
 if(!['groq','workers-ai'].includes(provider))throw new Error('CERTIFICATION_PROVIDER_INVALID')
 if(process.argv.includes('--run'))throw new Error('CERTIFICATION_BROWSER_ONLY')
-const selectedStage={...stage,vars:{...stage.vars,...(provider==='workers-ai'?{LUNA_PROVIDER:'workers-ai',LUNA_MODEL:'@cf/zai-org/glm-4.7-flash'}:{})}}
+// Six structured steps plus the single factual repair must fit the model's
+// measured schema/context footprint. This explicit staging-only ceiling does
+// not change Groq/production defaults or the round's 250k/120-call ledger caps.
+const selectedStage={...stage,vars:{...stage.vars,...(provider==='workers-ai'?{LUNA_PROVIDER:'workers-ai',LUNA_MODEL:'@cf/zai-org/glm-4.7-flash',LUNA_MAX_TOKENS_PER_TURN:'24000'}:{})}}
 selectedStage.vars.LUNA_CERT_SAMPLE_ONLY=process.argv.includes('--sample')||(provider==='workers-ai'&&!process.argv.includes('--full'))?'true':'false'
 const configFilename=provider==='groq'?'wrangler.json':'wrangler-workers-ai.json'
 await build({entryPoints:[resolve(root,'apps/edge-api/test/fixtures/luna/designedScenarios.ts')],outfile:resolve(out,'scenarios.mjs'),bundle:true,platform:'node',format:'esm'})

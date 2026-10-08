@@ -29,6 +29,14 @@ describe('Workers AI GLM single-step transport',()=>{
   await expect(f.provider.complete(input)).rejects.toMatchObject({code:'WORKERS_AI_USAGE_UNAVAILABLE',usage:null})
   expect(f.run).toHaveBeenCalledTimes(1)
  })
+ it('removes schema annotations on the wire without relaxing required fields or constraints',async()=>{
+  const annotated={...query,parameters:{...query.parameters,description:'Redundant prose',properties:{query:{type:'string',minLength:1,maxLength:200,description:'The query already described by the tool'}}}}
+  const f=fixture()
+  await f.provider.complete({...input,tools:[annotated]})
+  const wire=f.run.mock.calls[0][1] as {tools:{function:{parameters:Record<string,unknown>}}[]}
+  expect(wire.tools[0].function.parameters).toEqual({...annotated.parameters,description:undefined,properties:{query:{type:'string',minLength:1,maxLength:200}}})
+  await expect(fixture(output(query.name,{})).provider.complete({...input,tools:[annotated]})).rejects.toMatchObject({code:'WORKERS_AI_RESPONSE_INVALID'})
+ })
  it.each([['create_payment',{}],['search_products',{query:5}],['search_products',{query:'A',extra:'invented'}]])('rejects an unsafe tool batch before effects: %s',async(name,args)=>{
   const f=fixture(output(name,args))
   await expect(f.provider.complete(input)).rejects.toMatchObject({code:'WORKERS_AI_RESPONSE_INVALID',usage:{promptTokens:100,completionTokens:20}})

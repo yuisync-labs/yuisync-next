@@ -29,6 +29,11 @@ import type { DurableTurnJob } from '../../apps/edge-api/src/luna/durableTurnQue
 import { hashCanonicalJson } from '../../apps/edge-api/src/luna/canonicalJson'
 type Env=EdgeEnv & {LUNA_CERT_DB?:D1Database;LUNA_CERT_TOKEN?:string;RELEASE_SHA?:string;GROQ_API_KEY?:string;LUNA_CERT_ENV?:string;LUNA_CERT_DATABASE_ID?:string;LUNA_CERT_OPERATOR_ID?:string;LUNA_CERT_GATES_SHA?:string;LUNA_CERT_SAMPLE_ONLY?:string}
 const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{'cache-control':'no-store'}})
+export function certificationTurnTokens(value?:string){
+ const tokens=value===undefined?12000:Number(value)
+ if(!Number.isSafeInteger(tokens)||tokens<1000||tokens>32000)throw new Error('CERTIFICATION_TURN_TOKEN_LIMIT_INVALID')
+ return tokens
+}
 function sanitized(value:unknown):unknown{
  if(typeof value==='string'&&/^[\[{]/.test(value.trim())){try{return JSON.stringify(sanitized(JSON.parse(value)))}catch{/* ordinary text */}}
  if(typeof value==='string')return value.replace(/\b(?:gsk_|cfut_|sk_live_|sk_test_)[A-Za-z0-9_-]+/g,'[secret]').replace(/\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b/gi,'[email]').replace(/\b\d{10,15}\b/g,'[fixture-phone]')
@@ -39,19 +44,24 @@ function sanitized(value:unknown):unknown{
 export async function initializeCertificationSchema(db:D1Database){return await db.batch(CERTIFICATION_SCHEMA.map(sql=>db.prepare(sql)))}
 async function identity(env:Env){
  const selection=lunaProviderIdentity(env)
- const payload={sha:env.RELEASE_SHA,provider:selection.provider,model:env.LUNA_MODEL,protocol:2,prompt:LUNA_OPERATIONAL_SYSTEM_PROMPT,scenarios:LUNA_DESIGNED_SCENARIOS,fixture:f,clock:LUNA_SCENARIO_CLOCK,databaseId:env.LUNA_CERT_DATABASE_ID,...(selection.provider==='workers-ai'?{thinking:false,transportVersion:1}:{})}
+ const payload={sha:env.RELEASE_SHA,provider:selection.provider,model:env.LUNA_MODEL,protocol:2,prompt:LUNA_OPERATIONAL_SYSTEM_PROMPT,scenarios:LUNA_DESIGNED_SCENARIOS,fixture:f,clock:LUNA_SCENARIO_CLOCK,databaseId:env.LUNA_CERT_DATABASE_ID,turnTokenLimit:certificationTurnTokens(env.LUNA_MAX_TOKENS_PER_TURN),...(selection.provider==='workers-ai'?{thinking:false,transportVersion:1}:{})}
  const fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(payload))))).map(b=>b.toString(16).padStart(2,'0')).join('')
  return{fingerprint,...selection,scenarioVersion:2,promptVersion:env.RELEASE_SHA}
 }
 const tables=['chat_messages','luna_operation_events','luna_proposals','luna_proposal_presentations','luna_registration_receipts','luna_conversation_memory','luna_response_drafts','luna_turn_decisions','sales','sale_items','sale_delivery_addresses','payments','appointments','inventory_movements','pending_order_stock_reservations','subscription_benefit_allocations','appointment_transport_reservations','inventory_balances','clients','pets']
 export async function certificationSnapshot(db:D1Database,tenant:string,conversation:string){
- const state=await db.prepare(`SELECT state_json,summary_text FROM luna_conversations WHERE tenant_id=?1 AND module_id='petshop' AND conversation_id=?2`).bind(tenant,conversation).first<{state_json:string;summary_text:string|null}>()
+ // Fixed bounded queries, one D1 batch rather than 21 sequential round trips.
+ const [stateResult,...tableResults]=await db.batch([
+  db.prepare(`SELECT state_json,summary_text FROM luna_conversations WHERE tenant_id=?1 AND module_id='petshop' AND conversation_id=?2`).bind(tenant,conversation),
+  ...tables.map(table=>db.prepare(`SELECT * FROM ${table} WHERE tenant_id=?1 LIMIT 201`).bind(tenant)),
+ ])
+ const state=stateResult.results[0] as {state_json:string;summary_text:string|null}|undefined
  const result:Record<string,unknown[]>={}
  // Schema names are fixed in source; not supplied by an HTTP request or model.
- for(const table of tables){
+ for(const [index,table] of tables.entries()){
   // All names are required by the certified migration set. A missing table is
   // a failed baseline, not an excuse to omit evidence. No schema scans per turn.
-  result[table]=(await db.prepare(`SELECT * FROM ${table} WHERE tenant_id=?1 LIMIT 201`).bind(tenant).all()).results
+  result[table]=tableResults[index].results
   if(result[table].length>200)throw new Error('CERTIFICATION_SNAPSHOT_TRUNCATED')
  }
  return{operational:JSON.parse(state?.state_json??'{}'),summary:state?.summary_text??null,tables:result}
@@ -170,6 +180,7 @@ async function certification(request:Request,env:Env,execution?:Execution){
  const context:LunaExecutionContext={tenantId:tenant,moduleId:'petshop',conversationId:conversation,customerAddress:f.phone,phoneNumberId:'fixture-no-whatsapp',sourceMessageId:`source-${scenario.id}-${turn}`,traceId:`trace-${scenario.id}-${turn}`,executionMode:'staging',nowMs:Date.parse(LUNA_SCENARIO_CLOCK.now)+(turn+1)*1000}
  const journalFor=(ctx:LunaExecutionContext)=>execution?createD1TurnJournal(meter.db,ctx,`${configuration.fingerprint}:durable-v1`):undefined
  const journal=journalFor(context)
+ const maxTokens=certificationTurnTokens(env.LUNA_MAX_TOKENS_PER_TURN)
  const checkpoint=<T>(name:string,input:unknown,run:()=>Promise<T>,j:LunaTurnJournal|undefined=journal)=>j?j.run(name,input,run):run()
  const baseline=await checkpoint('cert-budget-baseline',{},async()=>ledger.usage())
  await checkpoint('cert-lock',{key,jobId:execution?.jobId??null},async()=>{if(existing)throw new LunaCheckpointError('TURN_STATE_UNCERTAIN');const locked=await db.prepare(`INSERT INTO luna_cert_turns VALUES(?1,?2,?3,?4,'running',NULL,?5)`).bind(key,body.roundId,scenario.id,turn,Date.now()).run();if(!locked.meta.changes)throw new LunaCheckpointError('TURN_STATE_UNCERTAIN');return true})
@@ -194,14 +205,16 @@ async function certification(request:Request,env:Env,execution?:Execution){
    meter.beforeModel(input,upper)
    await ledger.reserveModel(upper)
    let response
+   const modelStarted=Date.now()
    try{response=await transport.complete(input)}catch(error){
     if(error instanceof LunaProviderError && error.usage){meter.afterModel(error.usage);await ledger.settleModel(upper,error.usage)}else meter.modelUncertain()
     responses.push({providerError:error instanceof LunaProviderError?error.code:'LUNA_PROVIDER_REQUEST_FAILED',...(error instanceof LunaProviderError?{usage:error.usage}:{})});throw error
    }
    // Known usage stays known even if it reveals a budget violation.
+   const modelDurationMs=Date.now()-modelStarted
    meter.afterModel(response.usage)
    await ledger.settleModel(upper,response.usage)
-   responses.push({usage:response.usage,toolCalls:response.toolCalls,content:response.content,limits:{requests:response.requestLimit,tokens:response.tokenLimit,remainingRequests:response.rateLimit.remainingRequests,remainingTokens:response.rateLimit.remainingTokens}})
+   responses.push({usage:response.usage,toolCalls:response.toolCalls,content:response.content,modelDurationMs,limits:{requests:response.requestLimit,tokens:response.tokenLimit,remainingRequests:response.rateLimit.remainingRequests,remainingTokens:response.rateLimit.remainingTokens}})
    return response
   }}
   const timeout=scenario.id===19&&turn===0?oneAgendaTimeout(meter.db):null
@@ -215,7 +228,7 @@ async function certification(request:Request,env:Env,execution?:Execution){
     meter.db.prepare(`INSERT INTO chat_threads(tenant_id,module_id,id,channel,external_thread_id,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,'internal',?2,'open',?3,?3) ON CONFLICT DO NOTHING`).bind(tenant,thread,Date.now()),
     meter.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,?2,'inbound','customer',?4,?5)`).bind(tenant,peerContext.sourceMessageId,thread,message,lunaNow(peerContext)),
    ]);return true},peerJournal)
-   const peerResult=await runLunaTurn({database:meter.db,provider,context:peerContext,journal:peerJournal,observer:{tool:event=>tools.push({...event,conversationId:thread}),response:mode=>responseModes.push(mode)}})
+   const peerResult=await runLunaTurn({database:meter.db,provider,context:peerContext,journal:peerJournal,maxTokens,observer:{tool:event=>tools.push({...event,conversationId:thread}),response:mode=>responseModes.push(mode)}})
    if(peerResult.reply){const outbound=await checkpoint('cert-peer-outbound',{reply:peerResult.reply},async()=>{const id=crypto.randomUUID();await meter.db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop',?2,?3,'outbound','assistant',?4,?5)`).bind(tenant,id,thread,peerResult.reply,lunaNow(peerContext)).run();return id},peerJournal);await checkpoint('cert-peer-presentation',{outbound,proposals:peerResult.proposalIds},async()=>{await recordProposalPresentation(meter.db,peerContext,peerResult.proposalIds,outbound);return true},peerJournal)}
    responses.push({peer:thread,step,message,result:peerResult})
    return peerResult
@@ -223,18 +236,18 @@ async function certification(request:Request,env:Env,execution?:Execution){
   async function concurrent<T>(tasks:Promise<T>[]):Promise<T[]>{const settled=await Promise.allSettled(tasks);const failure=settled.find(result=>result.status==='rejected');if(failure?.status==='rejected')throw failure.reason;return settled.map(result=>(result as PromiseFulfilledResult<T>).value)}
   ledger.category('runtime')
   if(scenario.id===15&&turn===3){
-   const [main,competing]=await concurrent([runLunaTurn({database:runtimeDb,provider,context,observer,journal}),peer('benefit-peer',2,'Confirmo o horário.')])
+   const [main,competing]=await concurrent([runLunaTurn({database:runtimeDb,provider,context,observer,journal,maxTokens}),peer('benefit-peer',2,'Confirmo o horário.')])
    result=main
    const winners=[main,competing].filter(r=>r.committedOperationIds.length).length
    const conflicts=tools.filter(t=>t.name==='commit_confirmed_proposal'&&!t.result.ok&&['PACKAGE_BENEFITS_CHANGED','PACKAGE_BENEFIT_CAPACITY_EXCEEDED'].includes(t.result.code)).length
    faults.push({kind:'benefit_race',winners,conflicts})
-  }else result=await runLunaTurn({database:runtimeDb,provider,context,observer,journal})
+  }else result=await runLunaTurn({database:runtimeDb,provider,context,observer,journal,maxTokens})
   if(lostCommit){
    // Reject the post-commit send: do not persist outbound/presentation evidence.
    // Redeliver the exact same inbound ID through the native runtime and Groq.
    const first=result,firstTools=tools.length
    const recoveryJournal:LunaTurnJournal|undefined=journal?{run:(name,input,run,reconcile)=>journal.run(`redelivery:${name}`,input,run,reconcile),waitUntil:at=>journal.waitUntil(at)}:undefined
-   result=await runLunaTurn({database:meter.db,provider,context,observer,journal:recoveryJournal})
+   result=await runLunaTurn({database:meter.db,provider,context,observer,journal:recoveryJournal,maxTokens})
    const reconciled=tools.slice(firstTools).some(t=>t.name==='get_operation_status'&&t.result.ok&&t.result.data?.idempotent===true)
    faults.push({kind:'post_commit_redelivery',...lostCommit.evidence(),persistedOnce:lostCommit.evidence().commits===1,rejectedSend:true,reconciled,firstResult:first})
   }
@@ -266,7 +279,7 @@ async function certification(request:Request,env:Env,execution?:Execution){
  if(scenario.id===16&&turn===1&&(stateAfter.tables.luna_proposals??[]).some((p:any)=>p.status==='awaiting_confirmation'&&JSON.parse(p.payload_json).scheduled_at_ms===Date.parse('2026-10-07T17:00:00Z')))validation.violations.push('OCCUPIED_SLOT_PROPOSED')
  if(meter.unknown())validation.violations.push('CERTIFICATION_ACCOUNTING_UNCERTAIN')
  validation.passed=validation.violations.length===0
- const cumulative=ledger.usage(),turnMetrics={calls:cumulative.calls-baseline.calls,promptTokens:cumulative.input_tokens-baseline.input_tokens,completionTokens:cumulative.output_tokens-baseline.output_tokens,tokens:cumulative.input_tokens+cumulative.output_tokens-baseline.input_tokens-baseline.output_tokens,rowsRead:cumulative.totalReads-baseline.totalReads}
+ const cumulative=await ledger.settledUsage(),turnMetrics={calls:cumulative.calls-baseline.calls,promptTokens:cumulative.input_tokens-baseline.input_tokens,completionTokens:cumulative.output_tokens-baseline.output_tokens,tokens:cumulative.input_tokens+cumulative.output_tokens-baseline.input_tokens-baseline.output_tokens,rowsRead:cumulative.totalReads-baseline.totalReads}
  if(cumulative.reserved_calls||cumulative.reserved_tokens||cumulative.reserved_reads||cumulative.uncertain){validation.violations.push('CERTIFICATION_ACCOUNTING_UNCERTAIN');validation.passed=false}
  const evidence=sanitized({scenario_id:scenario.id,turn_id:turn,source_message_id:context.sourceMessageId,conversation_id:conversation,operationIds:result?.committedOperationIds??[],timestamp:new Date(started).toISOString(),model:env.LUNA_MODEL,
   configuration,sampleOnly:!!sample,metrics:meter.unknown()?null:turnMetrics,...(configuration.provider==='workers-ai'?{estimatedNeurons:glmNeurons(turnMetrics),neuronEstimateNotInvoice:true}:{}),readBreakdown:ledger.local,durationMs:Date.now()-started,messages:[{role:'user',content:body.message},{role:'assistant',content:result?.reply}],toolCalls:tools.map(t=>({id:t.id,name:t.name,args:t.args})),toolResults:tools.map(t=>({id:t.id,result:t.result,recovery:t.recovery})),

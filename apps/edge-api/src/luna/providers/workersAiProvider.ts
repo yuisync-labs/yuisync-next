@@ -4,6 +4,7 @@ import type { LunaMessage, LunaToolDefinition, LunaProviderResponse, LunaProvide
 import { sdkMessages } from './groqSdkProvider'
 import { matchesToolSchema } from '../toolSchema'
 import { LunaProviderError } from './providerError'
+import { compactToolSchema } from './compactSchema'
 
 export const GLM_FLASH_MODEL = '@cf/zai-org/glm-4.7-flash'
 type Input = { messages: readonly LunaMessage[]; tools: readonly LunaToolDefinition[]; maxCompletionTokens?: number; toolChoice?: 'auto' | 'required' }
@@ -59,7 +60,7 @@ export class WorkersAiProvider {
       const sdk = createWorkersAI({binding})
       const prompt = sdkMessages(input.messages, input.tools, false).map(m => m.role === 'system' ? m : {...m, content: typeof m.content === 'string' ? [{type: 'text', text: m.content}] : m.content}) as Prompt
       const result = await sdk(this.model, {chat_template_kwargs: {enable_thinking: false, clear_thinking: true}}).doGenerate({
-        prompt, tools: input.tools.map(t => ({type: 'function', name: t.name, description: t.description, inputSchema: t.parameters as JSONSchema7})),
+        prompt, tools: input.tools.map(t => ({type: 'function', name: t.name, description: t.description, inputSchema: compactToolSchema(t.parameters) as JSONSchema7})),
         toolChoice: {type: input.toolChoice ?? 'auto'}, maxOutputTokens: Math.max(128, Math.min(1200, input.maxCompletionTokens ?? 1200)),
         temperature: 0.2, abortSignal: controller.signal,
       })

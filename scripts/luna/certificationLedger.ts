@@ -62,6 +62,16 @@ export async function openCertificationLedger(raw:D1Database,roundId:string,fing
  const db=instrument(raw)
  const admin=(sql:string)=>statement(raw.prepare(sql),'admin')
  return{db,instrument,category:(next:ReadCategory)=>{category=next},local,usage:()=>({...latest,totalReads:latest.runtime_reads+latest.admin_reads+latest.setup_reads}),
+  async settledUsage(){
+   // Other browser inspections can settle after this instance's last UPDATE.
+   // Refresh through the same metered indexed path, never refund a reservation
+   // or replay SQL/model work. A genuinely lost result remains reserved.
+   for(let attempt=0;attempt<3;attempt++){
+    await admin('SELECT round_id FROM luna_cert_budget WHERE round_id=?1 AND fingerprint=?2').bind(roundId,fingerprint).first()
+    if(!latest.reserved_reads||latest.reserved_calls||latest.reserved_tokens||latest.uncertain)break
+   }
+   return {...latest,totalReads:latest.runtime_reads+latest.admin_reads+latest.setup_reads}
+  },
   async reserveModel(upper:number){
    if(!Number.isSafeInteger(upper)||upper<=0)throw new Error('CERTIFICATION_MODEL_RESERVATION_INVALID')
    const result=await admin(`UPDATE luna_cert_budget SET reserved_calls=reserved_calls+1,reserved_tokens=reserved_tokens+?3
