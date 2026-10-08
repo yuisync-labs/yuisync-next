@@ -97,6 +97,7 @@
         ,"LUNA_PROVIDER": "groq"
         ,"LUNA_MODEL": "openai/gpt-oss-20b"
         ,"LUNA_PLAYGROUND_ENABLED": "true"
+        ,"LUNA_INTERNAL_CHAT_ENABLED": "true"
         ,"LUNA_MAX_MODEL_CALLS_PER_TURN": "6"
         ,"LUNA_MAX_TOOL_CALLS_PER_TURN": "10"
         ,"LUNA_MAX_TOKENS_PER_TURN": "12000"
