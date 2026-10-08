@@ -1,4 +1,4 @@
-import { createWorkersAI } from 'workers-ai-provider'
+import type { createWorkersAI } from 'workers-ai-provider'
 import type { JSONSchema7 } from 'ai'
 import type { LunaMessage, LunaToolDefinition, LunaProviderResponse, LunaProviderUsage } from '../contracts'
 import { sdkMessages } from './groqSdkProvider'
@@ -55,6 +55,7 @@ export class WorkersAiProvider {
       }
       : typeof Reflect.get(target, key) === 'function' ? Reflect.get(target, key).bind(target) : Reflect.get(target, key)})
     try {
+      const {createWorkersAI} = await import('workers-ai-provider')
       const sdk = createWorkersAI({binding})
       const prompt = sdkMessages(input.messages, input.tools, false).map(m => m.role === 'system' ? m : {...m, content: typeof m.content === 'string' ? [{type: 'text', text: m.content}] : m.content}) as Prompt
       const result = await sdk(this.model, {chat_template_kwargs: {enable_thinking: false, clear_thinking: true}}).doGenerate({

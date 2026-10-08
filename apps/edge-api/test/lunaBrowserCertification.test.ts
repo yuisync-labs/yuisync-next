@@ -52,7 +52,7 @@ describe('Human-driven Luna certification',()=>{
   await initializeCertificationSchema(DB)
   await DB.prepare("INSERT INTO luna_cert_identity VALUES(1,'local-browser-fixture','isolated-luna-v2')").run()
   const fixtureDB={prepare:(sql:string)=>DB.prepare(sql),batch:(s:D1PreparedStatement[])=>DB.batch(s)} as D1Database
-  const bindings={...env,DB,AUTH_DB,LUNA_CERT_DB:fixtureDB,APP_ENV:'staging',EDGE_BETTER_AUTH_ENABLED:'true',BETTER_AUTH_SECRET:'fixture-only-long-test-secret-12345678901234567890123',LUNA_ENABLED:'false',LUNA_CERT_ENV:'isolated-luna-v2',LUNA_CERT_TOKEN:'fixture-token',LUNA_CERT_DATABASE_ID:'local-browser-fixture',RELEASE_SHA:'browser-fixture-sha',LUNA_CERT_GATES_SHA:'browser-fixture-sha',LUNA_CERT_OPERATOR_ID:id} as any
+  const bindings={...env,DB,AUTH_DB,LUNA_CERT_DB:fixtureDB,APP_ENV:'staging',EDGE_BETTER_AUTH_ENABLED:'true',BETTER_AUTH_SECRET:'fixture-only-long-test-secret-12345678901234567890123',LUNA_ENABLED:'false',LUNA_PROVIDER:'groq',LUNA_MODEL:'openai/gpt-oss-20b',LUNA_CERT_ENV:'isolated-luna-v2',LUNA_CERT_TOKEN:'fixture-token',LUNA_CERT_DATABASE_ID:'local-browser-fixture',RELEASE_SHA:'browser-fixture-sha',LUNA_CERT_GATES_SHA:'browser-fixture-sha',LUNA_CERT_OPERATOR_ID:id} as any
   const signIn=await handleBetterAuthRequest(new Request('https://fixture.invalid/api/auth/sign-in/email',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({email,password})}),bindings)
   expect(signIn?.status).toBe(200)
   const cookie=signIn!.headers.get('set-cookie')!.split(';')[0]

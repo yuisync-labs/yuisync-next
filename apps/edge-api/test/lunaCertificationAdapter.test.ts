@@ -75,7 +75,7 @@ describe('Isolated staging certification adapter — no external provider',()=>{
   const rows=await db.prepare('SELECT direction,COUNT(*) AS n FROM chat_messages WHERE tenant_id=?1 GROUP BY direction').bind('cert-local-history').all()
   expect(rows.results).toEqual([{direction:'inbound',n:40},{direction:'outbound',n:40}])
  })
- const fixtureEnv=()=>({...env,APP_ENV:'staging',LUNA_ENABLED:'false',LUNA_CERT_ENV:'isolated-luna-v2',LUNA_CERT_DATABASE_ID:'fixture-db-id',LUNA_CERT_TOKEN:'local-fake-bearer',LUNA_CERT_DB:db,DB:{} as D1Database,AUTH_DB:{} as D1Database,RELEASE_SHA:'fixture-sha'} as any)
+ const fixtureEnv=()=>({...env,APP_ENV:'staging',LUNA_ENABLED:'false',LUNA_PROVIDER:'groq',LUNA_MODEL:'openai/gpt-oss-20b',LUNA_CERT_ENV:'isolated-luna-v2',LUNA_CERT_DATABASE_ID:'fixture-db-id',LUNA_CERT_TOKEN:'local-fake-bearer',LUNA_CERT_DB:db,DB:{} as D1Database,AUTH_DB:{} as D1Database,RELEASE_SHA:'fixture-sha'} as any)
  const request=(path:string,body?:unknown,token='local-fake-bearer')=>new Request(`https://fixture.invalid/internal/luna-certification/${path}`,{method:body?'POST':'GET',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})})
  const ctx={} as ExecutionContext
  it('fails closed outside staging, when automation is enabled, or when fixture DB aliases application DB',async()=>{

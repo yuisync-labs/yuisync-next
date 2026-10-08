@@ -39,7 +39,10 @@ const {LUNA_DESIGNED_SCENARIOS:scenarios}=await import(new URL(`file:///${resolv
 for(const [name,bin,args] of [
  ['diff-check','git',['diff','--check','HEAD']],
  ['security-audit',process.execPath,[npm,'run','audit:ci']],
- ['offline',process.execPath,[npm,'run','test','--workspace','@yuisync/edge-api','--','test/lunaDesigned','--reporter=json','--outputFile',resolve(out,'offline.json')]],
+ // Serialize the designed integration fixtures on local Windows hosts. The
+ // assertions/timeouts remain unchanged; avoid CPU contention masquerading
+ // as an operational failure in the transport/race scenarios.
+ ['offline',process.execPath,[npm,'run','test','--workspace','@yuisync/edge-api','--','test/lunaDesigned','--maxWorkers=1','--reporter=json','--outputFile',resolve(out,'offline.json')]],
  ['test-all',process.execPath,[npm,'run','test:all']],
  ['cold-upgrades',process.execPath,[npm,'run','test','--workspace','@yuisync/edge-api','--','test/d1ColdUpgradeV25First.test.ts','test/d1ColdUpgradeV25Second.test.ts','test/d1MigrationUpgradeMatrix.test.ts']],
  ]){
