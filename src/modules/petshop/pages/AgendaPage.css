@@ -164,7 +164,6 @@
 
   .yuisync-agenda-daily-grid {
     min-width: 0;
-    grid-template-columns: 54px minmax(0, 1fr) !important;
   }
 
   .yuisync-agenda-period-toggle {

@@ -168,7 +168,7 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
     }
   }, [updateStatus])
 
-  const moveAppointment = useCallback(async (appointmentId, timeText) => {
+  const moveAppointment = useCallback(async (appointmentId, timeText, staffKey, staffName) => {
     const appointment = operationalAppointments.find((item) => String(item.id) === String(appointmentId))
     if (!appointment || appointment.status === 'concluido' || NON_OPERATIONAL_STATUSES.has(appointment.status)) return
     const match = String(timeText || '').match(/(\d{2}):(\d{2})/)
@@ -177,11 +177,18 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
     const [year, month, day] = selectedDate.split('-').map(Number)
     const target = new Date(year, month - 1, day, Number(match[1]), Number(match[2]), 0, 0)
     const current = new Date(appointment.scheduled_at)
-    if (!Number.isNaN(current.getTime()) && current.getTime() === target.getTime()) return
+    const changesStaff = staffKey !== undefined && staffKey !== (appointment.responsible_staff_key || '')
+    if (!Number.isNaN(current.getTime()) && current.getTime() === target.getTime() && !changesStaff) return
 
     setNotice('')
     try {
-      await update(appointmentId, { scheduled_at: target.toISOString() })
+      await update(appointmentId, {
+        scheduled_at: target.toISOString(),
+        ...(staffKey === undefined ? {} : {
+          responsible_staff_key: staffKey || null,
+          responsible_staff_name: staffKey ? staffName : null,
+        }),
+      })
       setNotice(`Agendamento movido para ${match[1]}:${match[2]}.`)
     } catch (error) {
       setNotice(error?.message || 'Horario indisponivel para este agendamento.')
@@ -205,7 +212,7 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
 
     const isDailyAgenda = () => agendaPeriod === 'day'
 
-    const slots = () => pageRoot.querySelectorAll('button[aria-label^="Agendar as "]')
+    const slots = () => pageRoot.querySelectorAll('button[aria-label^="Agendar as "]:not(:disabled)')
 
     const clearDropHighlight = () => {
       pageRoot.querySelector('[data-yuisync-drop-active]')?.removeAttribute('data-yuisync-drop-active')
@@ -599,7 +606,7 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
       const id = state.id
       lastDragAtRef.current = Date.now()
       settleDrop(state, slot)
-      if (id && time) void moveAppointment(id, time)
+      if (id && time) void moveAppointment(id, time, slot?.dataset.responsibleStaffKey, slot?.dataset.responsibleStaffName)
     }
 
     const onClickCapture = (event) => {

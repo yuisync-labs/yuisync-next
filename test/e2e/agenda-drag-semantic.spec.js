@@ -7,7 +7,7 @@ test('arrasta um agendamento no modo diario sem depender da cor do tema', async 
   await page.getByRole('button', { name: 'Explorar interface local' }).click()
   await page.goto('/petshop/agenda')
 
-  await page.getByRole('button', { name: 'Agendar as 08:00' }).click()
+  await page.getByRole('button', { name: /^Agendar as 08:00/ }).first().click()
   await expect(page.getByRole('heading', { name: 'Novo Agendamento' })).toBeVisible()
 
   await page.getByRole('option', { name: /L.via Martins/i }).click()
@@ -21,7 +21,7 @@ test('arrasta um agendamento no modo diario sem depender da cor do tema', async 
   await expect(page.getByRole('heading', { name: 'Novo Agendamento' })).toBeHidden()
 
   const card = page.locator('[data-yuisync-appointment-id]').first()
-  const target = page.getByRole('button', { name: 'Agendar as 08:50' })
+  const target = page.getByRole('button', { name: /^Agendar as 08:50/ }).first()
   await expect(card).toBeVisible()
   await expect(target).toBeVisible()
   await target.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }))

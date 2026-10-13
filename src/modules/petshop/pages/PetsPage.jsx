@@ -148,7 +148,7 @@ function PetModal({ pet, tutorPets = [], plans, subscription, onClose, onSave, o
   )
 }
 
-function PetDrawer({ pet, tutorPets = [], subscriptions = [], historyGroupKey, onClose, onEdit, onAddPet, onSelectPet, speciesIcon, serviceLabel, statusBadge }) {
+function PetDrawer({ pet, tutorPets = [], subscriptions = [], historyGroupKey, onClose, onEdit, onRemove, onAddPet, onSelectPet, speciesIcon, serviceLabel, statusBadge }) {
   const { appointments, load } = useAppointments()
   useEffect(() => { if (pet?.id) load({ date: '' }) }, [pet?.id])
   if (!pet) return null
@@ -180,7 +180,7 @@ function PetDrawer({ pet, tutorPets = [], subscriptions = [], historyGroupKey, o
       <div className="w-full max-w-lg bg-surface border-l border-[var(--border2)] flex flex-col overflow-hidden shadow-card">
         <div className="modal-header">
           <div className="flex items-center gap-3"><div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center"><Icon size={22} /></div><div><h2 className="font-display font-bold text-lg text-text">{pet.owner_name}</h2><p className="text-sm text-muted">{pet.pet_name || 'Pet sem nome'}{pet.breed ? ` - ${pet.breed}` : ''}</p><span className={`badge ${registrationBadge.cls} mt-2`}>{registrationBadge.label}</span></div></div>
-          <div className="flex items-center gap-2">{historyGroupKey && <button type="button" data-yuisync-client-history={historyGroupKey} className="btn btn-secondary btn-sm"><History size={13}/> Histórico</button>}<button type="button" data-yuisync-add-pet-action aria-label={`Adicionar outro pet para ${pet.owner_name || 'este tutor'}`} onClick={() => onAddPet(pet)} className="btn btn-primary btn-sm"><Plus size={13}/> Adicionar pet</button><button onClick={() => onEdit(pet)} className="btn btn-secondary btn-sm">Editar</button><button type="button" aria-label="Fechar detalhes" title="Fechar" onClick={onClose} className="text-muted hover:text-text"><X size={18} /></button></div>
+          <div className="flex items-center gap-2">{historyGroupKey && <button type="button" data-yuisync-client-history={historyGroupKey} className="btn btn-secondary btn-sm"><History size={13}/> Histórico</button>}<button type="button" data-yuisync-add-pet-action aria-label={`Adicionar outro pet para ${pet.owner_name || 'este tutor'}`} onClick={() => onAddPet(pet)} className="btn btn-primary btn-sm"><Plus size={13}/> Adicionar pet</button><button onClick={() => onEdit(pet)} className="btn btn-secondary btn-sm">Editar</button><button type="button" onClick={() => onRemove(pet)} className="btn btn-secondary btn-sm text-red-400"><Trash2 size={13}/> Remover pet</button><button type="button" aria-label="Fechar detalhes" title="Fechar" onClick={onClose} className="text-muted hover:text-text"><X size={18} /></button></div>
         </div>
         <div className="flex-1 overflow-y-auto p-6 space-y-5">
           <div className="rounded-2xl border border-[var(--border)] bg-card p-5"><p className="text-xs uppercase tracking-widest text-muted font-bold">Pets deste cliente</p><div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">{tutorPets.map((item) => (<button key={item.id} type="button" onClick={() => item.id !== pet.id && onSelectPet?.(item)} className={`rounded-xl border p-3 text-left ${item.id === pet.id ? 'border-emerald-500/45 bg-emerald-500/12' : 'border-[var(--border)] hover:border-emerald-500/30'}`}><p className="font-semibold text-text">{item.pet_name || 'Pet sem nome'}</p><p className="mt-1 text-xs text-muted">{item.breed || item.species || 'Sem raca informada'}</p></button>))}</div></div>
@@ -305,6 +305,9 @@ export default function PetsPage() {
   const [page, setPage] = useState(1)
   const [modalPet, setModalPet] = useState(null)
   const [drawerPet, setDrawerPet] = useState(null)
+  const [removingPet, setRemovingPet] = useState(null)
+  const [removing, setRemoving] = useState(false)
+  const [removeError, setRemoveError] = useState('')
   const [legacyImportModal, setLegacyImportModal] = useState(false)
   const [plans, setPlans] = useState([])
   const [subscriptions, setSubscriptions] = useState([])
@@ -441,7 +444,21 @@ export default function PetsPage() {
     await reloadAll()
   }
 
-  async function handleDelete(id) { await remove(id); if (drawerPet?.id === id) setDrawerPet(null) }
+  async function handleDelete() {
+    if (!removingPet || removing) return
+    setRemoving(true)
+    setRemoveError('')
+    try {
+      await remove(removingPet.id)
+      if (drawerPet?.id === removingPet.id) setDrawerPet(null)
+      if (modalPet?.id === removingPet.id) setModalPet(null)
+      setRemovingPet(null)
+    } catch (error) {
+      setRemoveError(error.message || 'Não foi possível remover o pet. Tente novamente.')
+    } finally {
+      setRemoving(false)
+    }
+  }
 
   return (
     <div className="page animate-fade-up space-y-6">
@@ -501,7 +518,29 @@ export default function PetsPage() {
       )}
 
       {modalPet !== null && <PetModal key={modalPet?.id || (modalPet?.adding_pet_for_tutor ? 'new-pet' : 'new-client')} pet={modalPet} tutorPets={modalPet?.id ? (tutorPetsByPetId.get(modalPet.id) || [modalPet]) : []} plans={plans.filter((plan) => plan.active)} subscription={modalPet?.id ? latestSubscriptionByClient.get(modalPet.id) : null} onSelectPet={setModalPet} onClose={() => setModalPet(null)} onSave={handleSave} />}
-      {drawerPet && <PetDrawer pet={drawerPet} historyGroupKey={tutorGroupKeyByPetId.get(drawerPet.id) || ''} tutorPets={tutorPetsByPetId.get(drawerPet.id) || [drawerPet]} subscriptions={subscriptionsByClient.get(drawerPet.id) || []} onSelectPet={setDrawerPet} onClose={() => setDrawerPet(null)} onAddPet={openAddPetForTutor} onEdit={(pet) => { setDrawerPet(null); setModalPet(pet) }} speciesIcon={speciesIcon} serviceLabel={serviceLabel} statusBadge={statusBadge} />}
+      {drawerPet && <PetDrawer pet={drawerPet} historyGroupKey={tutorGroupKeyByPetId.get(drawerPet.id) || ''} tutorPets={tutorPetsByPetId.get(drawerPet.id) || [drawerPet]} subscriptions={subscriptionsByClient.get(drawerPet.id) || []} onSelectPet={setDrawerPet} onClose={() => setDrawerPet(null)} onAddPet={openAddPetForTutor} onRemove={(pet) => { setRemoveError(''); setRemovingPet(pet) }} onEdit={(pet) => { setDrawerPet(null); setModalPet(pet) }} speciesIcon={speciesIcon} serviceLabel={serviceLabel} statusBadge={statusBadge} />}
+      {removingPet && (
+        <div className="modal-overlay theme-petshop-modal" onClick={(event) => !removing && event.target === event.currentTarget && setRemovingPet(null)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="remove-pet-title" onKeyDown={(event) => {
+            if (event.key === 'Escape' && !removing) { event.stopPropagation(); setRemovingPet(null) }
+            if (event.key === 'Tab') {
+              const buttons = [...event.currentTarget.querySelectorAll('button:not(:disabled)')]
+              const target = event.shiftKey ? buttons.at(-1) : buttons[0]
+              const edge = event.shiftKey ? buttons[0] : buttons.at(-1)
+              if (document.activeElement === edge) { event.preventDefault(); target?.focus() }
+            }
+          }} className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-card p-6 shadow-2xl">
+            <h2 id="remove-pet-title" className="text-lg font-bold text-text">Remover {removingPet.pet_name || 'pet'}?</h2>
+            <p className="mt-3 text-sm text-muted">Este pet sairá dos cadastros ativos. O histórico de atendimentos será preservado. Os outros pets deste tutor continuarão cadastrados.</p>
+            {(subscriptionsByClient.get(removingPet.id) || []).some((item) => ['active', 'paused'].includes(item.status)) && <p className="mt-3 text-sm text-amber-400">Este pet tem um pacote ativo ou pausado. A remoção do cadastro não cancela o pacote; gerencie-o na aba Planos.</p>}
+            {removeError && <p role="alert" className="mt-3 text-sm text-red-400">{removeError}</p>}
+            <div className="mt-5 flex justify-end gap-3">
+              <button type="button" autoFocus disabled={removing} onClick={() => setRemovingPet(null)} className="btn btn-secondary">Cancelar</button>
+              <button type="button" disabled={removing} onClick={handleDelete} className="btn btn-secondary text-red-400"><Trash2 size={14}/>{removing ? 'Removendo...' : 'Remover pet'}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {legacyImportModal && <LegacyClientsImportModal moduleId={activeModuleId} tenantId={auth?.activeTenantId} onClose={() => setLegacyImportModal(false)} onDone={reloadAll} />}
     </div>
   )

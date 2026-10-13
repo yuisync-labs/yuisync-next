@@ -28,6 +28,7 @@ import {
   resolvePetshopServiceDuration,
 } from '../../../../shared/petshopOperations'
 import './AgendaPage.css'
+import { agendaStaffColumns } from './agendaStaffColumns'
 import {
   appointmentServiceCodes,
   appointmentServiceGroup,
@@ -301,7 +302,7 @@ function ReceiptModal({ appt, onClose, serviceLabel, staffById = new Map() }) {
 }
 
 // ── Modal de Agendamento ──────────────────────────────────────────────────────
-function ApptModal({ appt, onClose, onCreate, onUpdate, onReceipt, onRefreshSubscriptions, onManagePets, pets, services = SERVICES, subscriptions = [], staff = [], deliveryStaff = [], transportOptions = [], serviceDurations, onSearchClients, appointments = [], slotCapacity = MANUAL_SLOT_CAPACITY }) {
+export function ApptModal({ appt, onClose, onCreate, onUpdate, onReceipt, onRefreshSubscriptions, onManagePets, pets, services = SERVICES, subscriptions = [], staff = [], deliveryStaff = [], transportOptions = [], serviceDurations, onSearchClients, appointments = [], slotCapacity = MANUAL_SLOT_CAPACITY }) {
   const isEdit = !!appt?.id
   const now = new Date()
   const defaultDate = appt?.date || isoDate(now)
@@ -342,7 +343,7 @@ function ApptModal({ appt, onClose, onCreate, onUpdate, onReceipt, onRefreshSubs
       : defaultTime,
     status: isEdit ? appt.status || 'agendado' : 'agendado',
     notes: isEdit ? appt.notes || '' : '',
-    responsible_staff_key: isEdit ? appt.responsible_staff_key || '' : '',
+    responsible_staff_key: appt.responsible_staff_key || '',
     delivery_staff_key: isEdit ? appt.delivery_staff_key || appt.motodog?.staff_key || '' : '',
     transport_mode: isEdit ? appt.motodog?.mode || 'cliente_leva' : 'cliente_leva',
     transport_address: isEdit ? appt.motodog?.address || '' : '',
@@ -1124,13 +1125,14 @@ function KanbanCard({ appt, serviceLabel, statusBadge, onEdit, onStatus, onRecei
 }
 
 // ── Página Principal ──────────────────────────────────────────────────────────
-function AgendaTimelineView({
+export function AgendaTimelineView({
   days,
   selectedDate,
   appointments,
   serviceLabel,
   statusBadge,
   staffById,
+  divideByStaff = false,
   onEdit,
   onReceipt,
   onCompletedAction,
@@ -1225,7 +1227,10 @@ function AgendaTimelineView({
     const slotCount = Math.max(1, Math.ceil((rangeEnd - rangeStart) / DAILY_SLOT_MINUTES))
     const slots = Array.from({ length: slotCount }, (_, index) => rangeStart + index * DAILY_SLOT_MINUTES)
     const timelineHeight = slots.length * DAILY_ROW_HEIGHT
-    const positioned = layoutAgendaOverlapClusters(blocking, appointmentIntervalBounds)
+    const columns = divideByStaff
+      ? agendaStaffColumns([...staffById.values()], dayItems)
+      : [{ key: '', name: 'Agendamentos' }]
+    const gridColumns = `76px repeat(${columns.length}, minmax(260px, 1fr))`
 
     return (
       <div className="bg-card border border-[var(--border)] rounded-xl2 overflow-hidden">
@@ -1241,7 +1246,13 @@ function AgendaTimelineView({
         </div>
 
         <div className="overflow-x-auto">
-          <div className="yuisync-agenda-daily-grid grid" style={{ gridTemplateColumns: '76px minmax(0, 1fr)' }}>
+          <div className="yuisync-agenda-daily-grid grid" style={{ gridTemplateColumns: gridColumns }}>
+            <div className="border-b border-[var(--border)] bg-surface/35 p-3 text-xs text-muted">Horário</div>
+            {columns.map((person) => (
+              <div key={person.key} className="border-b border-l border-[var(--border)] px-4 py-3 text-sm font-bold text-text">
+                {person.name}{person.active === false ? ' (inativa)' : ''}
+              </div>
+            ))}
             <div className="relative bg-surface/35" style={{ height: timelineHeight }}>
               {slots.map((minute, index) => (
                 <div
@@ -1254,42 +1265,53 @@ function AgendaTimelineView({
               ))}
             </div>
 
-            <div className="relative border-l border-[var(--border)]" style={{ height: timelineHeight }}>
-              {slots.map((minute, index) => (
-                <button
-                  key={`slot-${minute}`}
-                  type="button"
-                  aria-label={`Agendar as ${timeFromMinutes(minute)}`}
-                  title={`Novo agendamento as ${timeFromMinutes(minute)}`}
-                  onClick={() => onCreateAt(day, timeFromMinutes(minute))}
-                  className="absolute inset-x-0 border-b border-[var(--border)] text-left hover:bg-emerald-500/[0.04]"
-                  style={{ top: index * DAILY_ROW_HEIGHT, height: DAILY_ROW_HEIGHT }}
-                />
-              ))}
+            {columns.map((person) => {
+              const columnAppointments = divideByStaff
+                ? blocking.filter((item) => (item.responsible_staff_key || '') === person.key)
+                : blocking
+              const positioned = layoutAgendaOverlapClusters(columnAppointments, appointmentIntervalBounds)
+              return (
+                <div key={person.key} data-agenda-staff-column={person.key} className="relative border-l border-[var(--border)]" style={{ height: timelineHeight }}>
+                  {slots.map((minute, index) => (
+                    <button
+                      key={`slot-${minute}`}
+                      type="button"
+                      aria-label={`Agendar as ${timeFromMinutes(minute)}${divideByStaff ? ` com ${person.name}` : ''}`}
+                      data-responsible-staff-key={divideByStaff ? person.key : undefined}
+                      data-responsible-staff-name={divideByStaff ? person.name : undefined}
+                      disabled={person.active === false}
+                      title={person.active === false ? 'Esteticista inativa: altere o responsável para reagendar' : `Novo agendamento as ${timeFromMinutes(minute)}`}
+                      onClick={() => onCreateAt(day, timeFromMinutes(minute), divideByStaff ? person.key : '')}
+                      className="absolute inset-x-0 border-b border-[var(--border)] text-left hover:bg-emerald-500/[0.04]"
+                      style={{ top: index * DAILY_ROW_HEIGHT, height: DAILY_ROW_HEIGHT }}
+                    />
+                  ))}
 
-              {positioned.map(({ item: appt, bounds, lane, laneCount }) => {
-                if (!bounds) return null
-                const startMinute = minutesOfDay(bounds.start)
-                const endMinute = minutesOfDay(bounds.end)
-                const top = ((startMinute - rangeStart) / DAILY_SLOT_MINUTES) * DAILY_ROW_HEIGHT + 2
-                const height = Math.max(34, ((endMinute - startMinute) / DAILY_SLOT_MINUTES) * DAILY_ROW_HEIGHT - 4)
-                const laneWidth = 100 / Math.max(1, laneCount)
-                return (
-                  <div
-                    key={appt.id}
-                    className="absolute z-10 overflow-hidden rounded-lg"
-                    style={{
-                      top,
-                      height,
-                      left: `calc(${lane * laneWidth}% + 4px)`,
-                      width: `calc(${laneWidth}% - 8px)`,
-                    }}
-                  >
-                    {appointmentCard(appt)}
-                  </div>
-                )
-              })}
-            </div>
+                  {positioned.map(({ item: appt, bounds, lane, laneCount }) => {
+                    if (!bounds) return null
+                    const startMinute = minutesOfDay(bounds.start)
+                    const endMinute = minutesOfDay(bounds.end)
+                    const top = ((startMinute - rangeStart) / DAILY_SLOT_MINUTES) * DAILY_ROW_HEIGHT + 2
+                    const height = Math.max(34, ((endMinute - startMinute) / DAILY_SLOT_MINUTES) * DAILY_ROW_HEIGHT - 4)
+                    const laneWidth = 100 / Math.max(1, laneCount)
+                    return (
+                      <div
+                        key={appt.id}
+                        className="absolute z-10 overflow-hidden rounded-lg"
+                        style={{
+                          top,
+                          height,
+                          left: `calc(${lane * laneWidth}% + 4px)`,
+                          width: `calc(${laneWidth}% - 8px)`,
+                        }}
+                      >
+                        {appointmentCard(appt)}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })}
           </div>
         </div>
 
@@ -1542,7 +1564,7 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
     }
     load({ date: isoDate(selectedDate), status: filterStatus || undefined })
   }
-  const openSlotModal = (day, timeOrHour) => {
+  const openSlotModal = (day, timeOrHour, responsibleStaffKey = '') => {
     const time = typeof timeOrHour === 'number'
       ? `${String(timeOrHour).padStart(2, '0')}:00`
       : String(timeOrHour || '08:00')
@@ -1550,6 +1572,7 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
       serviceGroup: activeAgendaTab,
       date: isoDate(day),
       time,
+      responsible_staff_key: responsibleStaffKey,
     })
   }
   const openAppointmentPanel = (appointment) => {
@@ -1735,6 +1758,7 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
         </div>
       ) : view === 'agenda' ? (
         <AgendaTimelineView
+          divideByStaff={activeAgendaTab === 'banho_tosa'}
           days={agendaDays}
           selectedDate={selectedDate}
           appointments={displayed}

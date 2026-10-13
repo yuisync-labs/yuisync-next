@@ -142,7 +142,7 @@ test('Agenda hospedada persiste criacao, edicao, responsavel, concorrencia, drag
   await page.goto('/petshop/agenda')
   await settlePage(page)
 
-  await page.getByRole('button', { name: 'Agendar as 08:00' }).click()
+  await page.getByRole('button', { name: /^Agendar as 08:00/ }).first().click()
   await expect(page.getByRole('heading', { name: 'Novo Agendamento' })).toBeVisible()
 
   await page.getByRole('option', { name: new RegExp(fixture.tutorName, 'i') }).click()
@@ -199,13 +199,13 @@ test('Agenda hospedada persiste criacao, edicao, responsavel, concorrencia, drag
   // pequeno intervalo em que o card ja esta visivel, mas ainda nao e movivel.
   card = movableAgendaCard(page, fixture.petName)
   await expect(card).toBeVisible({ timeout: 30_000 })
-  const target = page.getByRole('button', { name: 'Agendar as 08:50' })
+  const target = page.getByRole('button', { name: /^Agendar as 08:50/ }).first()
   await expect(target).toBeVisible({ timeout: 15_000 })
   await target.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }))
 
   await card.evaluate((element, targetLabel) => {
     const targetSlot = [...document.querySelectorAll('button')]
-      .find((candidate) => candidate.getAttribute('aria-label') === targetLabel)
+      .find((candidate) => candidate.getAttribute('aria-label')?.startsWith(targetLabel))
     if (!targetSlot) throw new Error(`E2E_AGENDA_TARGET_NOT_FOUND:${targetLabel}`)
 
     const from = element.getBoundingClientRect()

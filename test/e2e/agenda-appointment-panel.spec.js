@@ -5,7 +5,7 @@ async function createAppointment(page) {
   await page.getByRole('button', { name: 'Explorar interface local' }).click()
   await page.goto('/petshop/agenda')
 
-  await page.getByRole('button', { name: 'Agendar as 08:00' }).click()
+  await page.getByRole('button', { name: /^Agendar as 08:00/ }).first().click()
   await expect(page.getByRole('heading', { name: 'Novo Agendamento' })).toBeVisible()
   await page.getByRole('option', { name: /L.via Martins/i }).click()
 
@@ -48,7 +48,7 @@ test('no desktop a agenda continua renderizada enquanto o painel esta aberto', a
 
   await page.locator('[data-yuisync-native-agenda-card="true"] .yuisync-card-content').first().click()
   await expect(page.locator('[data-qa="agenda-appointment-panel"]')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Agendar as 08:50' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Agendar as 08:50/ }).first()).toBeVisible()
 })
 
 test('no mobile o painel ocupa a viewport sem remover a agenda do DOM', async ({ page }) => {
@@ -63,7 +63,7 @@ test('no mobile o painel ocupa a viewport sem remover a agenda do DOM', async ({
   expect(bounds).toBeTruthy()
   expect(bounds.width).toBeLessThanOrEqual(390)
   expect(bounds.x).toBeGreaterThanOrEqual(0)
-  await expect(page.getByRole('button', { name: 'Agendar as 08:50' })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: /^Agendar as 08:50/ }).first()).toHaveCount(1)
 
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
