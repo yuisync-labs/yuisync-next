@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AlertCircle, Calendar as CalendarIcon, Cat, Dog, Fish, Grid, History, List as ListIcon, PawPrint, Phone, Plus, RefreshCw, Search, Trash2, Upload, Weight, X } from 'lucide-react'
+import { Card } from '../../../components/ui'
 import { useClients } from '../../../shared/hooks/useClients'
 import { useAppointments } from '../../../shared/hooks/useAppointments'
 import { usePetshopAdvanced } from '../hooks/usePetshopAdvanced'
@@ -521,7 +522,7 @@ export default function PetsPage() {
       {drawerPet && <PetDrawer pet={drawerPet} historyGroupKey={tutorGroupKeyByPetId.get(drawerPet.id) || ''} tutorPets={tutorPetsByPetId.get(drawerPet.id) || [drawerPet]} subscriptions={subscriptionsByClient.get(drawerPet.id) || []} onSelectPet={setDrawerPet} onClose={() => setDrawerPet(null)} onAddPet={openAddPetForTutor} onRemove={(pet) => { setRemoveError(''); setRemovingPet(pet) }} onEdit={(pet) => { setDrawerPet(null); setModalPet(pet) }} speciesIcon={speciesIcon} serviceLabel={serviceLabel} statusBadge={statusBadge} />}
       {removingPet && (
         <div className="modal-overlay theme-petshop-modal" onClick={(event) => !removing && event.target === event.currentTarget && setRemovingPet(null)}>
-          <div role="dialog" aria-modal="true" aria-labelledby="remove-pet-title" onKeyDown={(event) => {
+          <Card role="dialog" aria-modal="true" aria-labelledby="remove-pet-title" onKeyDown={(event) => {
             if (event.key === 'Escape' && !removing) { event.stopPropagation(); setRemovingPet(null) }
             if (event.key === 'Tab') {
               const buttons = [...event.currentTarget.querySelectorAll('button:not(:disabled)')]
@@ -529,7 +530,7 @@ export default function PetsPage() {
               const edge = event.shiftKey ? buttons[0] : buttons.at(-1)
               if (document.activeElement === edge) { event.preventDefault(); target?.focus() }
             }
-          }} className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-card p-6 shadow-2xl">
+          }} className="w-full max-w-md p-6 shadow-2xl">
             <h2 id="remove-pet-title" className="text-lg font-bold text-text">Remover {removingPet.pet_name || 'pet'}?</h2>
             <p className="mt-3 text-sm text-muted">Este pet sairá dos cadastros ativos. O histórico de atendimentos será preservado. Os outros pets deste tutor continuarão cadastrados.</p>
             {(subscriptionsByClient.get(removingPet.id) || []).some((item) => ['active', 'paused'].includes(item.status)) && <p className="mt-3 text-sm text-amber-400">Este pet tem um pacote ativo ou pausado. A remoção do cadastro não cancela o pacote; gerencie-o na aba Planos.</p>}
@@ -538,7 +539,7 @@ export default function PetsPage() {
               <button type="button" autoFocus disabled={removing} onClick={() => setRemovingPet(null)} className="btn btn-secondary">Cancelar</button>
               <button type="button" disabled={removing} onClick={handleDelete} className="btn btn-secondary text-red-400"><Trash2 size={14}/>{removing ? 'Removendo...' : 'Remover pet'}</button>
             </div>
-          </div>
+          </Card>
         </div>
       )}
       {legacyImportModal && <LegacyClientsImportModal moduleId={activeModuleId} tenantId={auth?.activeTenantId} onClose={() => setLegacyImportModal(false)} onDone={reloadAll} />}
