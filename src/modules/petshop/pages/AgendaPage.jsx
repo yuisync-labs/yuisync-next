@@ -1253,7 +1253,7 @@ export function AgendaTimelineView({
                 {person.name}{person.active === false ? ' (inativa)' : ''}
               </div>
             ))}
-            <div className="relative bg-surface/35" style={{ height: timelineHeight }}>
+            <div data-agenda-time-column="true" className="relative bg-surface/35" style={{ height: timelineHeight }}>
               {slots.map((minute, index) => (
                 <div
                   key={`label-${minute}`}

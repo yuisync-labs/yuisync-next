@@ -345,7 +345,7 @@ const applyCardPresentation = () => {
   })
 }
 
-function AgendaFluidRefinement() {
+export function AgendaFluidRefinement() {
   useEffect(() => {
     let frame = 0
     let lunchPreference = null
@@ -405,18 +405,20 @@ function AgendaFluidRefinement() {
     }
 
     const applyLunchGap = () => {
-      const allSlots = [...document.querySelectorAll('button[aria-label^="Agendar as "]')]
+      const allSlots = [...document.querySelectorAll('.yuisync-agenda-daily-grid button[aria-label^="Agendar as "]')]
       const initialStart = allSlots.find((slot) => minutesFromClock(slot.getAttribute('aria-label')) === LUNCH_START_MINUTES)
       const initialEnd = allSlots.find((slot) => minutesFromClock(slot.getAttribute('aria-label')) === LUNCH_END_MINUTES)
       if (!initialStart || !initialEnd || initialStart.parentElement !== initialEnd.parentElement) return
 
       const contentColumn = initialStart.parentElement
-      const labelColumn = contentColumn.previousElementSibling
       const grid = contentColumn.parentElement
+      const labelColumn = grid?.querySelector('[data-agenda-time-column]') || contentColumn.previousElementSibling
       if (!labelColumn || !grid) return
+      const contentColumns = [...grid.querySelectorAll('[data-agenda-staff-column]')]
+      if (!contentColumns.length) contentColumns.push(contentColumn)
 
       resetLunchColumn(labelColumn)
-      resetLunchColumn(contentColumn)
+      contentColumns.forEach((contentColumn) => resetLunchColumn(contentColumn))
 
       const slots = [...contentColumn.querySelectorAll('button[aria-label^="Agendar as "]')]
       const startSlot = slots.find((slot) => minutesFromClock(slot.getAttribute('aria-label')) === LUNCH_START_MINUTES)
@@ -427,7 +429,7 @@ function AgendaFluidRefinement() {
       const endTop = Number(endSlot.style.top.replace('px', ''))
       if (!Number.isFinite(startTop) || !Number.isFinite(endTop) || endTop <= startTop) return
 
-      const lunchInUse = [...contentColumn.querySelectorAll('.yuisync-agenda-card-surface')].some((card) => {
+      const lunchInUse = [...grid.querySelectorAll('.yuisync-agenda-card-surface')].some((card) => {
         const interval = intervalFromCard(card)
         return interval && interval.start < LUNCH_END_MINUTES && interval.end > LUNCH_START_MINUTES
       })
@@ -445,9 +447,10 @@ function AgendaFluidRefinement() {
       }
       if (toggle) {
         toggle.disabled = lunchInUse
-        toggle.textContent = lunchInUse
+        const toggleText = lunchInUse
           ? '11:00–13:00 em uso'
           : collapsed ? 'Mostrar 11:00–13:00' : 'Recolher 11:00–13:00'
+        if (toggle.textContent !== toggleText) toggle.textContent = toggleText
         toggle.onclick = () => {
           if (lunchInUse) return
           lunchPreference = collapsed ? 'expanded' : 'collapsed'
@@ -457,12 +460,12 @@ function AgendaFluidRefinement() {
 
       if (!collapsed) {
         labelColumn.querySelector('[data-yuisync-lunch-marker="label"]')?.remove()
-        contentColumn.querySelector('[data-yuisync-lunch-marker="content"]')?.remove()
+        contentColumns.forEach((column) => column.querySelector('[data-yuisync-lunch-marker="content"]')?.remove())
         grid.dataset.yuisyncLunchCollapsed = 'false'
         return
       }
 
-      ;[labelColumn, contentColumn].forEach((column) => {
+      ;[labelColumn, ...contentColumns].forEach((column) => {
         const originalHeight = Number(column.style.height.replace('px', ''))
         if (Number.isFinite(originalHeight)) {
           rememberAndApply(column, 'height', `${Math.max(LUNCH_COLLAPSED_HEIGHT, originalHeight - shift)}px`)
@@ -481,7 +484,7 @@ function AgendaFluidRefinement() {
       })
 
       ensureMarker(labelColumn, 'label', startTop)
-      ensureMarker(contentColumn, 'content', startTop)
+      contentColumns.forEach((column) => ensureMarker(column, 'content', startTop))
       grid.dataset.yuisyncLunchCollapsed = 'true'
     }
 
@@ -511,6 +514,9 @@ function AgendaFluidRefinement() {
       document.removeEventListener('click', onClickCapture, true)
       window.removeEventListener('resize', schedule)
       if (frame) window.cancelAnimationFrame(frame)
+      document.querySelectorAll('.yuisync-agenda-daily-grid').forEach((grid) => {
+        ;[...grid.children].forEach(resetLunchColumn)
+      })
       document.querySelectorAll('[data-yuisync-lunch-toggle]').forEach((node) => node.remove())
       document.querySelectorAll('[data-yuisync-lunch-marker]').forEach((node) => node.remove())
       document.querySelectorAll('button[aria-label^="Agendar as "]').forEach((slot) => restoreManaged(slot))
