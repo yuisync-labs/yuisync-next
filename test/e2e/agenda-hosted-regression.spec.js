@@ -103,25 +103,12 @@ function movableAgendaCard(page, petName) {
     .first()
 }
 
-async function openAppointmentPanel(page, petName) {
-  const card = agendaCard(page, petName)
-  await expect(card).toBeVisible({ timeout: 30_000 })
-  await card.click()
-  const panelContent = page.locator('[data-qa="agenda-appointment-panel"]')
-  await expect(panelContent).toBeVisible({ timeout: 15_000 })
-
-  // The appointment content and its action footer are siblings inside the
-  // responsive dialog. Scope subsequent actions to the complete dialog so
-  // footer buttons such as Editar/Confirmar remain reachable.
-  const dialog = page.getByRole('dialog', { name: petName, exact: true })
-  await expect(dialog).toBeVisible({ timeout: 15_000 })
-  return dialog
-}
-
 async function openEditModal(page, petName) {
-  const panel = await openAppointmentPanel(page, petName)
-  await panel.getByRole('button', { name: 'Editar', exact: true }).click()
+  const edit = page.getByRole('button').filter({ hasText: petName }).first()
+  await expect(edit).toBeVisible({ timeout: 30_000 })
+  await edit.click()
   await expect(page.getByRole('heading', { name: 'Editar Agendamento' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('[data-qa="agenda-appointment-panel"]')).toHaveCount(0)
 }
 
 async function reloadAgenda(page, petName) {
@@ -241,36 +228,16 @@ test('Agenda hospedada persiste criacao, edicao, responsavel, concorrencia, drag
   await reloadAgenda(page, fixture.petName)
   await expect(agendaCard(page, fixture.petName)).toContainText('08:50')
 
-  // Percorre a maquina de estados operacional ate a conclusao real.
-  let panel = await openAppointmentPanel(page, fixture.petName)
-  await panel.getByRole('button', { name: 'Confirmar', exact: true }).click()
-  await expect(panel.getByRole('button', { name: 'Iniciar', exact: true })).toBeVisible({ timeout: 30_000 })
-  await panel.getByRole('button', { name: 'Iniciar', exact: true }).click()
-  await expect(panel.getByRole('button', { name: 'Concluir', exact: true })).toBeVisible({ timeout: 30_000 })
-  const dialogHandled = new Promise((resolve, reject) => {
-    page.once('dialog', async (dialog) => {
-      try {
-        const message = dialog.message()
-        await dialog.accept()
-        resolve(message)
-      } catch (error) {
-        reject(error)
-      }
-    })
-  })
-  const [, confirmationMessage] = await Promise.all([
-    panel.getByRole('button', { name: 'Concluir', exact: true }).click(),
-    dialogHandled,
-  ])
-  expect(confirmationMessage).toMatch(/O serviço, valores e cliente\/pet estão preenchidos corretamente\?/i)
-
-  await expect(page.getByRole('heading', { name: 'Ficha / comprovante' })).toBeVisible({ timeout: 30_000 })
-  await page.getByRole('button', { name: 'Fechar impressao' }).click()
-
-  await reloadAgenda(page, fixture.petName)
-  panel = await openAppointmentPanel(page, fixture.petName)
-  await expect(panel.getByText(/Conclu[ií]do/i).first()).toBeVisible({ timeout: 15_000 })
-  await expect(panel.getByRole('button', { name: 'Confirmar', exact: true })).toHaveCount(0)
-  await expect(panel.getByRole('button', { name: 'Iniciar', exact: true })).toHaveCount(0)
-  await expect(panel.getByRole('button', { name: 'Concluir', exact: true })).toHaveCount(0)
+  // Os estados operacionais continuam editaveis sem o resumo lateral.
+  for (const status of ['confirmado', 'em_andamento', 'concluido']) {
+    await openEditModal(page, fixture.petName)
+    await page.getByLabel('Status do agendamento').selectOption(status)
+    await page.getByRole('button', { name: 'Salvar alteracoes', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Editar Agendamento' })).toBeHidden({ timeout: 30_000 })
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await settlePage(page)
+  }
+  await openEditModal(page, fixture.petName)
+  await expect(page.getByLabel('Status do agendamento')).toHaveValue('concluido')
+  await page.getByRole('button', { name: 'Fechar agendamento' }).click()
 })

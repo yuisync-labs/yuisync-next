@@ -16,55 +16,23 @@ async function createAppointment(page) {
   await expect(page.getByRole('heading', { name: 'Novo Agendamento' })).toBeHidden()
 }
 
-test('abre o painel do atendimento sem perder filtros e fecha por Escape', async ({ page }) => {
+test('clique no atendimento abre edicao diretamente e preserva filtros ao fechar', async ({ page }) => {
   await createAppointment(page)
-
   const search = page.getByLabel('Buscar pet ou tutor')
   await search.fill('Martins')
-
-  const cardContent = page.locator('[data-yuisync-native-agenda-card="true"] .yuisync-card-content').first()
-  await expect(cardContent).toBeVisible()
-  await cardContent.click()
-
-  const panel = page.locator('[data-qa="agenda-appointment-panel"]')
-  await expect(panel).toBeVisible()
-  await expect(panel.getByText('Atendimento', { exact: true })).toBeVisible()
-  await expect(panel.getByText('Serviços', { exact: true })).toBeVisible()
-  await expect(panel.getByText('Responsável', { exact: true })).toBeVisible()
-  await expect(panel.getByText('Pacote', { exact: true })).toBeVisible()
-  await expect(panel.getByText('Pagamento', { exact: true })).toBeVisible()
-  await expect(panel.getByText('Histórico do cliente', { exact: true })).toBeVisible()
-
-  const close = page.getByRole('button', { name: 'Fechar painel' })
-  await expect(close).toBeFocused()
-  await page.keyboard.press('Escape')
-  await expect(panel).toHaveCount(0)
+  await page.locator('[data-yuisync-native-agenda-card="true"] .yuisync-card-content').first().click()
+  await expect(page.getByRole('heading', { name: 'Editar Agendamento' })).toBeVisible()
+  await expect(page.locator('[data-qa="agenda-appointment-panel"]')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Fechar agendamento' }).click()
+  await expect(page.getByRole('heading', { name: 'Editar Agendamento' })).toHaveCount(0)
   await expect(search).toHaveValue('Martins')
 })
 
-test('no desktop a agenda continua renderizada enquanto o painel esta aberto', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name === 'mobile', 'A validacao lado a lado e especifica do desktop.')
-  await createAppointment(page)
-
-  await page.locator('[data-yuisync-native-agenda-card="true"] .yuisync-card-content').first().click()
-  await expect(page.locator('[data-qa="agenda-appointment-panel"]')).toBeVisible()
-  await expect(page.getByRole('button', { name: /^Agendar as 08:50/ }).first()).toBeVisible()
-})
-
-test('no mobile o painel ocupa a viewport sem remover a agenda do DOM', async ({ page }) => {
+test('no mobile o clique tambem abre o formulario de edicao diretamente', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await createAppointment(page)
-
   await page.locator('[data-yuisync-native-agenda-card="true"] .yuisync-card-content').first().click()
-  const panel = page.locator('[data-qa="agenda-appointment-panel"]')
-  await expect(panel).toBeVisible()
-
-  const bounds = await panel.locator('xpath=..').boundingBox()
-  expect(bounds).toBeTruthy()
-  expect(bounds.width).toBeLessThanOrEqual(390)
-  expect(bounds.x).toBeGreaterThanOrEqual(0)
-  await expect(page.getByRole('button', { name: /^Agendar as 08:50/ }).first()).toHaveCount(1)
-
-  await page.keyboard.press('Escape')
-  await expect(panel).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Editar Agendamento' })).toBeVisible()
+  await expect(page.locator('[data-qa="agenda-appointment-panel"]')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Fechar agendamento' }).click()
 })

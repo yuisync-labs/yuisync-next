@@ -49,7 +49,6 @@ import {
 import { normalizeTransportOptions } from './agendaOperationalCore'
 import { appointmentCheckoutTotals, appointmentNeedsPayment, queueAppointmentCheckout } from './appointmentCheckoutFlow'
 import { AgendaBillingLabel } from '../components/AgendaBillingLabel'
-import { AgendaAppointmentPanel } from '../components/AgendaAppointmentPanel'
 import { appointmentPackagePresentation } from '../lib/appointmentBillingPresentation'
 import { appointmentRequiresGroomingMachineNumber } from '../lib/groomingMachinePolicy'
 import { buildAgendaStats } from '../lib/agendaStats'
@@ -1538,8 +1537,6 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [modal, setModal]           = useState(null)   // null | {} | {appt}
   const [receipt, setReceipt]       = useState(null) // appt to print
-  const [selectedAppointmentId, setSelectedAppointmentId] = useState(null)
-  const agendaScrollPositionRef = useRef(null)
   const view = 'agenda'
   const [localAgendaPeriod, setLocalAgendaPeriod] = useState('day') // 'day' | 'week'
   const agendaPeriod = controlledAgendaPeriod ?? localAgendaPeriod
@@ -1605,10 +1602,6 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
     ...acc,
     [tab.id]: appointments.filter((appointment) => getAppointmentServiceGroup(appointment, agendaServices) === tab.id).length,
   }), {})
-  const selectedAppointment = useMemo(
-    () => appointments.find((appointment) => String(appointment.id) === String(selectedAppointmentId || '')) || null,
-    [appointments, selectedAppointmentId],
-  )
 
   const displayed = tabbedAppointments.filter(a => {
     if (!search) return true
@@ -1640,33 +1633,6 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
       time,
       responsible_staff_key: responsibleStaffKey,
     })
-  }
-  const openAppointmentPanel = (appointment) => {
-    if (!appointment?.id) return
-    if (!selectedAppointmentId) {
-      const scroller = document.querySelector('main')
-      agendaScrollPositionRef.current = scroller ? scroller.scrollTop : null
-    }
-    setSelectedAppointmentId(appointment.id)
-  }
-  const closeAppointmentPanel = () => {
-    setSelectedAppointmentId(null)
-    const savedScrollTop = agendaScrollPositionRef.current
-    agendaScrollPositionRef.current = null
-    if (savedScrollTop === null || savedScrollTop === undefined) return
-    requestAnimationFrame(() => {
-      const scroller = document.querySelector('main')
-      if (scroller) scroller.scrollTop = savedScrollTop
-    })
-  }
-  const completeAppointmentWithMachine = async (appointmentId, groomingMachineNo) => {
-    if (!window.confirm('Concluir este atendimento?')) return null
-    const updated = await update(appointmentId, {
-      status: 'concluido',
-      grooming_machine_no: groomingMachineNo,
-    })
-    if (updated) handleCompletedAction(updated)
-    return updated
   }
   const handleStatusChange = async (appointmentId, status) => {
     const updated = await updateStatus(appointmentId, status)
@@ -1794,7 +1760,7 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
       </div>
 
       {/* Content */}
-      <div className={selectedAppointment ? 'xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(340px,420px)] xl:items-start xl:gap-4' : ''}>
+      <div>
         <div className="min-w-0" aria-busy={loading || undefined}>
           {loading && appointments.length > 0 && (
             <div role="status" aria-live="polite" className="mb-3 flex items-center gap-2 rounded-lg border border-[var(--border2)] bg-surface px-3 py-2 text-xs text-muted">
@@ -1831,7 +1797,7 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
           serviceLabel={serviceLabel}
           statusBadge={statusBadge}
           staffById={staffById}
-          onEdit={openAppointmentPanel}
+          onEdit={(appointment) => setModal(appointment)}
           onReceipt={setReceipt}
           onCompletedAction={handleCompletedAction}
           needsPayment={needsPayment}
@@ -1944,21 +1910,7 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
       )}
           </div>
         </div>
-        {selectedAppointment && (
-          <AgendaAppointmentPanel
-            appointment={selectedAppointment}
-            staffById={staffById}
-            serviceLabel={serviceLabel}
-            statusBadge={statusBadge}
-            transportOptions={transportOptions}
-            needsPayment={needsPayment}
-            onClose={closeAppointmentPanel}
-            onEdit={(appointment) => setModal(appointment)}
-            onStatus={handleStatusChange}
-            onCompleteWithMachine={completeAppointmentWithMachine}
-            onCompletedAction={handleCompletedAction}
-          />
-        )}
+
       </div>
 
       {/* Modals */}
