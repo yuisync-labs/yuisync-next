@@ -208,12 +208,10 @@ test('ordem PetBot persiste e exibe o ponto de referência da entrega', async ()
   assert.match(migration, /update public\.service_delivery_orders o/)
 })
 
-test('comprovantes operacionais usam a camada compartilhada com 58mm, 80mm e A4', async () => {
+test('comprovantes usam formatos compartilhados e agenda preserva impressao termica do legado', async () => {
   const receipt = await read('src/lib/receiptPrint.js')
   const thermal = await read('src/lib/thermalPrint.js')
   const receiptFiles = [
-    'src/modules/petshop/pages/AgendaPage.jsx',
-    'src/modules/petshop/pages/AgendaResolvedPage.jsx',
     'src/modules/petshop/pages/VendasPage.jsx',
     'src/modules/petshop/pages/OrdensEntregaPage.jsx',
     'src/modules/petshop/pages/EquipePage.jsx',
@@ -222,6 +220,11 @@ test('comprovantes operacionais usam a camada compartilhada com 58mm, 80mm e A4'
   for (const file of receiptFiles) {
     const source = await read(file)
     assert.match(source, /openReceiptPreview/)
+  }
+
+  for (const file of ['src/modules/petshop/pages/AgendaPage.jsx', 'src/modules/petshop/pages/AgendaResolvedPage.jsx']) {
+    const source = await read(file)
+    assert.match(source, /from '\.\.\/\.\.\/\.\.\/lib\/agendaReceiptPrint'/)
   }
 
   assert.match(receipt, /'58': \{ label: '58 mm'/)
