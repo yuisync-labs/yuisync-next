@@ -73,6 +73,7 @@ jobs:
           npm run check:frontend-compat-ratchet --
           --base "${{ github.event.pull_request.base.sha || github.event.before }}"
       - run: npm run test:contracts
+      - run: node --test test/agendaMigration.test.mjs
       - run: npm run test
       - run: npm run test:petbot
       - run: npm run test:luna:unit

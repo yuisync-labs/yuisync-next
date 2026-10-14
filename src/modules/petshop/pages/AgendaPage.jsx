@@ -1228,7 +1228,7 @@ export function AgendaTimelineView({
     const slots = Array.from({ length: slotCount }, (_, index) => rangeStart + index * DAILY_SLOT_MINUTES)
     const timelineHeight = slots.length * DAILY_ROW_HEIGHT
     const columns = divideByStaff
-      ? agendaStaffColumns([...staffById.values()], dayItems)
+      ? agendaStaffColumns([...staffById.values()], blocking)
       : [{ key: '', name: 'Agendamentos' }]
     const gridColumns = `76px repeat(${columns.length}, minmax(260px, 1fr))`
 

@@ -47,3 +47,16 @@ it('mantém agenda única quando a divisão está desabilitada', () => {
     serviceLabel={() => ''} statusBadge={() => ({})} onCreateAt={vi.fn()}/>)
   expect(screen.getByRole('button', { name: 'Agendar as 08:00', exact: true })).toBeInTheDocument()
 })
+
+it('exibe concluído sem responsável no histórico sem criar uma terceira coluna', () => {
+  const onEdit = vi.fn()
+  const historical = { ...appointment('Historico', null), status: 'concluido' }
+  const { container } = render(<AgendaTimelineView days={[day]} selectedDate={day}
+    appointments={[historical]} staffById={new Map(staff.map((person) => [person.key, person]))}
+    divideByStaff serviceLabel={() => 'Banho'} statusBadge={() => ({ label: 'Concluído', cls: '' })}
+    onCreateAt={vi.fn()} onEdit={onEdit}/>)
+  expect(container.querySelectorAll('[data-agenda-staff-column]')).toHaveLength(2)
+  fireEvent.click(screen.getByRole('button', { name: /Historico.*Concluído/ }))
+  expect(onEdit).toHaveBeenCalledWith(historical)
+  expect(historical.responsible_staff_key).toBeNull()
+})

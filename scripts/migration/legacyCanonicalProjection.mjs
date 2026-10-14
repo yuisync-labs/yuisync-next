@@ -596,3 +596,37 @@ export function projectLegacyCanonicalSnapshot(source, { tenantId, moduleId = 'p
     transient_policy: base.transient_policy,
   })
 }
+
+// Agenda-only cutover preserves recorded commission snapshots without rebuilding
+// package consumption counters or unrelated financial ledgers.
+export function projectLegacyAgendaSnapshot(source, { tenantId, moduleId = 'petshop', reconciliationOverrides = [] } = {}) {
+  const scope = { tenant_id: text(tenantId), module_id: text(moduleId).toLowerCase() }
+  if (!scope.tenant_id || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(scope.module_id)) {
+    throw new Error('Invalid legacy agenda projection scope.')
+  }
+  const reconciled = applyReconciliationOverrides(source, reconciliationOverrides)
+  const base = projectOperationalSnapshot(reconciled, { tenantId: scope.tenant_id, moduleId: scope.module_id })
+  const enriched = enrichCatalog(base.collections, reconciled, scope)
+  const appointments = projectAppointmentsV2(enriched, reconciled, scope)
+  const legacyAppointments = byId(reconciled, 'appointments', scope)
+  return {
+    scope,
+    collections: sortCollections({
+      ...appointments,
+      services: enriched.services,
+      transport_options: enriched.transport_options,
+      appointment_transport: enriched.appointment_transport.map((row) => {
+        const legacy = legacyAppointments.get(row.appointment_id) || {}
+        return {
+          ...row,
+          pickup_address: nullable(legacy.transport_address) || row.pickup_address,
+          dropoff_address: nullable(legacy.transport_address) || row.dropoff_address,
+          pickup_reference: nullable(legacy.transport_reference) || row.pickup_reference,
+          dropoff_reference: nullable(legacy.transport_reference) || row.dropoff_reference,
+        }
+      }),
+      commission_rules: projectCommercialAdmin(reconciled, scope).commission_rules,
+      module_settings_extensions: projectSettingsExtension(reconciled, scope),
+    }),
+  }
+}
