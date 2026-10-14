@@ -3,7 +3,7 @@ import AgendaPage from './AgendaPage'
 import { useAppointments } from '../../../shared/hooks/useAppointments'
 import { useAuthCtx } from '../../../context/AuthContext'
 import { fmtCurrency, todayISO } from '../../../lib/supabase'
-import { openReceiptPreview } from '../../../lib/receiptPrint'
+import { receiptShell, writeAndPrint } from '../../../lib/agendaReceiptPrint'
 import {
   normalizeServiceDurations,
   resolvePetshopServiceDuration,
@@ -111,7 +111,7 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
         ${line('Obs.', appointment.notes || 'Nenhuma observacao')}
       </div>
     `
-    const opened = openReceiptPreview({ storeSettings, title, bodyHtml: content })
+    const opened = writeAndPrint(receiptShell({ storeSettings, title, content }))
     setNotice(opened ? '' : 'O navegador bloqueou a janela de impressao. Libere pop-ups para o YuiSync.')
   }, [serviceLabel, statusBadge, storeSettings])
 
@@ -136,7 +136,7 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
       </div>
       ${rows || '<div class="appointment-line">Nenhum agendamento operacional nesta data.</div>'}
     `
-    const opened = openReceiptPreview({ storeSettings, title: 'AGENDA DO DIA', bodyHtml: content })
+    const opened = writeAndPrint(receiptShell({ storeSettings, title: 'AGENDA DO DIA', content }))
     setNotice(opened ? '' : 'O navegador bloqueou a janela de impressao. Libere pop-ups para o YuiSync.')
   }, [operationalAppointments, selectedDate, serviceLabel, statusBadge, storeSettings])
 
