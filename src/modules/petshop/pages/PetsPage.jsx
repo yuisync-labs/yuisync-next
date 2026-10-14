@@ -176,14 +176,21 @@ function PetDrawer({ pet, tutorPets = [], subscriptions = [], historyGroupKey, o
   const nextBilling = activePackageSubscriptions.map((item) => item.next_billing_date).filter(Boolean).sort()[0] || '-'
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex theme-petshop-modal">
-      <div className="flex-1 bg-black/50 backdrop-blur-[8px]" onClick={onClose} />
-      <div className="w-full max-w-lg bg-surface border-l border-[var(--border2)] flex flex-col overflow-hidden shadow-card">
-        <div className="modal-header">
-          <div className="flex items-center gap-3"><div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center"><Icon size={22} /></div><div><h2 className="font-display font-bold text-lg text-text">{pet.owner_name}</h2><p className="text-sm text-muted">{pet.pet_name || 'Pet sem nome'}{pet.breed ? ` - ${pet.breed}` : ''}</p><span className={`badge ${registrationBadge.cls} mt-2`}>{registrationBadge.label}</span></div></div>
-          <div className="flex items-center gap-2">{historyGroupKey && <button type="button" data-yuisync-client-history={historyGroupKey} className="btn btn-secondary btn-sm"><History size={13}/> Histórico</button>}<button type="button" data-yuisync-add-pet-action aria-label={`Adicionar outro pet para ${pet.owner_name || 'este tutor'}`} onClick={() => onAddPet(pet)} className="btn btn-primary btn-sm"><Plus size={13}/> Adicionar pet</button><button onClick={() => onEdit(pet)} className="btn btn-secondary btn-sm">Editar</button><button type="button" onClick={() => onRemove(pet)} className="btn btn-secondary btn-sm text-red-400"><Trash2 size={13}/> Remover pet</button><button type="button" aria-label="Fechar detalhes" title="Fechar" onClick={onClose} className="text-muted hover:text-text"><X size={18} /></button></div>
+    <div className="fixed inset-0 z-[45] flex items-center justify-center bg-black/50 p-3 backdrop-blur-[8px] sm:p-6 theme-petshop-modal" onClick={(event) => event.target === event.currentTarget && onClose()}>
+      <Card role="dialog" aria-modal="true" aria-label={`Detalhes de ${pet.pet_name || 'pet'}`} onKeyDown={(event) => {
+        if (event.key === 'Escape') { event.stopPropagation(); onClose() }
+        if (event.key === 'Tab') {
+          const buttons = [...event.currentTarget.querySelectorAll('button:not(:disabled)')]
+          const edge = event.shiftKey ? buttons[0] : buttons.at(-1)
+          if (document.activeElement === edge) { event.preventDefault(); (event.shiftKey ? buttons.at(-1) : buttons[0])?.focus() }
+        }
+      }} className="modal-box relative w-full max-w-4xl max-h-[90dvh] shadow-card">
+        <div className="shrink-0 border-b border-[var(--border2)] p-4 sm:p-6">
+          <button type="button" autoFocus aria-label="Fechar detalhes" title="Fechar" onClick={onClose} className="absolute right-4 top-4 rounded-lg p-2 text-muted hover:text-text"><X size={18} /></button>
+          <div className="flex min-w-0 items-start gap-3 pr-12"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-500"><Icon size={22} /></div><div className="min-w-0"><h2 className="break-words font-display text-lg font-bold leading-snug text-text sm:text-xl">{pet.owner_name}</h2><p className="mt-1 break-words text-sm text-muted">{pet.pet_name || 'Pet sem nome'}{pet.breed ? ` - ${pet.breed}` : ''}</p><span className={`badge ${registrationBadge.cls} mt-2`}>{registrationBadge.label}</span></div></div>
+          <div className="mt-4 flex flex-wrap items-center gap-2">{historyGroupKey && <button type="button" data-yuisync-client-history={historyGroupKey} className="btn btn-secondary btn-sm"><History size={13}/> Histórico</button>}<button type="button" data-yuisync-add-pet-action aria-label={`Adicionar outro pet para ${pet.owner_name || 'este tutor'}`} onClick={() => onAddPet(pet)} className="btn btn-primary btn-sm"><Plus size={13}/> Adicionar pet</button><button onClick={() => onEdit(pet)} className="btn btn-secondary btn-sm">Editar</button><button type="button" onClick={() => onRemove(pet)} className="btn btn-secondary btn-sm text-red-400"><Trash2 size={13}/> Remover pet</button></div>
         </div>
-        <div className="flex-1 overflow-y-auto p-6 space-y-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
           <div className="rounded-2xl border border-[var(--border)] bg-card p-5"><p className="text-xs uppercase tracking-widest text-muted font-bold">Pets deste cliente</p><div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">{tutorPets.map((item) => (<button key={item.id} type="button" onClick={() => item.id !== pet.id && onSelectPet?.(item)} className={`rounded-xl border p-3 text-left ${item.id === pet.id ? 'border-emerald-500/45 bg-emerald-500/12' : 'border-[var(--border)] hover:border-emerald-500/30'}`}><p className="font-semibold text-text">{item.pet_name || 'Pet sem nome'}</p><p className="mt-1 text-xs text-muted">{item.breed || item.species || 'Sem raca informada'}</p></button>))}</div></div>
           <div className="rounded-2xl border border-[var(--border)] bg-card p-5 grid grid-cols-2 gap-3 text-sm">
             <div><p className="text-[10px] uppercase tracking-widest text-muted font-bold">Tutor</p><p className="text-text font-semibold mt-1">{pet.owner_name || '-'}</p></div>
@@ -223,7 +230,7 @@ function PetDrawer({ pet, tutorPets = [], subscriptions = [], historyGroupKey, o
             {recentAppointments.length === 0 ? <div className="rounded-xl border border-dashed border-[var(--border)] px-4 py-5 text-sm text-muted">Nenhum atendimento encontrado para este pet.</div> : <div className="space-y-2">{recentAppointments.map((item) => { const badge = statusBadge(item.status); return <div key={item.id} className="rounded-xl border border-[var(--border)] bg-surface/70 px-4 py-3 flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-text">{serviceLabel(item.service_type)}</p><p className="text-xs text-muted mt-1">{fmtDate(item.scheduled_at) || '-'}</p></div><div className="text-right"><span className={`badge ${badge.cls}`}>{badge.label}</span><p className="text-xs text-emerald-500 font-semibold mt-1">{fmtCurrency(item.price || 0)}</p></div></div> })}</div>}
           </div>
         </div>
-      </div>
+      </Card>
     </div>,
     document.body,
   )

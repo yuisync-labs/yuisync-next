@@ -30,21 +30,21 @@ async function openRemoval() {
   await waitFor(() => expect(mocks.load).toHaveBeenCalled())
   fireEvent.click(screen.getByRole('button', { name: /Rex.*Abrir/ }))
   fireEvent.click(screen.getByRole('button', { name: 'Remover pet' }))
-  return screen.getByRole('dialog')
+  return screen.getByRole('dialog', { name: 'Remover Rex?' })
 }
 it('pede confirmação e permite cancelar sem remover', async () => {
   await openRemoval()
-  expect(screen.getByRole('dialog')).toHaveTextContent('Remover Rex?')
+  expect(screen.getByRole('dialog', { name: 'Remover Rex?' })).toHaveTextContent('Remover Rex?')
   fireEvent.click(screen.getByRole('button', { name: 'Cancelar', exact: true }))
   expect(mocks.remove).not.toHaveBeenCalled()
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.queryByRole('dialog', { name: 'Remover Rex?' })).not.toBeInTheDocument()
 })
 it('remove somente o pet escolhido e fecha os detalhes após sucesso', async () => {
   mocks.remove.mockResolvedValueOnce(undefined)
   const dialog = await openRemoval()
   fireEvent.click(dialog.querySelector('button:last-child'))
   await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith('rex'))
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Remover Rex?' })).not.toBeInTheDocument())
   expect(screen.queryByRole('button', { name: 'Fechar detalhes' })).not.toBeInTheDocument()
 })
 it('mantém confirmação aberta com erro e permite tentar novamente', async () => {
@@ -52,14 +52,14 @@ it('mantém confirmação aberta com erro e permite tentar novamente', async () 
   const dialog = await openRemoval()
   fireEvent.click(dialog.querySelector('button:last-child'))
   expect(await screen.findByRole('alert')).toHaveTextContent('Falha de conexão')
-  expect(screen.getByRole('dialog')).toBeInTheDocument()
+  expect(screen.getByRole('dialog', { name: 'Remover Rex?' })).toBeInTheDocument()
   expect(dialog.querySelector('button:last-child')).not.toBeDisabled()
 })
 
 it('avisa sobre pacote ativo sem cancelá-lo automaticamente', async () => {
   mocks.subscriptions = [{ client_id: 'rex', status: 'active', subscription_plans: { name: 'Mensal' } }]
   await openRemoval()
-  expect(screen.getByRole('dialog')).toHaveTextContent('A remoção do cadastro não cancela o pacote')
+  expect(screen.getByRole('dialog', { name: 'Remover Rex?' })).toHaveTextContent('A remoção do cadastro não cancela o pacote')
 })
 
 it('bloqueia novas confirmações enquanto a remoção está pendente', async () => {
@@ -72,5 +72,18 @@ it('bloqueia novas confirmações enquanto a remoção está pendente', async ()
   fireEvent.click(confirm)
   expect(mocks.remove).toHaveBeenCalledTimes(1)
   finish()
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Remover Rex?' })).not.toBeInTheDocument())
+})
+
+it('abre os detalhes como dialogo com todas as acoes e fecha por Escape', async () => {
+  render(<PetsPage/>)
+  await waitFor(() => expect(mocks.load).toHaveBeenCalled())
+  fireEvent.click(screen.getByRole('button', { name: /Rex.*Abrir/ }))
+  const dialog = screen.getByRole('dialog', { name: 'Detalhes de Rex' })
+  expect(dialog).toHaveTextContent('Maria')
+  expect(screen.getByRole('button', { name: 'Fechar detalhes' })).toHaveFocus()
+  expect(screen.getByRole('button', { name: 'Adicionar outro pet para Maria' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Remover pet' })).toBeInTheDocument()
+  fireEvent.keyDown(dialog, { key: 'Escape' })
+  expect(screen.queryByRole('dialog', { name: 'Detalhes de Rex' })).not.toBeInTheDocument()
 })
