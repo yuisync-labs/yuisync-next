@@ -11,6 +11,8 @@ const ERROR_MESSAGES = Object.freeze({
   APPOINTMENT_RESPONSIBLE_CONCURRENT_CHANGE: 'O atendimento mudou enquanto você atribuía o responsável. Atualize a página e tente novamente.',
   RESPONSIBLE_ASSIGNMENT_FORBIDDEN: 'Seu acesso não permite alterar o fechamento de comissões.',
   PET_NOT_FOUND: 'O pet selecionado não foi encontrado. Atualize os clientes e tente novamente.',
+  SERVICE_WEIGHT_MISMATCH: 'Este serviço não atende à faixa de peso cadastrada para o pet selecionado. Confira o peso no cadastro ou escolha um serviço compatível.',
+  SERVICE_SPECIES_MISMATCH: 'Este serviço não atende à espécie do pet selecionado. Escolha um serviço compatível.',
   INVALID_DATE_RANGE: 'O período selecionado para a agenda é inválido.',
 })
 

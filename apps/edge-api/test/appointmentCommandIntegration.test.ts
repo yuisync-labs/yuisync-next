@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest'
 import { handleBetterAuthRequest } from '../src/auth/betterAuthRuntime'
 import { handleCompatApiRequest } from '../src/compatApi'
 import { handlePetshopAppointmentsApiRequest } from '../src/petshopAppointmentsApi'
+import { handlePetshopServicesApiRequest } from '../src/petshopServicesApi'
+import { resolveBillingCatalog } from '../src/appointmentBillingCatalog'
 
 const AUTH_SECRET = 'appointment-command-test-secret-123456789012345678901'
 
@@ -286,6 +288,48 @@ describe('appointment command policy in workerd', () => {
         .bind(tenantId).all<{ status:string }>()
       expect(registry.results).toHaveLength(2)
       expect(registry.results.every((row) => row.status === 'completed')).toBe(true)
+
+      // Trocar o banho em uma reserva existente preserva o original na recusa.
+      for (const [variant, minimum, expectedStatus] of [['medium', 10.1, 409], ['alternative', 0, 200]] as const) {
+        const code = `${variant}-${suffix}`
+        await db.prepare(`INSERT INTO services(tenant_id,module_id,id,code,name,group_type,default_price_cents,default_duration_min,
+          commission_type,commission_basis_points,status,created_at_ms,updated_at_ms,min_weight_grams,max_weight_grams,species_target)
+          VALUES(?1,'petshop',?2,?3,'Outro banho','banho_tosa',6000,60,'percentage',500,'active',?4,?4,?5,22100,'dog')`)
+          .bind(tenantId, code, code, now, Math.round(minimum * 1000)).run()
+        const changed = await handlePetshopAppointmentsApiRequest(new Request(
+          `https://edge.test/api/petshop/appointments/${firstBody.data.appointment_id}`, {
+            method: 'PATCH', headers: { 'content-type': 'application/json', cookie, 'x-tenant-id': tenantId, 'x-module-id': 'petshop' },
+            body: JSON.stringify({ ...basePayload, scheduled_at: updatedScheduledAt, service_type: code, services: [{ code }], responsible_staff_key: 'esteticista-2', responsible_staff_name: 'Esteticista 2' }),
+          }), bindings())
+        expect(changed?.status).toBe(expectedStatus)
+        if (expectedStatus === 409) expect(await changed!.json()).toMatchObject({ code: 'SERVICE_WEIGHT_MISMATCH' })
+        const stored = await db.prepare("SELECT service_code,unit_price_cents FROM appointment_services WHERE tenant_id=?1 AND module_id='petshop' AND appointment_id=?2")
+          .bind(tenantId, firstBody.data.appointment_id).first()
+        expect(stored).toMatchObject(expectedStatus === 409 ? { service_code: serviceCode, unit_price_cents: 5500 } : { service_code: code, unit_price_cents: 6000 })
+      }
+      await db.prepare('UPDATE tenant_memberships SET module_permissions_json=?2 WHERE tenant_id=?1').bind(tenantId, JSON.stringify({ petshop: { role: 'admin_pet' } })).run()
+      const request = (path: string, method: string, body: unknown) => handlePetshopServicesApiRequest(new Request(`https://edge.test/api/petshop/services${path}`, {
+        method, headers: { 'content-type': 'application/json', 'x-tenant-id': tenantId, 'x-module-id': 'petshop', cookie }, body: JSON.stringify(body),
+      }), bindings())
+      const created = await request('', 'POST', { code: `rules-${suffix}`, name: 'Banho', min_weight_kg: 0, max_weight_kg: 10.099 })
+      expect(created?.status).toBe(201)
+      const { service } = await created!.json<{ service: { id: string; min_weight_grams: number; max_weight_grams: number } }>()
+      expect(service).toMatchObject({ min_weight_grams: 0, max_weight_grams: 10099 })
+      const catalog = (weightGrams: number) => resolveBillingCatalog({ db, tenantId, moduleId: 'petshop', species: 'dog', weightGrams, payload: { services: [{ code: `rules-${suffix}` }] } })
+      expect((await catalog(12000)).code).toBe('SERVICE_WEIGHT_MISMATCH')
+      const updated = await request(`/${service.id}`, 'PATCH', { max_weight_kg: 22.1 })
+      expect(updated?.status).toBe(200)
+      expect(await updated!.json()).toMatchObject({ service: { max_weight_kg: 22.1, max_weight_grams: 22100 } })
+      expect((await catalog(12000)).items).toHaveLength(1)
+      const rules = await request(`/${service.id}/rules`, 'PATCH', { commission_rate: 5, min_weight_kg: 10.1, max_weight_kg: 22.1, species_target: 'dog' })
+      expect(rules?.status).toBe(200)
+      expect(await rules!.json()).toMatchObject({ service: { min_weight_grams: 10100, max_weight_grams: 22100 } })
+      expect((await catalog(7000)).code).toBe('SERVICE_WEIGHT_MISMATCH')
+      expect((await catalog(10100)).items).toHaveLength(1)
+      const cleared = await request(`/${service.id}/rules`, 'PATCH', { commission_rate: 5, min_weight_kg: null, max_weight_kg: null, species_target: null })
+      expect(cleared?.status).toBe(200)
+      expect(await cleared!.json()).toMatchObject({ service: { min_weight_grams: null, max_weight_grams: null } })
+      expect((await catalog(7000)).items).toHaveLength(1)
     } finally {
       await db.prepare("DELETE FROM appointment_services WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
       await db.prepare("DELETE FROM appointment_transport WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()

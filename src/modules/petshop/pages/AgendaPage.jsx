@@ -33,6 +33,7 @@ import {
   appointmentServiceCodes,
   appointmentServiceGroup,
   appointmentServiceLabel,
+  appointmentServiceEligibility,
   calculateAppointmentServiceTotals,
   classifyAppointmentServiceGroup,
   serviceOptionsForAppointmentGroup,
@@ -57,6 +58,7 @@ import { buildAgendaStats } from '../lib/agendaStats'
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const asAgendaServices = (services = []) =>
   (Array.isArray(services) ? services : []).map((service) => ({
+    ...service,
     value: service.code || service.value,
     label: String(service.name || service.label || service.code || 'Servico').trim(),
     price: Number(service.default_price ?? service.price ?? 0),
@@ -651,6 +653,8 @@ export function ApptModal({ appt, onClose, onCreate, onUpdate, onReceipt, onRefr
     if (!form.date) return setErr('Informe a data')
     if (!form.time) return setErr('Informe o horario')
     if (!serviceTotals.services.length) return setErr('Os servicos selecionados nao estao mais disponiveis')
+    const incompatible = serviceTotals.services.find((service) => !appointmentServiceEligibility(service, selectedPet).eligible)
+    if (incompatible) return setErr(`${incompatible.label}: ${appointmentServiceEligibility(incompatible, selectedPet).reason}. Confira o peso e a espécie no cadastro do pet.`)
 
     const candidateStart = new Date(`${form.date}T${form.time}:00`)
     if (Number.isNaN(candidateStart.getTime())) return setErr('Horario invalido')
@@ -725,6 +729,7 @@ export function ApptModal({ appt, onClose, onCreate, onUpdate, onReceipt, onRefr
                         ? `Pet selecionado: ${selectedPet.pet_name || 'sem nome'} · ${selectedTutorPets.length} pets no cadastro`
                         : [selectedPet.pet_name, selectedPet.breed || selectedPet.species, selectedPet.phone].filter(Boolean).join(' - ') || 'Cadastro sem pet informado'}
                     </span>
+                    {selectedPet.weight_kg != null && <span className="block text-xs text-muted">Peso cadastrado: {Number(selectedPet.weight_kg).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} kg</span>}
                   </span>
                   <span className="text-[11px] font-bold text-amber-400 flex-shrink-0">Alterar</span>
                 </button>
@@ -913,19 +918,22 @@ export function ApptModal({ appt, onClose, onCreate, onUpdate, onReceipt, onRefr
                         {availableServiceOptions.map((service) => {
                           const Icon = service.icon || PawPrint
                           const coveredByPackage = packageServiceCodes.has(String(service.value))
+                          const eligibility = appointmentServiceEligibility(service, selectedPet)
                           return (
                             <button
                               key={service.value}
                               type="button"
                               role="option"
                               aria-selected="false"
+                              disabled={!eligibility.eligible}
                               onClick={() => addService(service.value)}
-                              className={`flex w-full items-center gap-3 border-b border-[var(--border2)] px-3 py-2.5 text-left transition-colors last:border-b-0 ${coveredByPackage ? 'bg-emerald-500/10 hover:bg-emerald-500/15' : 'hover:bg-white/7'}`}
+                              className={`flex w-full items-center gap-3 border-b border-[var(--border2)] px-3 py-2.5 text-left transition-colors last:border-b-0 disabled:cursor-not-allowed disabled:opacity-60 ${coveredByPackage ? 'bg-emerald-500/10 hover:bg-emerald-500/15' : 'hover:bg-white/7'}`}
                             >
                               <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400"><Icon size={14}/></span>
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate text-sm font-bold text-text">{service.label}</span>
                                 <span className={`block text-xs ${coveredByPackage ? 'font-semibold text-emerald-300' : 'text-muted'}`}>{coveredByPackage ? 'Pacote · R$ 0,00' : fmtCurrency(service.price)} · {service.duration || 60} min</span>
+                                {!eligibility.eligible && <span className="block text-xs text-amber-400">{eligibility.reason}</span>}
                               </span>
                               {coveredByPackage ? <span className="badge badge-green">Pacote</span> : <Plus size={15} className="flex-shrink-0 text-amber-400"/>}
                             </button>

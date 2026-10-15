@@ -21,6 +21,8 @@ type ServiceRow = {
   commission_basis_points: number
   min_weight_kg: number | null
   max_weight_kg: number | null
+  min_weight_grams: number | null
+  max_weight_grams: number | null
   species_target: string | null
   sort_order: number
   icon: string | null
@@ -73,6 +75,8 @@ function servicePayload(row: ServiceRow) {
     commission_rate: Number(row.commission_basis_points || 0) / 100,
     min_weight_kg: row.min_weight_kg,
     max_weight_kg: row.max_weight_kg,
+    min_weight_grams: row.min_weight_grams,
+    max_weight_grams: row.max_weight_grams,
     species_target: row.species_target,
     sort_order: Number(row.sort_order || 999),
     icon: row.icon,
@@ -137,6 +141,8 @@ async function patchServiceRules(request: Request, bindings: Bindings, serviceId
         commission_basis_points=?4,
         min_weight_kg=?5,
         max_weight_kg=?6,
+        min_weight_grams=?9,
+        max_weight_grams=?10,
         species_target=?7,
         updated_at_ms=?8
     WHERE tenant_id=?1 AND module_id=?2 AND id=?3
@@ -149,11 +155,13 @@ async function patchServiceRules(request: Request, bindings: Bindings, serviceId
     maxWeight,
     speciesTarget,
     now,
+    minWeight === null ? null : Math.round(minWeight * 1000),
+    maxWeight === null ? null : Math.round(maxWeight * 1000),
   ).run()
 
   const updated = await bindings.DB!.prepare(`
     SELECT id,code,name,category,description,group_type,default_price_cents,default_duration_min,
-           commission_type,commission_basis_points,min_weight_kg,max_weight_kg,species_target,
+           commission_type,commission_basis_points,min_weight_kg,max_weight_kg,min_weight_grams,max_weight_grams,species_target,
            sort_order,icon,source_product_id,status,created_at_ms,updated_at_ms
     FROM services
     WHERE tenant_id=?1 AND module_id=?2 AND id=?3
@@ -212,13 +220,14 @@ export async function handlePetshopServicesApiRequest(
         || !['banho_tosa','veterinaria','motoboy','outro'].includes(group)) return json({ code: 'INVALID_SERVICE' }, 400)
       const id = serviceId || crypto.randomUUID(), now = Date.now()
       await bindings.DB!.prepare(`INSERT INTO services(tenant_id,module_id,id,code,name,category,description,group_type,default_price_cents,default_duration_min,
-        commission_type,commission_basis_points,min_weight_kg,max_weight_kg,species_target,sort_order,icon,source_product_id,status,created_at_ms,updated_at_ms)
-        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'percentage',?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)
+        commission_type,commission_basis_points,min_weight_kg,max_weight_kg,species_target,sort_order,icon,source_product_id,status,created_at_ms,updated_at_ms,min_weight_grams,max_weight_grams)
+        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'percentage',?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)
         ON CONFLICT(tenant_id,module_id,id) DO UPDATE SET code=excluded.code,name=excluded.name,category=excluded.category,description=excluded.description,
         group_type=excluded.group_type,default_price_cents=excluded.default_price_cents,default_duration_min=excluded.default_duration_min,
         commission_type=excluded.commission_type,commission_basis_points=excluded.commission_basis_points,min_weight_kg=excluded.min_weight_kg,
-        max_weight_kg=excluded.max_weight_kg,species_target=excluded.species_target,sort_order=excluded.sort_order,icon=excluded.icon,status=excluded.status,updated_at_ms=excluded.updated_at_ms`)
-        .bind(tenantId,moduleId,id,code,name,text(merged.category),text(merged.description),group,Math.round(price*100),duration,Math.round(rate*100),min,max,species === 'all' ? null : species,sort,text(merged.icon),current?.source_product_id || null,merged.active === false ? 'inactive' : 'active',current?.created_at_ms || now,now).run()
+        max_weight_kg=excluded.max_weight_kg,min_weight_grams=excluded.min_weight_grams,max_weight_grams=excluded.max_weight_grams,
+        species_target=excluded.species_target,sort_order=excluded.sort_order,icon=excluded.icon,status=excluded.status,updated_at_ms=excluded.updated_at_ms`)
+        .bind(tenantId,moduleId,id,code,name,text(merged.category),text(merged.description),group,Math.round(price*100),duration,Math.round(rate*100),min,max,species === 'all' ? null : species,sort,text(merged.icon),current?.source_product_id || null,merged.active === false ? 'inactive' : 'active',current?.created_at_ms || now,now,min === null ? null : Math.round(min*1000),max === null ? null : Math.round(max*1000)).run()
       const saved = await bindings.DB!.prepare('SELECT * FROM services WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(tenantId,moduleId,id).first<ServiceRow>()
       return json({ service: servicePayload(saved!) }, serviceId ? 200 : 201)
     }
