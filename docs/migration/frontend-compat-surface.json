@@ -3,7 +3,7 @@
   "policy": "frontend-supabase-compat-ratchet",
   "generated_from": "src/**/*.{js,jsx,ts,tsx}",
   "totals": {
-    "from": 203,
+    "from": 202,
     "rpc": 11
   },
   "files": {
@@ -56,7 +56,7 @@
       "rpc": 0
     },
     "src/modules/petshop/pages/BanhoTosaPdvPanel.jsx": {
-      "from": 2,
+      "from": 1,
       "rpc": 2
     },
     "src/modules/petshop/pages/PackageActivationPdvPanel.jsx": {

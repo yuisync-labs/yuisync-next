@@ -1409,6 +1409,13 @@ export function AgendaTimelineView({
                     <button type="button" onClick={() => onEdit(appt)} className="min-w-0 flex-1 truncate text-left hover:text-text">
                       {fmtAppointmentInterval(appt)} · {appt.pets?.pet_name || 'Pet'} · {statusBadge(appt.status).label}
                     </button>
+                    {appt.status === 'concluido' && needsPayment?.(appt) && (
+                      <button type="button" onClick={() => onCompletedAction?.(appt)}
+                        aria-label={`Ver pagamento de ${appt.pets?.pet_name || 'Pet'}`}
+                        className="shrink-0 rounded-md p-1.5 text-amber-300 hover:bg-amber-500/15" title="Ver pagamento">
+                        <Wallet size={13}/>
+                      </button>
+                    )}
                     <button
                       type="button"
                       aria-label="Imprimir ficha do historico"

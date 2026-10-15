@@ -109,7 +109,7 @@ test('handoff preserva atendimento, data, aba e notifica pagina ja montada', () 
 
   const appointment = {
     id: 'appointment-123',
-    scheduled_at: '2026-07-29T14:30:00-03:00',
+    scheduled_at: new Date(2026, 6, 29, 14, 30).toISOString(),
   }
   queueAppointmentCheckout(appointment)
 
@@ -139,7 +139,7 @@ test('Agenda e checkout nativo de Ordens usam o fluxo financeiro compartilhado',
   ])
 
   assert.match(agenda, /handleCompletedAction/)
-  assert.match(agenda, /paymentPending \? 'Receber' : 'Imprimir'/)
+  assert.match(agenda, /Ver pagamento de/)
   assert.match(agenda, /queueAppointmentCheckout\(appointment\)/)
   assert.match(resolved, /appointmentCheckoutTotals\(updated, transportOptions\)/)
   assert.match(resolved, /setPage\?\.\('ordens'\)/)

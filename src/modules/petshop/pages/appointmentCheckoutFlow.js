@@ -2,8 +2,8 @@ import {
   appointmentPriceBreakdown,
   localDateKey,
   transportFeeForMode,
-} from './agendaOperationalCore'
-import { appointmentHasTransportBenefit } from '../lib/appointmentPackageUi'
+} from './agendaOperationalCore.js'
+import { appointmentHasTransportBenefit } from '../lib/appointmentPackageUi.js'
 
 export const APPOINTMENT_CHECKOUT_SESSION_KEY = 'yuisync:appointment-checkout'
 export const ORDERS_TAB_SESSION_KEY = 'yuisync:orders-tab'
