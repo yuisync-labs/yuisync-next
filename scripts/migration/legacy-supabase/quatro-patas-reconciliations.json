@@ -8,7 +8,8 @@
       "appointment_id": "e3b133f3-b1fe-4693-8fef-dc847cc65a3c",
       "subscription_id": "f323eebd-0c81-4853-96ac-be926140d18d",
       "benefit_key": "motodog",
-      "reason": "Fifth MotoDog consumption exceeds the four-use package capacity; preserve the completed grooming appointment outside the package without creating a retroactive charge."
+      "reason": "Exclude the fifth MotoDog allocation above the four-use capacity while preserving the completed appointment, charged amount and historical package billing association used by the legacy commission calculation.",
+      "preserve_historical_billing": true
     },
     {
       "action": "exclude_subscription_benefit",

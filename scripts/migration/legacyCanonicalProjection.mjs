@@ -91,19 +91,23 @@ function applyReconciliationOverrides(source, overrides = []) {
       ...(benefitKey === 'motodog' ? { transport_benefit_used: false } : {}),
     }))
     const hasBenefits = remaining.length > 0
+    const preserveBilling = override.preserve_historical_billing === true
+    if (preserveBilling && (benefitKey !== 'motodog' || !['completed','concluido','concluído'].includes(text(appointment.status).toLowerCase()))) {
+      throw new Error(`LEGACY_RECONCILIATION_HISTORICAL_BILLING_INVALID:${appointment.id}`)
+    }
     return {
       ...appointment,
       service_items: serviceItems,
       subscription_benefits: remaining,
-      subscription_benefit_used: hasBenefits,
+      subscription_benefit_used: preserveBilling ? appointment.subscription_benefit_used : hasBenefits,
       subscription_benefit_status: hasBenefits ? appointment.subscription_benefit_status : 'released',
-      subscription_discount: hasBenefits ? appointment.subscription_discount : 0,
-      subscription_discount_amount: hasBenefits ? appointment.subscription_discount_amount : 0,
-      subscription_id: hasBenefits ? appointment.subscription_id : null,
-      subscription_label: hasBenefits ? appointment.subscription_label : null,
-      subscription_plan_name: hasBenefits ? appointment.subscription_plan_name : null,
-      billing_intent_type: hasBenefits ? appointment.billing_intent_type : 'auto',
-      billing_intent_subscription_id: hasBenefits ? appointment.billing_intent_subscription_id : null,
+      subscription_discount: hasBenefits || preserveBilling ? appointment.subscription_discount : 0,
+      subscription_discount_amount: hasBenefits || preserveBilling ? appointment.subscription_discount_amount : 0,
+      subscription_id: hasBenefits || preserveBilling ? appointment.subscription_id : null,
+      subscription_label: hasBenefits || preserveBilling ? appointment.subscription_label : null,
+      subscription_plan_name: hasBenefits || preserveBilling ? appointment.subscription_plan_name : null,
+      billing_intent_type: hasBenefits || preserveBilling ? appointment.billing_intent_type : 'auto',
+      billing_intent_subscription_id: hasBenefits || preserveBilling ? appointment.billing_intent_subscription_id : null,
     }
   })
   const missing = [...byAppointment.keys()].filter((id) => !applied.has(id))
