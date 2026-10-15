@@ -1,6 +1,7 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 import { isPlatformAdmin } from './platformAuthorization'
 import { extensionMergeStatement } from './moduleSettingsExtensions'
+import { membershipAllows } from './operationAuthorization'
 
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 type SessionResolver = typeof getBetterAuthSession
@@ -11,6 +12,7 @@ type TenantRow = { status: string; name: string; slug: string }
 type ScopeRow = {
   role: string
   status: string
+  module_permissions_json: string | null
   tenant_status: string
   tenant_name: string
   tenant_slug: string
@@ -160,13 +162,13 @@ async function resolveScope(
     }
   }
   const scope = await bindings.DB.prepare(`
-    SELECT m.role,m.status,t.status AS tenant_status,t.name AS tenant_name,t.slug AS tenant_slug
+    SELECT m.role,m.status,m.module_permissions_json,t.status AS tenant_status,t.name AS tenant_name,t.slug AS tenant_slug
     FROM tenant_memberships m
     JOIN tenants t ON t.id=m.tenant_id
     WHERE m.tenant_id=?1 AND m.principal_id=?2
     LIMIT 1
   `).bind(tenantId, principal.id).first<ScopeRow>()
-  if (!scope || scope.status !== 'active' || scope.tenant_status !== 'active' || !['owner', 'admin'].includes(scope.role)) {
+  if (!scope || !membershipAllows(scope, 'petshop', 'administrative')) {
     return { ok: false, response: json({ code: 'FORBIDDEN' }, 403) }
   }
   return {
