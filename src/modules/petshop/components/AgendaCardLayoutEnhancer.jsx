@@ -1,4 +1,17 @@
 const STYLES = `
+  .yuisync-agenda-card-surface {
+    container-type: inline-size;
+    container-name: agenda-card;
+  }
+
+  @container agenda-card (max-width: 200px) {
+    .yuisync-agenda-card-surface .yuisync-card-content .yuisync-card-header {
+      padding-top: 32px !important;
+      padding-right: 0 !important;
+      min-height: 48px !important;
+    }
+  }
+
   .yuisync-agenda-card-surface .yuisync-card-content {
     display: grid !important;
     grid-template-columns: minmax(0, 1fr) !important;
@@ -7,7 +20,7 @@ const STYLES = `
 
   .yuisync-agenda-card-surface .yuisync-card-header {
     order: 1 !important;
-    min-height: 20px !important;
+    min-height: 36px !important;
     margin-bottom: 0 !important;
   }
 

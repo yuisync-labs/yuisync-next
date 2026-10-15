@@ -366,12 +366,11 @@ export default function EquipePage() {
     void reload(next)
   }
 
-  async function saveStaffName(person) {
-    const cleanName = editingStaffName.trim()
-    if (!cleanName || !person?.key) return
+  async function saveStaffChanges(person, patch) {
+    if (!person?.key) return
     const moduleId = activeModuleId || 'petshop'
     const nextStaff = normalizeOperationalStaff(configuredStaff.map((item) => (
-      item.key === person.key ? { ...item, name: cleanName } : item
+      item.key === person.key ? { ...item, ...patch } : item
     )))
     const previousSettings = storeSettings
     const optimisticTemplates = {
@@ -397,10 +396,15 @@ export default function EquipePage() {
       await auth.refreshSettings(moduleId)
     } catch (err) {
       auth.updateStoreSettings?.(previousSettings)
-      setError(err.message || 'Nao foi possivel alterar o nome da esteticista.')
+      setError(err.message || 'Nao foi possivel salvar a esteticista.')
     } finally {
       setSavingStaffKey('')
     }
+  }
+
+  async function saveStaffName(person) {
+    const name = editingStaffName.trim()
+    if (name) await saveStaffChanges(person, { name })
   }
 
   async function resetCommissionCycle() {
@@ -695,7 +699,7 @@ export default function EquipePage() {
         <div className="space-y-4">
           <div className="rounded-2xl border border-[var(--border)] bg-card px-5 py-4">
             <p className="font-semibold text-text">Mesmas profissionais da Agenda</p>
-            <p className="mt-1 text-sm text-muted">Cadastros operacionais definidos em Configuracoes, sem login, e-mail ou usuario no YuiSync.</p>
+            <p className="mt-1 text-sm text-muted">Edite os nomes e marque quem esta ativo. A agenda mostra uma coluna por esteticista ativa; o historico de comissoes e preservado.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {configuredStaff.map((person) => {
@@ -706,6 +710,14 @@ export default function EquipePage() {
                     <div>{renderEditableStaffName(person)}<p className="mt-1 text-xs text-muted">{row?.service_count || 0} servico(s) no periodo</p></div>
                     <span className={`badge ${person.active === false ? 'badge-gray' : 'badge-green'}`}>{person.active === false ? 'Inativa' : 'Ativa'}</span>
                   </div>
+                  <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm text-text">
+                    <input type="checkbox" className="h-4 w-4 accent-emerald-500"
+                      checked={person.active !== false} disabled={Boolean(savingStaffKey)}
+                      aria-label={`Ativar ${person.name} na agenda`}
+                      onChange={(event) => void saveStaffChanges(person, { active: event.target.checked })}/>
+                    Ativa na agenda
+                    {savingStaffKey === person.key && <span className="text-xs text-muted">Salvando...</span>}
+                  </label>
                   <div className="mt-5 grid grid-cols-4 gap-2 text-center">
                     <div className="rounded-xl border border-[var(--border2)] p-3"><p className="text-[10px] text-muted uppercase">Banhos</p><p className="font-bold text-emerald-400">{row?.bath_count || 0}</p></div>
                     <div className="rounded-xl border border-[var(--border2)] p-3"><p className="text-[10px] text-muted uppercase">Tosas</p><p className="font-bold text-blue-400">{row?.grooming_count || 0}</p></div>

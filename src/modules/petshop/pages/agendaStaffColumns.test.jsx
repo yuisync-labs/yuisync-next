@@ -12,11 +12,11 @@ const appointment = (id, key) => ({
   duration_min: 60, status: 'agendado', pets: { pet_name: id },
 })
 
-it('mantém ativas, inativas com atendimento e pets sem responsável visíveis', () => {
+it('cria colunas apenas para as profissionais ativas', () => {
   expect(agendaStaffColumns([...staff, { key: 'old', name: 'Clara', active: false }], [
     appointment('p1', 'old'), appointment('p2', ''), { ...appointment('p3', 'missing'), responsible_staff_name: 'Dora' },
-  ]).map((item) => item.name)).toEqual(['Ana', 'Bia', 'Clara', 'Dora', 'Sem responsável'])
-  expect(agendaStaffColumns([], [])).toEqual([{ key: '', name: 'Sem responsável' }])
+  ]).map((item) => item.name)).toEqual(['Ana', 'Bia'])
+  expect(agendaStaffColumns([], [])).toEqual([])
 })
 
 it('separa atendimentos simultâneos e envia data, horário e esteticista do clique', () => {
@@ -59,4 +59,30 @@ it('exibe concluído sem responsável no histórico sem criar uma terceira colun
   fireEvent.click(screen.getByRole('button', { name: /Historico.*Concluído/ }))
   expect(onEdit).toHaveBeenCalledWith(historical)
   expect(historical.responsible_staff_key).toBeNull()
+})
+
+
+it('mostra tres colunas com Neto ativo e duas ao desativa-lo sem perder atendimentos', () => {
+  const people = [...staff, { key:'neto',name:'Neto',active:true }]
+  const appointments = [appointment('Pet do Neto','neto'),appointment('Sem profissional','')]
+  const props = { days:[day],selectedDate:day,appointments,divideByStaff:true,
+    serviceLabel:()=> 'Banho',statusBadge:()=>({ label:'Agendado',cls:'' }),onCreateAt:vi.fn(),onEdit:vi.fn() }
+  const {container,rerender}=render(<AgendaTimelineView {...props} staffById={new Map(people.map(p=>[p.key,p]))}/> )
+  expect(container.querySelectorAll('[data-agenda-staff-column]')).toHaveLength(3)
+  expect(container.querySelector('[data-agenda-staff-column="neto"]')).toHaveTextContent('Pet do Neto')
+  expect(container.querySelector('[data-agenda-pending-assignments]')).toHaveTextContent('Sem profissional')
+  expect(container.querySelector('[data-agenda-staff-column="neto"]')).not.toHaveTextContent('Sem profissional')
+  rerender(<AgendaTimelineView {...props} staffById={new Map(people.map(p=>[p.key,p.key==='neto'?{...p,active:false}:p]))}/> )
+  expect(container.querySelectorAll('[data-agenda-staff-column]')).toHaveLength(2)
+  expect(container.querySelector('[data-agenda-pending-assignments]')).toHaveTextContent('Pet do Neto')
+  expect(appointments[0].responsible_staff_key).toBe('neto')
+  expect(appointments[1].responsible_staff_key).toBe('')
+})
+
+it('orienta a ativar uma profissional quando todas estao inativas', () => {
+  const {container}=render(<AgendaTimelineView days={[day]} selectedDate={day} appointments={[]}
+    staffById={new Map(staff.map(p=>[p.key,{...p,active:false}]))} divideByStaff
+    serviceLabel={()=>''} statusBadge={()=>({})} onCreateAt={vi.fn()}/> )
+  expect(container.querySelectorAll('[data-agenda-staff-column]')).toHaveLength(0)
+  expect(screen.getByText(/Ative uma esteticista nos marcadores da agenda/)).toBeInTheDocument()
 })
