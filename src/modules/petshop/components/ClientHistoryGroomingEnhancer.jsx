@@ -431,12 +431,15 @@ export function ClientHistoryGroomingEnhancer() {
         return query
       })
       if (response.error) throw response.error
-      const action = machinePrompt.action
+      // Refreshes can replace the card while the machine number is saving.
+      const action = machinePrompt.action?.isConnected ? machinePrompt.action
+        : [...document.querySelectorAll('[data-yuisync-appointment-id]')]
+          .find(card => card.dataset.yuisyncAppointmentId === String(machinePrompt.appointmentId))
+          ?.querySelector('[data-yuisync-action="complete"]')
+      if (!action) throw new Error('Número salvo. O card mudou; atualize a agenda e tente concluir novamente.')
+      action.dataset.yuisyncMachineBypass = 'true'
       setMachinePrompt(null)
-      if (action?.isConnected) {
-        action.dataset.yuisyncMachineBypass = 'true'
-        action.click()
-      }
+      action.click()
     } catch (error) {
       setMachineError(error?.message || 'Não foi possível salvar o Nº da máquina.')
     } finally {

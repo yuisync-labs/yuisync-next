@@ -71,6 +71,8 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
   } = useAppointments()
   const [selectedDate, setSelectedDate] = useState(todayISO())
   const [notice, setNotice] = useState('')
+  const completingRef = useRef(false)
+  const [completingId, setCompletingId] = useState('')
   const dragRef = useRef(null)
   const lastDragAtRef = useRef(0)
   const autoScrollFrameRef = useRef(0)
@@ -141,10 +143,13 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
   }, [operationalAppointments, selectedDate, serviceLabel, statusBadge, storeSettings])
 
   const completeAppointment = useCallback(async (appointmentId) => {
-    setNotice('')
+    if (completingRef.current) return
+    completingRef.current = true
+    setCompletingId(appointmentId)
+    setNotice('Concluindo atendimento…')
     try {
       const updated = await updateStatus(appointmentId, 'concluido')
-      if (!updated) return
+      if (!updated) { setNotice(''); return }
       const totals = appointmentCheckoutTotals(updated, transportOptions)
       if (totals.total <= 0.005) {
         printAppointment(updated)
@@ -152,9 +157,13 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
         return
       }
       queueAppointmentCheckout(updated)
+      setNotice('Atendimento concluído. Abrindo pagamento…')
       setPage?.('ordens')
     } catch (error) {
       setNotice(error?.message || 'Nao foi possivel concluir o agendamento.')
+    } finally {
+      completingRef.current = false
+      setCompletingId('')
     }
   }, [printAppointment, setPage, transportOptions, updateStatus])
 
@@ -409,7 +418,7 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
     const actionMarkup = (canCancel, canComplete) => `
       ${canCancel ? `<button type="button" data-yuisync-action="cancel" class="yuisync-resolved-action is-cancel" aria-label="Cancelar agendamento" title="Cancelar agendamento">${ICONS.cancel}</button>` : ''}
       <button type="button" data-yuisync-action="print" class="yuisync-resolved-action" aria-label="Imprimir agendamento" title="Imprimir agendamento">${ICONS.print}</button>
-      ${canComplete ? `<button type="button" data-yuisync-action="complete" class="yuisync-resolved-action is-complete" aria-label="Concluir agendamento" title="Concluir agendamento">${ICONS.check}</button>` : ''}
+      ${canComplete ? `<button type="button" data-yuisync-action="complete" ${completingId ? 'disabled aria-busy="true"' : ''} class="yuisync-resolved-action is-complete" aria-label="Concluir agendamento" title="Concluir agendamento">${ICONS.check}</button>` : ''}
     `
 
     const cleanupCards = () => {
@@ -473,7 +482,7 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
           actions.className = 'yuisync-resolved-actions'
           card.appendChild(actions)
         }
-        const signature = `${appointment.id}:${movable}:${canComplete}`
+        const signature = `${appointment.id}:${movable}:${canComplete}:${completingId}`
         if (actions.dataset.yuisyncSignature !== signature) {
           actions.dataset.yuisyncSignature = signature
           actions.innerHTML = actionMarkup(movable, canComplete)
@@ -683,7 +692,7 @@ function ResolvedAgendaOperations({ setPage, agendaPeriod }) {
       resetDrag()
       pageRoot.querySelectorAll('[data-yuisync-resolved-actions], [data-yuisync-print-day]').forEach((node) => node.remove())
     }
-  }, [agendaPeriod, cancelAppointment, completeAppointment, load, moveAppointment, operationalAppointments, printAppointment, printDay, selectedDate, statusBadge, storeSettings?.petshop_service_durations, transportOptions])
+  }, [agendaPeriod, cancelAppointment, completeAppointment, completingId, load, moveAppointment, operationalAppointments, printAppointment, printDay, selectedDate, statusBadge, storeSettings?.petshop_service_durations, transportOptions])
 
   return notice ? (
     <button

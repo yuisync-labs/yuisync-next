@@ -15,6 +15,7 @@ import { useAuthCtx } from '../../../context/AuthContext'
 import { useModuleCtx } from '../../../context/ModuleContext'
 import { fmtCurrency, supabase } from '../../../lib/supabase'
 import { applyTenantFilter, runWithTenantFallback } from '../../../lib/tenant'
+import { listAppointmentsCommand } from '../lib/appointmentCommands'
 import { normalizeTransportOptions } from './agendaOperationalCore'
 import {
   APPOINTMENT_CHECKOUT_EVENT,
@@ -56,14 +57,15 @@ function dateBounds(value) {
 function mapAppointment(row = {}) {
   const client = row.clients || {}
   const details = client.details || {}
+  const pet = row.pets || {}
   return {
     ...row,
     client: {
       id: client.id || row.client_id,
-      owner_name: client.name || 'Cliente',
-      phone: client.phone || '',
-      pet_name: details.pet_name || 'Pet',
-      breed: details.breed || details.species || '',
+      owner_name: pet.owner_name || client.name || 'Cliente',
+      phone: pet.phone || client.phone || '',
+      pet_name: pet.pet_name || details.pet_name || 'Pet',
+      breed: pet.breed || pet.species || details.breed || details.species || '',
     },
     clients: undefined,
   }
@@ -284,20 +286,12 @@ export default function BanhoTosaPdvPanel({ setPage }) {
     setLoadError('')
     try {
       const { start, end } = dateBounds(date)
-      const appointmentResponse = await runScoped(async (includeTenant) => {
-        let query = supabase
-          .from('appointments')
-          .select('id,tenant_id,module_id,client_id,service_type,service_group,service_items,scheduled_at,duration_min,price,status,notes,responsible_staff_name,responsible_staff_key,transport_mode,transport_label,subscription_id,subscription_benefit_used,subscription_benefits,subscription_discount,subscription_label,subscription_benefit_status,updated_at,clients(id,name,phone,details)')
-          .eq('module_id', moduleId)
-          .eq('status', 'concluido')
-          .gte('scheduled_at', start)
-          .lte('scheduled_at', end)
-          .order('scheduled_at', { ascending: true })
-        return applyTenantFilter(query, activeTenantId, includeTenant)
+      const rows = await listAppointmentsCommand({
+        tenantId: activeTenantId,
+        moduleId,
+        filters: { start, end, status: 'concluido' },
       })
-      if (appointmentResponse.error) throw appointmentResponse.error
-
-      let appointmentRows = (appointmentResponse.data || [])
+      let appointmentRows = rows
         .map(mapAppointment)
         .filter(isGroomingAppointment)
       const ids = appointmentRows.map((appointment) => appointment.id)
@@ -426,6 +420,7 @@ export default function BanhoTosaPdvPanel({ setPage }) {
       return
     }
     openCheckout(entry.appointment, entry.totals)
+    setFocusedId(null)
     clearQueuedAppointmentCheckout()
     window.requestAnimationFrame(() => {
       document.querySelector(`[data-yuisync-appointment-checkout="${entry.appointment.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })

@@ -330,6 +330,8 @@ async function consumeSubscriptionBenefit(moduleId, tenantId, benefit) {
 export function useAppointments() {
   const [appointments, setAppointments] = useState([])
   const appointmentsRef = useRef(appointments)
+  const loadRequestRef = useRef(0)
+  const stateRevisionRef = useRef(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const channelRef = useRef(null)
@@ -346,6 +348,7 @@ export function useAppointments() {
       const detail = event?.detail || {}
       if (detail.moduleId && detail.moduleId !== activeModuleId) return
       if (detail.tenantId && activeTenantId && detail.tenantId !== activeTenantId) return
+      stateRevisionRef.current += 1
       if (detail.type === 'remove') {
         setAppointments((current) => current.filter((item) => String(item?.id) !== String(detail.id)))
         return
@@ -410,6 +413,8 @@ export function useAppointments() {
 
   const load = useCallback(async (filters = {}) => {
     if (!activeModuleId) return
+    const requestId = ++loadRequestRef.current
+    const revision = stateRevisionRef.current
     setLoading(true)
     setError(null)
     const tz = getTimezoneOffset()
@@ -429,7 +434,10 @@ export function useAppointments() {
             employee_id: filters.employee_id,
           },
         })
-        setAppointments(rows.map(mapAppointmentRow))
+        // A response started before a mutation/sync must not restore stale cards.
+        if (requestId === loadRequestRef.current && revision === stateRevisionRef.current) {
+          setAppointments(rows.map(mapAppointmentRow))
+        }
         return
       }
 
@@ -503,9 +511,9 @@ export function useAppointments() {
       const rows = (response.data || []).map(mapAppointmentRow)
       setAppointments(await enrichAppointmentsWithTransport(activeModuleId, activeTenantId, rows))
     } catch (e) {
-      setError(e.message)
+      if (requestId === loadRequestRef.current) setError(e.message)
     } finally {
-      setLoading(false)
+      if (requestId === loadRequestRef.current) setLoading(false)
     }
   }, [activeModuleId, activeTenantId])
 
@@ -571,6 +579,7 @@ export function useAppointments() {
     const apiPayload = normalizeAppointmentPayload(payload)
 
     if (activeModuleId === 'petshop') {
+      stateRevisionRef.current += 1
       const previous = appointmentsRef.current.find((appointment) => String(appointment?.id) === String(id))
       // Reflect schedule changes immediately while the Worker persists them.
       // This keeps drag-and-drop anchored to the pointer instead of waiting
