@@ -16,6 +16,7 @@ vi.mock('../../../shared/hooks/useAppointments', () => ({ useAppointments: () =>
 vi.mock('../../../shared/hooks/useClients', () => ({ useClients: () => ({ clients: [], load: mocks.load, search: vi.fn() }) }))
 vi.mock('../hooks/usePetshopAdvanced', () => ({ usePetshopAdvanced: () => ({ loadPetshopServices: mocks.loadServices }) }))
 vi.mock('../hooks/useCatalogPlans', () => ({ useCatalogPlans: () => ({ loadSubscriptions: mocks.loadSubscriptions }) }))
+vi.mock('../../../context/ModuleContext', () => ({ useModuleCtx: () => ({ activeModuleId: 'petshop' }) }))
 vi.mock('../../../context/AuthContext', () => ({ useAuthCtx: () => ({ storeSettings: {
   petshop_operational_staff: [{ key: 'a', name: 'Ana', active: true }, { key: 'b', name: 'Bia', active: true }],
 } }) }))
