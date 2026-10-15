@@ -14,6 +14,8 @@ type ServiceRow = {
   commission_basis_points: number
   min_weight_kg: number | null
   max_weight_kg: number | null
+  min_weight_grams: number | null
+  max_weight_grams: number | null
   species_target: string | null
   status: string
 }
@@ -262,7 +264,7 @@ async function resolveServiceSnapshots(
   for (const code of codes) {
     const service = await env.DB.prepare(`
       SELECT id,code,name,group_type,default_price_cents,default_duration_min,
-             commission_basis_points,min_weight_kg,max_weight_kg,species_target,status
+             commission_basis_points,min_weight_kg,max_weight_kg,min_weight_grams,max_weight_grams,species_target,status
       FROM services
       WHERE tenant_id=?1 AND module_id=?2 AND code=?3
       LIMIT 1
@@ -283,11 +285,13 @@ async function resolveServiceSnapshots(
         pet_species: pet.species,
       }, { status: 409 }) }
     }
-    const weight = pet.weight_kg == null ? null : Number(pet.weight_kg)
-    if (weight !== null && service.min_weight_kg !== null && weight < Number(service.min_weight_kg)) {
+    const weight = pet.weight_kg == null ? null : Math.round(Number(pet.weight_kg) * 1000)
+    const min = service.min_weight_grams ?? (service.min_weight_kg == null ? null : Math.round(service.min_weight_kg * 1000))
+    const max = service.max_weight_grams ?? (service.max_weight_kg == null ? null : Math.round(service.max_weight_kg * 1000))
+    if (weight !== null && min !== null && weight < min) {
       return { error: Response.json({ code: 'SERVICE_WEIGHT_MISMATCH', service_code: code }, { status: 409 }) }
     }
-    if (weight !== null && service.max_weight_kg !== null && weight > Number(service.max_weight_kg)) {
+    if (weight !== null && max !== null && weight > max) {
       return { error: Response.json({ code: 'SERVICE_WEIGHT_MISMATCH', service_code: code }, { status: 409 }) }
     }
 
@@ -305,8 +309,8 @@ async function resolveServiceSnapshots(
       duration_min: Number(service.default_duration_min || 60),
       commission_type: 'percentage',
       commission_rate: Number(service.commission_basis_points || 0) / 100,
-      min_weight_kg: service.min_weight_kg,
-      max_weight_kg: service.max_weight_kg,
+      min_weight_kg: min === null ? null : min / 1000,
+      max_weight_kg: max === null ? null : max / 1000,
       species_target: service.species_target,
       benefit_used: requested.benefit_used === true,
     })

@@ -102,14 +102,18 @@ export function serviceSpeciesLabel(service = {}, { genericLabel = 'Cães e gato
 }
 
 export function serviceWeightRange(service = {}) {
+  const minGrams = finiteWeight(service.min_weight_grams)
+  const maxGrams = finiteWeight(service.max_weight_grams)
   const explicitMin = finiteWeight(
-    service.min_weight_kg
+    (minGrams === null ? null : minGrams / 1000)
+    ?? service.min_weight_kg
     ?? service.minWeightKg
     ?? service.weight_min_kg
     ?? service.weightMinKg,
   )
   const explicitMax = finiteWeight(
-    service.max_weight_kg
+    (maxGrams === null ? null : maxGrams / 1000)
+    ?? service.max_weight_kg
     ?? service.maxWeightKg
     ?? service.weight_max_kg
     ?? service.weightMaxKg,
@@ -123,6 +127,10 @@ export function serviceWeightRange(service = {}) {
       source: 'configured',
     }
   }
+
+  // O catálogo nativo permite remover a restrição, mesmo que o nome cite um porte.
+  if (['min_weight_grams', 'max_weight_grams', 'min_weight_kg', 'max_weight_kg']
+    .some((key) => Object.prototype.hasOwnProperty.call(service, key))) return null
 
   const text = appointmentServiceText(service)
   const parsedText = parseWeightFromText(text)
@@ -150,8 +158,9 @@ export function serviceWeightRange(service = {}) {
 }
 
 export function serviceFitsPetWeight(service = {}, weightKg = null) {
-  const weight = finiteWeight(weightKg)
-  if (weight === null) return true
+  const rawWeight = finiteWeight(weightKg)
+  if (rawWeight === null) return true
+  const weight = Math.round(rawWeight * 1000) / 1000
   const range = serviceWeightRange(service)
   if (!range) return true
 
@@ -166,7 +175,7 @@ export function serviceWeightRangeLabel(service = {}, { genericLabel = 'Todos os
   const range = serviceWeightRange(service)
   if (!range) return genericLabel
 
-  const fmt = (value) => Number(value).toLocaleString('pt-BR', { maximumFractionDigits: 2 })
+  const fmt = (value) => Number(value).toLocaleString('pt-BR', { maximumFractionDigits: 3 })
   if (range.min !== null && range.max !== null) {
     return range.minExclusive
       ? `mais de ${fmt(range.min)} até ${fmt(range.max)} kg`
