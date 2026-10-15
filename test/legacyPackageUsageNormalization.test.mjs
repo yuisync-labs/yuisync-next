@@ -86,3 +86,31 @@ describe('legacy package usage normalization', () => {
     assert.deepEqual(JSON.parse(result.collections.client_subscriptions[0].benefit_ledger_base_used_json), { banho:1 })
   })
 })
+
+it('excludes excess transport without changing the historical package commission association', () => {
+  const source = sourceWithCompletedUsage({ capacity: 4, aggregate: 4, completed: 5 })
+  source.tables.subscription_plans[0].services.push({ service_type:'motodog',qty_per_cycle:4 })
+  source.tables.client_subscriptions[0].services_used.motodog = 4
+  for (const appointment of source.tables.appointments) {
+    appointment.subscription_benefits = [{ kind:'transport',key:'motodog',status:'consumed',catalog_price:20 }]
+  }
+  Object.assign(source.tables.appointments[4], {
+    price:130,subscription_benefit_used:true,subscription_label:'Plano com transporte',subscription_discount:20,
+    service_items:[{ code:'banho',unit_price:130,benefit_used:false,commission_rate:10 }],
+  })
+  const result = projectLegacyCanonicalSnapshot(source, {
+    tenantId:tenant_id,moduleId:module_id,
+    reconciliationOverrides:[{ action:'exclude_subscription_benefit',appointment_id:'appointment-5',benefit_key:'motodog',preserve_historical_billing:true }],
+  })
+  const appointment = result.collections.appointments.find(row => row.id === 'appointment-5')
+  const service = result.collections.appointment_services.find(row => row.appointment_id === 'appointment-5')
+  assert.equal(appointment.subscription_id,'subscription-1')
+  assert.equal(appointment.subscription_benefit_used,1)
+  assert.equal(appointment.subscription_discount_cents,2000)
+  assert.equal(appointment.subtotal_cents,13000)
+  assert.equal(appointment.subscription_benefit_status,'released')
+  assert.equal(service.commission_basis_points,1000)
+  assert.equal(service.benefit_used,0)
+  assert.equal(result.collections.subscription_benefit_allocations.length,4)
+  assert.equal(result.collections.subscription_benefit_allocations.some(row => row.appointment_id === 'appointment-5'),false)
+})
