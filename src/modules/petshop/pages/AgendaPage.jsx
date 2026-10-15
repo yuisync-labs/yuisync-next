@@ -49,6 +49,7 @@ import {
 import { normalizeTransportOptions } from './agendaOperationalCore'
 import { appointmentCheckoutTotals, appointmentNeedsPayment, queueAppointmentCheckout } from './appointmentCheckoutFlow'
 import { AgendaBillingLabel } from '../components/AgendaBillingLabel'
+import { AgendaStaffControls } from '../components/AgendaStaffControls'
 import { appointmentPackagePresentation } from '../lib/appointmentBillingPresentation'
 import { appointmentRequiresGroomingMachineNumber } from '../lib/groomingMachinePolicy'
 import { buildAgendaStats } from '../lib/agendaStats'
@@ -1295,7 +1296,13 @@ export function AgendaTimelineView({
     const columns = divideByStaff
       ? agendaStaffColumns([...staffById.values()], blocking)
       : [{ key: '', name: 'Agendamentos' }]
-    const gridColumns = `76px repeat(${columns.length}, minmax(260px, 1fr))`
+    const activeKeys = new Set(columns.map((person) => person.key))
+    const withoutColumn = divideByStaff
+      ? blocking.filter((appointment) => !activeKeys.has(appointment.responsible_staff_key || ''))
+      : []
+    const gridColumns = columns.length
+      ? `76px repeat(${columns.length}, minmax(260px, 1fr))`
+      : '76px minmax(260px, 1fr)'
 
     return (
       <div className="bg-card border border-[var(--border)] rounded-xl2 overflow-hidden">
@@ -1318,6 +1325,7 @@ export function AgendaTimelineView({
                 {person.name}{person.active === false ? ' (inativa)' : ''}
               </div>
             ))}
+            {columns.length === 0 && <div className="border-b border-l border-[var(--border)] p-3 text-sm text-muted">Nenhuma esteticista ativa</div>}
             <div data-agenda-time-column="true" className="relative bg-surface/35" style={{ height: timelineHeight }}>
               {slots.map((minute, index) => (
                 <div
@@ -1330,6 +1338,7 @@ export function AgendaTimelineView({
               ))}
             </div>
 
+            {columns.length === 0 && <div className="border-l border-[var(--border)] p-5 text-sm text-muted">Ative uma esteticista nos marcadores da agenda para usar as colunas.</div>}
             {columns.map((person) => {
               const columnAppointments = divideByStaff
                 ? blocking.filter((item) => (item.responsible_staff_key || '') === person.key)
@@ -1352,7 +1361,7 @@ export function AgendaTimelineView({
                     />
                   ))}
 
-                  {positioned.map(({ item: appt, bounds, lane, laneCount }) => {
+                  {positioned.map(({ item: appt, bounds, lane, laneCount, laneSpan }) => {
                     if (!bounds) return null
                     const startMinute = minutesOfDay(bounds.start)
                     const endMinute = minutesOfDay(bounds.end)
@@ -1367,7 +1376,7 @@ export function AgendaTimelineView({
                           top,
                           height,
                           left: `calc(${lane * laneWidth}% + 4px)`,
-                          width: `calc(${laneWidth}% - 8px)`,
+                          width: `calc(${laneWidth * laneSpan}% - 8px)`,
                         }}
                       >
                         {appointmentCard(appt)}
@@ -1379,6 +1388,16 @@ export function AgendaTimelineView({
             })}
           </div>
         </div>
+
+        {withoutColumn.length > 0 && (
+          <section data-agenda-pending-assignments="true" className="border-t border-amber-400/20 bg-amber-500/5 p-3">
+            <p className="text-sm font-semibold text-text">Atendimentos sem coluna ativa ({withoutColumn.length})</p>
+            <p className="mb-3 mt-1 text-xs text-muted">Escolha uma esteticista ativa ao editar ou arraste o card para a coluna desejada. Os responsaveis existentes sao preservados.</p>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {withoutColumn.map((appointment) => <div key={appointment.id} className="h-40 min-w-0">{appointmentCard(appointment)}</div>)}
+            </div>
+          </section>
+        )}
 
         {history.length > 0 && (
           <div className="border-t border-[var(--border)] p-3">
@@ -1699,6 +1718,8 @@ export default function AgendaPage({ setPage, agendaPeriod: controlledAgendaPeri
           )
         })}
       </Card>
+
+      {activeAgendaTab === 'banho_tosa' && <AgendaStaffControls />}
 
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 yuisync-agenda-controls">

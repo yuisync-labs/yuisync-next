@@ -11,7 +11,7 @@ export const MANUAL_SLOT_CAPACITY = 4
 
 export function agendaVisualLaneCount(concurrent = 0) {
   const count = Math.max(0, Math.trunc(Number(concurrent) || 0))
-  return count <= 2 ? 2 : count
+  return Math.max(1, count)
 }
 
 const validTime = (value) => {
@@ -53,7 +53,19 @@ export function layoutAgendaOverlapClusters(items = [], getBounds = (item) => it
       return { ...entry, lane }
     })
     const laneCount = agendaVisualLaneCount(laneEnds.length)
-    clusterPositions.forEach(({ item, bounds, lane }) => positioned.push({ item, bounds, lane, laneCount }))
+    clusterPositions.forEach((entry) => {
+      let laneSpan = 1
+      // Expand into free lanes only when they stay free for the whole card.
+      for (let nextLane = entry.lane + 1; nextLane < laneCount; nextLane += 1) {
+        const occupied = clusterPositions.some((other) => (
+          other.lane === nextLane && other.startMs < entry.endMs && other.endMs > entry.startMs
+        ))
+        if (occupied) break
+        laneSpan += 1
+      }
+      const { item, bounds, lane } = entry
+      positioned.push({ item, bounds, lane, laneCount, laneSpan })
+    })
     cluster = []
     clusterEnd = Number.NEGATIVE_INFINITY
   }
