@@ -1,6 +1,7 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 import { sendCustomerOnboardingInviteForOrder } from './customerOnboardingApi'
 import { isPlatformAdmin } from './platformAuthorization'
+import { syncTenantPlanAccess } from './tenantPlanAccess'
 
 export type PlatformBillingBindings = BetterAuthRuntimeBindings & {
   DB?: D1Database
@@ -296,6 +297,22 @@ function subscriptionPeriod(subscription: JsonObject, key: 'current_period_start
   return epochMillis(first[key])
 }
 
+async function syncPlanAccessFromSubscription(database: D1Database, subscriptionId: string): Promise<void> {
+  const subscription = await database.prepare(`
+    SELECT tenant_id,plan_code,status
+    FROM platform_billing_subscriptions
+    WHERE stripe_subscription_id=?1
+    LIMIT 1
+  `).bind(subscriptionId).first<{ tenant_id: string | null; plan_code: PlanCode; status: string }>()
+  if (!subscription?.tenant_id) return
+  await syncTenantPlanAccess(database, {
+    tenantId: subscription.tenant_id,
+    plan: subscription.plan_code,
+    status: subscription.status,
+    source: 'stripe',
+  })
+}
+
 async function processCheckoutEvent(database: D1Database, type: string, payload: JsonObject): Promise<void> {
   const now = Date.now()
   const metadata = object(payload.metadata)
@@ -327,6 +344,7 @@ async function processCheckoutEvent(database: D1Database, type: string, payload:
     ON CONFLICT(stripe_subscription_id) DO UPDATE SET
       stripe_customer_id=excluded.stripe_customer_id,status=excluded.status,updated_at_ms=excluded.updated_at_ms
   `).bind(`billing_${subscriptionId}`, orderId, order.tenant_id, order.plan_code, order.billing_cycle, customerId, subscriptionId, billingStatus, now).run()
+  await syncPlanAccessFromSubscription(database, subscriptionId)
 }
 
 async function processSubscriptionEvent(database: D1Database, type: string, payload: JsonObject): Promise<void> {
@@ -354,6 +372,7 @@ async function processSubscriptionEvent(database: D1Database, type: string, payl
         stripe_customer_id=COALESCE(excluded.stripe_customer_id,platform_billing_subscriptions.stripe_customer_id),updated_at_ms=excluded.updated_at_ms
     `).bind(`billing_${subscriptionId}`, orderId, tenantId, planCode, cycle, customerId, subscriptionId, status,
       subscriptionPeriod(payload, 'current_period_start'), subscriptionPeriod(payload, 'current_period_end'), payload.cancel_at_period_end === true ? 1 : 0, now).run()
+    await syncPlanAccessFromSubscription(database, subscriptionId)
     return
   }
 
@@ -361,6 +380,7 @@ async function processSubscriptionEvent(database: D1Database, type: string, payl
     UPDATE platform_billing_subscriptions SET status=?1,current_period_start_ms=?2,current_period_end_ms=?3,
       cancel_at_period_end=?4,updated_at_ms=?5 WHERE stripe_subscription_id=?6
   `).bind(status, subscriptionPeriod(payload, 'current_period_start'), subscriptionPeriod(payload, 'current_period_end'), payload.cancel_at_period_end === true ? 1 : 0, now, subscriptionId).run()
+  await syncPlanAccessFromSubscription(database, subscriptionId)
 }
 
 async function processInvoiceEvent(database: D1Database, type: string, payload: JsonObject): Promise<void> {
@@ -371,6 +391,7 @@ async function processInvoiceEvent(database: D1Database, type: string, payload: 
   const status = type === 'invoice.payment_failed' ? 'past_due' : 'active'
   await database.prepare('UPDATE platform_billing_subscriptions SET status=?1,updated_at_ms=?2 WHERE stripe_subscription_id=?3')
     .bind(status, Date.now(), subscriptionId).run()
+  await syncPlanAccessFromSubscription(database, subscriptionId)
 }
 
 async function webhook(request: Request, bindings: PlatformBillingBindings): Promise<Response> {

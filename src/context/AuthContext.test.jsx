@@ -17,8 +17,20 @@ vi.mock('../lib/api', () => ({
 }))
 
 function Probe() {
-  const { activeTenantId } = useAuthCtx()
-  return <output data-testid="active-tenant">{activeTenantId || 'none'}</output>
+  const {
+    activeTenantId,
+    activePlanSlug,
+    activePlanModules,
+    hasPlanModule,
+  } = useAuthCtx()
+  return (
+    <div>
+      <output data-testid="active-tenant">{activeTenantId || 'none'}</output>
+      <output data-testid="active-plan">{activePlanSlug || 'none'}</output>
+      <output data-testid="active-plan-modules">{activePlanModules.join(',')}</output>
+      <output data-testid="can-use-ai">{String(hasPlanModule('petbot_ai'))}</output>
+    </div>
+  )
 }
 
 function renderProvider() {
@@ -71,5 +83,51 @@ describe('AuthProvider tenant persistence', () => {
 
     expect(screen.getByTestId('active-tenant')).toHaveTextContent('tenant-qa')
     expect(localStorage.getItem('@yui_active_tenant')).toBe('tenant-qa')
+  })
+
+  it('exposes normalized plan information for the active tenant', () => {
+    authState = {
+      ...authState,
+      session: { user: { id: 'user-1' } },
+      profile: { id: 'user-1', role: 'member' },
+      bootstrap: {
+        profile: { id: 'user-1', role: 'member' },
+        tenants: [{
+          id: 'tenant-prime',
+          name: 'PetShop Prime',
+          role: 'owner',
+          enabled_modules: ['petshop'],
+          module_permissions: { petshop: 'admin_pet' },
+          plan_code: 'prime',
+        }],
+      },
+      loading: false,
+    }
+
+    renderProvider()
+
+    expect(screen.getByTestId('active-tenant')).toHaveTextContent('tenant-prime')
+    expect(screen.getByTestId('active-plan')).toHaveTextContent('yui-prime-ia')
+    expect(screen.getByTestId('active-plan-modules')).toHaveTextContent('petbot_ai')
+    expect(screen.getByTestId('can-use-ai')).toHaveTextContent('true')
+  })
+
+  it('keeps legacy tenant access permissive when no commercial plan exists', () => {
+    authState = {
+      ...authState,
+      session: { user: { id: 'user-1' } },
+      profile: { id: 'user-1', role: 'member' },
+      bootstrap: {
+        profile: { id: 'user-1', role: 'member' },
+        tenants: [{ id: 'tenant-legacy', name: 'PetShop Legado', enabled_modules: ['petshop'] }],
+      },
+      loading: false,
+    }
+
+    renderProvider()
+
+    expect(screen.getByTestId('active-plan')).toHaveTextContent('none')
+    expect(screen.getByTestId('active-plan-modules')).toHaveTextContent('')
+    expect(screen.getByTestId('can-use-ai')).toHaveTextContent('true')
   })
 })

@@ -5,6 +5,7 @@ import { Card } from './ui'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useAuthCtx } from '../context/AuthContext'
 import YuiSyncMark from '../public/components/YuiSyncMark'
+import { canAccessPlanItem } from '../config/planEntitlements'
 import './Sidebar.css'
 
 function initialSidebarCollapsed() {
@@ -15,7 +16,7 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
   const isAdminGlobal = profile?.role === 'admin'
   const userModuleRole = (profile?.module_permissions || {})[activeModule.id]
   const location = useLocation()
-  const { tenants = [], activeTenantId, tenantLoading, switchTenant, visualPreview } = useAuthCtx()
+  const { tenants = [], activeTenant, activeTenantId, tenantLoading, switchTenant, visualPreview } = useAuthCtx()
   const [switchingTenant, setSwitchingTenant] = useState(false)
   const [collapsed, setCollapsed] = useState(initialSidebarCollapsed)
   const [expandedContentVisible, setExpandedContentVisible] = useState(() => !initialSidebarCollapsed())
@@ -28,9 +29,10 @@ export function Sidebar({ profile, onLogout, open, setOpen, storeSettings, activ
   ]
 
   const hasAccessToItem = (item) => {
-    if (isAdminGlobal) return true
-    if (!item.roles) return true
-    return item.roles.includes(userModuleRole)
+    const roleAllowed = isAdminGlobal || !item.roles || item.roles.includes(userModuleRole)
+    if (!roleAllowed || !canAccessPlanItem(item, activeTenant)) return false
+    if (item.id === 'primeiros-passos' && activeTenant?.onboarding_status === 'completed') return false
+    return true
   }
 
   const renderNavGroup = (title, items) => {

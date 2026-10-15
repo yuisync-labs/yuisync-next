@@ -15,6 +15,7 @@ import AIHoursSavedCard from '../components/AIHoursSavedCard'
 import { buildAIHoursFromScopedSessions } from '../utils/aiHoursSaved'
 import { dashboardAppointmentServiceLabel } from '../lib/appointmentServices'
 import { EmptyState, LoadingState } from '../../../components/PageState'
+import { hasPlanModule } from '../../../config/planEntitlements'
 
 function RevenueMixCard({ value, sub, mix = [], onClick }) {
   const chartData = (mix || []).slice(0, 5)
@@ -122,6 +123,11 @@ export default function DashboardPage({ setPage }) {
 
   const isAdmin = auth?.profile?.role === 'admin'
     || (auth?.profile?.module_permissions || {})[activeModuleId]?.startsWith('admin_')
+  const planModules = auth?.activePlanModules || auth?.activeTenant?.allowed_modules || []
+  const tenantHasPlanModule = auth?.hasPlanModule || ((moduleId) => hasPlanModule(planModules, moduleId))
+  const hasWhatsapp = tenantHasPlanModule('whatsapp_basic')
+  const hasPetbotAi = tenantHasPlanModule('petbot_ai')
+  const hasAiSatisfaction = tenantHasPlanModule('ai_satisfaction')
 
   const { getCriticalStock } = useProducts()
   const { load, appointments, todayStats, serviceLabel, statusBadge } = useAppointments()
@@ -143,16 +149,17 @@ export default function DashboardPage({ setPage }) {
     secondaryInFlightRef.current = true
     setSecondaryLoading(true)
     try {
-      await Promise.all([
+      const secondaryTasks = [
         loadMetrics(),
         getCriticalStock().then(setCritical),
-        getChatResolutionMetrics().then(setChatQuality),
-      ])
+      ]
+      if (hasWhatsapp) secondaryTasks.push(getChatResolutionMetrics().then(setChatQuality))
+      await Promise.all(secondaryTasks)
     } finally {
       secondaryInFlightRef.current = false
       setSecondaryLoading(false)
     }
-  }, [loadMetrics, getCriticalStock, getChatResolutionMetrics])
+  }, [loadMetrics, getCriticalStock, getChatResolutionMetrics, hasWhatsapp])
 
   const scheduleSecondaryContent = useCallback(() => {
     if (document.hidden) return
@@ -181,18 +188,19 @@ export default function DashboardPage({ setPage }) {
     setLoading(true)
 
     try {
-      await Promise.all([
+      const primaryTasks = [
         load({ date: todayISO() }),
-        loadSessions('bot'),
         getDailyStats().then(setStats),
-      ])
+      ]
+      if (hasWhatsapp) primaryTasks.push(loadSessions('bot'))
+      await Promise.all(primaryTasks)
       setLoading(false)
       scheduleSecondaryContent()
     } finally {
       refreshInFlightRef.current = false
       setLoading(false)
     }
-  }, [load, loadSessions, getDailyStats, scheduleSecondaryContent])
+  }, [load, loadSessions, getDailyStats, scheduleSecondaryContent, hasWhatsapp])
 
   useEffect(() => {
     const intervalMs = isFluidMode ? 120_000 : 60_000
@@ -241,13 +249,13 @@ export default function DashboardPage({ setPage }) {
       </div>
 
       <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-12">
-        <AIHoursSavedCard
+        {hasPetbotAi && <AIHoursSavedCard
           className="md:col-span-2 xl:col-span-8"
           totalHours={aiHoursScoped.totalHours}
           savedHours={aiHoursScoped.savedHours}
           series={aiHoursScoped.series}
-        />
-        <div className="xl:col-span-4 h-full">
+        />}
+        <div className={`${hasPetbotAi ? 'xl:col-span-4' : 'md:col-span-2 xl:col-span-12'} h-full`}>
           {isAdmin ? (
             <RevenueMixCard
               value={fmtCurrency(stats.revenue)}
@@ -255,13 +263,21 @@ export default function DashboardPage({ setPage }) {
               mix={stats.salesMix}
               onClick={() => setPage('vendas')}
             />
-          ) : (
+          ) : hasWhatsapp ? (
             <MetricCard
               icon={MessageSquare}
               label="Iniciações de chat"
               value={openChats}
               description={`${openChats} atendimentos ativos`}
               onClick={() => setPage('chat')}
+            />
+          ) : (
+            <MetricCard
+              icon={ShoppingCart}
+              label="Vendas hoje"
+              value={stats.count}
+              description="Movimentações registradas no PDV"
+              onClick={() => setPage('vendas')}
             />
           )}
         </div>
@@ -285,7 +301,7 @@ export default function DashboardPage({ setPage }) {
             onClick={() => setPage('estoque')}
           />
         </div>
-        <div className="xl:col-span-4 h-full">
+        {hasWhatsapp && <div className="xl:col-span-4 h-full">
           <MetricCard
             icon={MessageSquare}
             label="Chats ativos"
@@ -293,8 +309,8 @@ export default function DashboardPage({ setPage }) {
             description={`${sessions.filter(s => s.status === 'bot').length} no bot`}
             onClick={() => setPage('chat')}
           />
-        </div>
-        <div className="xl:col-span-4 h-full">
+        </div>}
+        {hasAiSatisfaction && <div className="xl:col-span-4 h-full">
           <MetricCard
             icon={Star}
             label="Satisfação IA"
@@ -302,8 +318,8 @@ export default function DashboardPage({ setPage }) {
             description={`${chatQuality.csatCount} ${chatQuality.csatCount === 1 ? 'avaliação coletada' : 'avaliações coletadas'}`}
             onClick={() => setPage('chat')}
           />
-        </div>
-        <div className="xl:col-span-4 h-full">
+        </div>}
+        {hasWhatsapp && <div className="xl:col-span-4 h-full">
           <MetricCard
             icon={UserCheck}
             label="Chats encerrados"
@@ -311,8 +327,8 @@ export default function DashboardPage({ setPage }) {
             description={`${chatQuality.aiResolved} IA • ${chatQuality.humanResolved} humano${chatQuality.unclassifiedResolved ? ` • ${chatQuality.unclassifiedResolved} sem autoria` : ''}`}
             onClick={() => setPage('chat')}
           />
-        </div>
-        <div className="xl:col-span-4 h-full">
+        </div>}
+        {hasPetbotAi && <div className="xl:col-span-4 h-full">
           <MetricCard
             icon={AlertTriangle}
             label="Alertas PetBot"
@@ -321,7 +337,7 @@ export default function DashboardPage({ setPage }) {
             tone={blockedTotal > 0 ? 'warning' : 'neutral'}
             onClick={() => setPage('chat')}
           />
-        </div>
+        </div>}
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -392,9 +408,9 @@ export default function DashboardPage({ setPage }) {
           <button onClick={() => setPage('pets')} className="btn btn-secondary">
             <PawPrint size={16} /> Cadastrar pet
           </button>
-          <button onClick={() => setPage('chat')} className="btn btn-secondary">
+          {hasWhatsapp && <button onClick={() => setPage('chat')} className="btn btn-secondary">
             <MessageSquare size={16} /> Ver chats
-          </button>
+          </button>}
         </div>
       </Panel>
     </div>
