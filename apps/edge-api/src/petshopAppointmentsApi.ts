@@ -1,5 +1,6 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 import { handleCompatApiRequest, type CompatRuntimeBindings } from './compatApi'
+import { transportDetails } from './appointmentTransport'
 
 type Bindings = BetterAuthRuntimeBindings & CompatRuntimeBindings & { DB?: D1Database }
 type Scope = { tenantId: string; moduleId: string }
@@ -29,6 +30,7 @@ type AppointmentReadRow = {
   transport_label: string | null
   transport_address: string | null
   transport_reference: string | null
+  transport_notes: string | null
   live_status: string | null
   checkin_at_ms: number | null
   ready_at_ms: number | null
@@ -165,8 +167,8 @@ function appointmentPayload(row: AppointmentReadRow) {
     transport_mode: row.transport_mode,
     transport_label: row.transport_label,
     transport_address: row.transport_address,
-    transport_neighborhood: null,
-    transport_city: null,
+    transport_neighborhood: transportDetails(row.transport_notes).neighborhood || null,
+    transport_city: transportDetails(row.transport_notes).city || null,
     transport_reference: row.transport_reference,
     live_status: row.live_status,
     checkin_at: row.checkin_at_ms === null ? null : new Date(row.checkin_at_ms).toISOString(),
@@ -207,7 +209,7 @@ const APPOINTMENT_READ_SQL = `
     a.subtotal_cents,a.notes,a.created_at_ms,a.updated_at_ms,a.employee_id,a.groomer_id,a.grooming_machine_no,
     a.responsible_staff_key,a.responsible_staff_name,a.delivery_staff_key,a.delivery_staff_name,
     t.option_id AS transport_mode,o.label AS transport_label,t.pickup_address AS transport_address,
-    t.pickup_reference AS transport_reference,a.live_status,a.checkin_at_ms,a.ready_at_ms,
+    t.pickup_reference AS transport_reference,t.notes AS transport_notes,a.live_status,a.checkin_at_ms,a.ready_at_ms,
     a.subscription_id,a.subscription_benefit_used,a.subscription_benefit_status,a.subscription_benefits_json,
     a.billing_intent_type,a.billing_intent_subscription_id,
     COALESCE((SELECT json_group_array(json_object(

@@ -1,5 +1,5 @@
 import React from 'react'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import BanhoTosaPdvPanel from './BanhoTosaPdvPanel'
 import { listAppointmentsCommand } from '../lib/appointmentCommands'
@@ -26,7 +26,7 @@ it('mostra os quatro concluidos, dois pagos e dois pendentes, e abre o pagamento
   const sales = [{ id: 's1', appointment_id: 'buddy', total_price: 70 }, { id: 's2', appointment_id: 'chewie', total_price: 75 }]
   mocks.from.mockImplementation(table => {
     expect(table).toBe('sales')
-    const query = { select: () => query, eq: () => query, in: () => query, then: resolve => Promise.resolve({ data: sales }).then(resolve) }
+    const query = { select: () => query, eq: () => query, in: () => query, limit: () => query, then: resolve => Promise.resolve({ data: sales }).then(resolve) }
     return query
   })
   mocks.rpc.mockResolvedValue({ data: { appointment: null }, error: null })
@@ -39,4 +39,43 @@ it('mostra os quatro concluidos, dois pagos e dois pendentes, e abre o pagamento
   for (const id of ['belinha', 'bebe']) expect(within(container.querySelector(`[data-yuisync-appointment-checkout="${id}"]`)).getByText('Aguardando pagamento')).toBeInTheDocument()
   expect(await screen.findByRole('button', { name: 'Confirmar pagamento' })).toBeInTheDocument()
   expect(mocks.rpc).toHaveBeenCalledTimes(2)
+})
+
+it('confirma pagamentos de 15/10 e 16/10, recarrega todos os pagos e não duplica confirmação', async () => {
+  let selectedDay = '2026-10-15'
+  const paid = new Map()
+  const rows = day => ['a', 'b'].map(id => ({ id: `${day}-${id}`, price: 55, status: 'concluido', service_group: 'banho_tosa',
+    scheduled_at: `${day}T12:00:00Z`, pets: { pet_name: `Pet ${id}`, owner_name: 'Tutor' }, service_items: [{ name: 'Banho', unit_price: 55 }] }))
+  sessionStorage.setItem(APPOINTMENT_CHECKOUT_SESSION_KEY, JSON.stringify({ appointment_id: 'missing', date: selectedDay }))
+  vi.mocked(listAppointmentsCommand).mockImplementation(async ({ filters }) => {
+    selectedDay = new Date(filters.start).toLocaleDateString('en-CA')
+    return rows(selectedDay)
+  })
+  mocks.from.mockImplementation(() => {
+    const q = { select: () => q, eq: () => q, in: () => q, limit: vi.fn(() => q), then: resolve => Promise.resolve({ data: [...paid.values()] }).then(resolve) }
+    return q
+  })
+  let finish
+  mocks.rpc.mockImplementation(async (name, args) => {
+    if (name !== 'checkout_petshop_appointment_transaction') return { data: {} }
+    await new Promise(resolve => { finish = resolve })
+    const id = args.p_payload.appointment_id
+    paid.set(id, { id: `sale-${id}`, appointment_id: id, total_price: 55 })
+    return { data: { sale_id: `sale-${id}` } }
+  })
+  const { container } = render(<BanhoTosaPdvPanel />)
+  for (const day of ['2026-10-15', '2026-10-16']) {
+    if (day.endsWith('16')) fireEvent.change(container.querySelector('input[type="date"]'), { target: { value: day } })
+    await waitFor(() => expect(container.querySelector(`[data-yuisync-appointment-checkout="${day}-a"]`)).toBeInTheDocument())
+    for (const id of ['a', 'b']) {
+      const card = () => within(container.querySelector(`[data-yuisync-appointment-checkout="${day}-${id}"]`))
+      fireEvent.click(card().getByRole('button', { name: /Conferir pagamento/ }))
+      const confirm = card().getByRole('button', { name: 'Confirmar pagamento' })
+      fireEvent.click(confirm); fireEvent.click(confirm)
+      await waitFor(() => expect(confirm).toBeDisabled())
+      finish()
+      await waitFor(() => expect(card().getByText('Lancado no caixa')).toBeInTheDocument())
+    }
+  }
+  expect(mocks.rpc.mock.calls.filter(([name]) => name === 'checkout_petshop_appointment_transaction')).toHaveLength(4)
 })
