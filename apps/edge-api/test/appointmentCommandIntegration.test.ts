@@ -227,7 +227,7 @@ describe('appointment command policy in workerd', () => {
       await expect(machineUpdate?.json()).resolves.toEqual({
         data: expect.objectContaining({
           id: firstBody.data.appointment_id,
-          scheduled_at: '2026-10-15 15:30:00',
+          scheduled_at: '2026-10-15T15:30:00.000Z',
           grooming_machine_no: 7,
         }),
         count: null,

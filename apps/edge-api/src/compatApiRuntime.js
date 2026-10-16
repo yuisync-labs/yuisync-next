@@ -5,6 +5,14 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
 const MODULE = /^[a-z0-9][a-z0-9_-]{0,63}$/
 const COLUMN = /^[A-Za-z_][A-Za-z0-9_]*$/
 const MAX_ROWS = 1000
+// These compatibility views expose UTC datetime() strings, rather than ISO
+// timestamps. Compare like formats and return an explicit timezone to browsers.
+const CASH_DATETIME_COLUMNS = Object.freeze({
+  sales: ['created_at', 'updated_at'],
+  sale_payment_splits: ['created_at'],
+  cash_register: ['opened_at', 'closed_at'],
+  appointments: ['scheduled_at', 'created_at', 'updated_at'],
+})
 
 const TABLES = Object.freeze({
   clients: { read: 'compat_clients', write: 'clients-pets' },
@@ -146,15 +154,17 @@ function checkScopeFilters(list, scope) {
     if (String(f.value ?? '') !== expected) throw new Error('SCOPE_MISMATCH')
   }
 }
-function simpleClause(column, op, value, values) {
+function simpleClause(column, op, value, values, datetimeColumns = []) {
   if (!COLUMN.test(column)) throw new Error('INVALID_FILTER')
   if (op === 'is' && value == null) return `${column} IS NULL`
   const sql = ({ eq:'=', neq:'<>', gt:'>', gte:'>=', lt:'<', lte:'<=', ilike:'LIKE' })[op]
   if (!sql) throw new Error('INVALID_FILTER')
   if (op === 'ilike') { values.push(String(value ?? '').toLowerCase()); return `LOWER(CAST(${column} AS TEXT)) LIKE ?` }
-  values.push(scalar(value)); return `${column} ${sql} ?`
+  const datetime = datetimeColumns.includes(column) && typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(value)
+  values.push(scalar(value)); return `${column} ${sql} ${datetime ? 'datetime(?)' : '?'}`
 }
-function whereClause(list, scope, global = false) {
+function whereClause(list, scope, global = false, datetimeColumns = []) {
   checkScopeFilters(list, scope)
   const clauses = global ? [] : ['tenant_id = ?', 'module_id = ?']
   const values = global ? [] : [scope.tenantId, scope.moduleId]
@@ -167,7 +177,7 @@ function whereClause(list, scope, global = false) {
       for (const part of String(f.expression||'').split(',').map((v)=>v.trim()).filter(Boolean)) {
         const match=/^([A-Za-z_][A-Za-z0-9_]*)\.(eq|neq|gt|gte|lt|lte|ilike|is)\.(.*)$/.exec(part)
         if (!match) throw new Error('INVALID_FILTER')
-        local.push(simpleClause(match[1], match[2], match[3] === 'null' ? null : match[3], values))
+        local.push(simpleClause(match[1], match[2], match[3] === 'null' ? null : match[3], values, datetimeColumns))
       }
       if (local.length) clauses.push(`(${local.join(' OR ')})`)
       continue
@@ -188,9 +198,9 @@ function whereClause(list, scope, global = false) {
     if (op === 'contains') { clauses.push(`instr(CAST(${column} AS TEXT), ?) > 0`); values.push(typeof f.value === 'string' ? f.value : jsonString(f.value, null)); continue }
     if (op === 'not') {
       if (f.operator === 'is' && f.value == null) { clauses.push(`${column} IS NOT NULL`); continue }
-      clauses.push(`NOT (${simpleClause(column,String(f.operator||''),f.value,values)})`); continue
+      clauses.push(`NOT (${simpleClause(column,String(f.operator||''),f.value,values,datetimeColumns)})`); continue
     }
-    clauses.push(simpleClause(column,op,f.value,values))
+    clauses.push(simpleClause(column,op,f.value,values,datetimeColumns))
   }
   return { sql: clauses.length ? clauses.join(' AND ') : '1=1', values }
 }
@@ -207,6 +217,11 @@ function page(body) {
 
 function normalize(table, row) {
   const r={...row}
+  for (const column of CASH_DATETIME_COLUMNS[table] || []) {
+    if (typeof r[column] === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(r[column])) {
+      r[column] = new Date(`${r[column].replace(' ', 'T')}Z`).toISOString()
+    }
+  }
   for (const key of ['details','bot_metadata','service_items','subscription_benefits','services','services_used','tags','metadata','context','parsed_intent','raw_response']) if (key in r) r[key]=jsonValue(r[key], ['service_items','services','tags'].includes(key)?[]:{})
   if (table==='loyalty_settings') return {tenant_id:r.tenant_id,module_id:r.module_id,enabled:Boolean(r.enabled),points_per_real:num(r.points_per_currency),redemption_rate:num(r.redemption_rate_cents)/100,...obj(jsonValue(r.data_json,{})),updated_at:iso(r.updated_at_ms)}
   if (table==='loyalty_points') return {...r,points:num(r.points_delta),expires_at:iso(r.expires_at_ms),created_at:iso(r.created_at_ms)}
@@ -238,7 +253,7 @@ async function readSettings(db, scope) {
 
 export async function selectRows(db, table, config, body, scope) {
   if (table==='settings') { const rows=await readSettings(db,scope); return {rows,count:rows.length} }
-  const w=whereClause(filters(body.filters),scope,config.global===true)
+  const w=whereClause(filters(body.filters),scope,config.global===true,CASH_DATETIME_COLUMNS[table] || [])
   const order=orderClause(orders(body.orders)), p=page(body)
   const result=await db.prepare(`SELECT * FROM ${config.read} WHERE ${w.sql}${order} LIMIT ? OFFSET ?`).bind(...w.values,p.limit,p.offset).all()
   const count=body.count==='exact'
