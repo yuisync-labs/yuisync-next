@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Banknote,
   Calendar,
@@ -257,6 +257,11 @@ export default function BanhoTosaPdvPanel({ setPage }) {
   ])
   const [checkoutError, setCheckoutError] = useState('')
   const [checkingOut, setCheckingOut] = useState(false)
+  const loadSequence = useRef(0)
+  const checkoutInFlight = useRef(false)
+  const viewKey = `${activeTenantId}:${moduleId}:${date}`
+  const currentView = useRef(viewKey)
+  currentView.current = viewKey
   const transportOptions = useMemo(() => normalizeTransportOptions(storeSettings), [storeSettings])
   const runScoped = useCallback(
     (runner) => runWithTenantFallback(activeTenantId, runner),
@@ -281,7 +286,8 @@ export default function BanhoTosaPdvPanel({ setPage }) {
   }, [syncQueuedCheckout])
 
   const reload = useCallback(async () => {
-    if (!activeTenantId) return
+    if (!activeTenantId || currentView.current !== viewKey) return
+    const sequence = ++loadSequence.current
     setLoading(true)
     setLoadError('')
     try {
@@ -302,7 +308,9 @@ export default function BanhoTosaPdvPanel({ setPage }) {
             .from('sales')
             .select('id,appointment_id,total_price,subtotal,discount,payment_method,status,created_at')
             .eq('module_id', moduleId)
+            .eq('status', 'concluido')
             .in('appointment_id', ids)
+            .limit(ids.length)
           return applyTenantFilter(query, activeTenantId, includeTenant)
         })
         if (salesResponse.error) throw salesResponse.error
@@ -326,19 +334,21 @@ export default function BanhoTosaPdvPanel({ setPage }) {
         return reconciled ? { ...appointment, ...reconciled, client: appointment.client } : appointment
       }))
 
+      if (sequence !== loadSequence.current) return
       setAppointments(appointmentRows)
       setSales(saleRows)
     } catch (error) {
+      if (sequence !== loadSequence.current) return
       const message = String(error?.message || '')
       setLoadError(message.includes('appointment_id')
         ? 'Aplique a migration 20260729093000_petshop_appointment_pdv_checkout.sql antes de usar o fechamento.'
         : message || 'Nao foi possivel carregar os atendimentos concluidos.')
     } finally {
-      setLoading(false)
+      if (sequence === loadSequence.current) setLoading(false)
     }
-  }, [activeTenantId, date, moduleId, runScoped])
+  }, [activeTenantId, date, moduleId, runScoped, viewKey])
 
-  useEffect(() => { void reload() }, [reload])
+  useEffect(() => { void reload(); return () => { loadSequence.current += 1 } }, [reload])
 
   const salesByAppointment = useMemo(
     () => new Map(sales.map((sale) => [String(sale.appointment_id), sale])),
@@ -366,6 +376,8 @@ export default function BanhoTosaPdvPanel({ setPage }) {
   }
 
   async function checkout(appointment, totals) {
+    if (checkoutInFlight.current) return
+    checkoutInFlight.current = true
     setCheckingOut(true)
     setCheckoutError('')
     try {
@@ -392,6 +404,7 @@ export default function BanhoTosaPdvPanel({ setPage }) {
         },
       })
       if (response.error) throw response.error
+      if (!response.data?.sale_id) throw new Error('O servidor não confirmou o pagamento. Atualize a lista antes de tentar novamente.')
 
       setActiveId(null)
       setFocusedId(null)
@@ -400,6 +413,7 @@ export default function BanhoTosaPdvPanel({ setPage }) {
     } catch (error) {
       setCheckoutError(error?.message || 'Nao foi possivel lancar o atendimento no caixa.')
     } finally {
+      checkoutInFlight.current = false
       setCheckingOut(false)
     }
   }

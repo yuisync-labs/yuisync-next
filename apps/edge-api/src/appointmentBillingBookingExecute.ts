@@ -1,3 +1,4 @@
+import { appointmentTransportStatements, transportCommandError } from './appointmentTransport'
 import type { CompatRuntimeBindings } from './compatApiRuntime.js'
 import { billingAppointmentStatement } from './appointmentBillingCoreStatement'
 import { billingServiceStatement } from './appointmentBillingServiceStatement'
@@ -10,11 +11,14 @@ export async function executeBillingBooking(env:CompatRuntimeBindings,payload:Re
  if(!env.DB)return json({code:'DATABASE_NOT_CONFIGURED'},503)
  const{party,items,allocations,intent,identity}=context,now=Date.now(),covered=new Set(allocations.map((a)=>a.position))
  const billingType:intentType = intent.type==='subscription'||(intent.type==='auto'&&allocations.length>0)?'subscription':'standalone'
+ let transport:D1PreparedStatement[]
+ try{transport=await appointmentTransportStatements(env.DB,{tenantId:party.tenantId!,moduleId:party.moduleId!,appointmentId:identity.appointmentId},payload)}catch(error){return transportCommandError(error)||json({code:'APPOINTMENT_TRANSPORT_FAILED'},500)}
  const statements:D1PreparedStatement[]=[
   env.DB.prepare(`INSERT INTO appointment_command_registry(tenant_id,module_id,operation_key,appointment_id,operation_fingerprint,status,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,'completed',?6,?6)`).bind(party.tenantId,party.moduleId,identity.operationKey,identity.appointmentId,identity.fingerprint,now),
   billingAppointmentStatement(env.DB,{tenantId:party.tenantId!,moduleId:party.moduleId!,clientId:party.clientId!,petId:party.petId!,appointmentId:identity.appointmentId,operationKey:identity.operationKey,fingerprint:identity.fingerprint,payload,items,allocations,billingType,now}),
   ...items.map((item,position)=>billingServiceStatement(env.DB!,{tenantId:party.tenantId!,moduleId:party.moduleId!,appointmentId:identity.appointmentId},item,position,covered.has(position))),
   ...billingAllocationStatements(env.DB,{tenantId:party.tenantId!,moduleId:party.moduleId!,appointmentId:identity.appointmentId,allocations,now}),
+  ...transport,
  ]
  try{await env.DB.batch(statements)}catch(error){
   const message=error instanceof Error?error.message:String(error)

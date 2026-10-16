@@ -1,3 +1,4 @@
+import { appointmentTransportStatements, transportCommandError } from './appointmentTransport'
 import type { CompatRuntimeBindings } from './compatApiRuntime.js'
 import { billingAppointmentUpdateStatement } from './appointmentBillingUpdateStatement'
 import { guardedBillingServiceInsert } from './appointmentBillingUpdateServiceStatement'
@@ -8,11 +9,14 @@ export async function executeBillingUpdate(env:CompatRuntimeBindings,payload:Rec
  if(!env.DB)return json({code:'DATABASE_NOT_CONFIGURED'},503)
  const{party,current,items,allocations,intent,appointmentId}=context,marker=Date.now(),nextVersion=Number(current.version)+1,covered=new Set<number>(allocations.map((a:any)=>a.position)),scope={tenantId:party.tenantId,moduleId:party.moduleId,appointmentId,nextVersion,marker}
  const billingType=intent.type==='subscription'||(intent.type==='auto'&&allocations.length>0)?'subscription':'standalone'
+ let transport:D1PreparedStatement[]
+ try{transport=await appointmentTransportStatements(env.DB,{tenantId:party.tenantId,moduleId:party.moduleId,appointmentId},payload,current.status,{nextVersion,marker})}catch(error){return transportCommandError(error)||json({code:'APPOINTMENT_TRANSPORT_FAILED'},500)}
  const statements:D1PreparedStatement[]=[
   billingAppointmentUpdateStatement(env.DB,{tenantId:party.tenantId,moduleId:party.moduleId,appointmentId,version:Number(current.version),payload,items,allocations,billingType,now:marker}),
   env.DB.prepare(`DELETE FROM appointment_services WHERE tenant_id=?1 AND module_id=?2 AND appointment_id=?3 AND EXISTS(SELECT 1 FROM appointments a WHERE a.tenant_id=?1 AND a.module_id=?2 AND a.id=?3 AND a.version=?4 AND a.updated_at_ms=?5)`).bind(party.tenantId,party.moduleId,appointmentId,nextVersion,marker),
   ...items.map((item:any,position:number)=>guardedBillingServiceInsert(env.DB!,scope,item,position,covered.has(position))),
   ...billingUpdateAllocationStatements(env.DB,{...scope,allocations}),
+  ...transport,
  ]
  try{await env.DB.batch(statements)}catch(error){const message=error instanceof Error?error.message:String(error);if(message.includes('PACKAGE_BENEFIT_CAPACITY_EXCEEDED'))return json({code:'PACKAGE_BENEFIT_CAPACITY_EXCEEDED'},409);if(message.includes('PACKAGE_ALLOCATION_SCOPE_MISMATCH'))return json({code:'PACKAGE_ALLOCATION_SCOPE_MISMATCH'},409);return json({code:'APPOINTMENT_BILLING_UPDATE_FAILED'},500)}
  const updated=await env.DB.prepare('SELECT version,updated_at_ms FROM appointments WHERE tenant_id=?1 AND module_id=?2 AND id=?3 LIMIT 1').bind(party.tenantId,party.moduleId,appointmentId).first<{version:number;updated_at_ms:number}>()

@@ -115,7 +115,7 @@ describe('appointment command policy in workerd', () => {
         service_type: serviceCode,
         services: [{ code: serviceCode }],
         service_group: 'banho_tosa',
-        scheduled_at: '2026-08-20T13:00:00.000Z',
+        scheduled_at: '2026-10-15T13:00:00.000Z',
         duration_min: 60,
         price: 55,
         status: 'agendado',
@@ -133,7 +133,7 @@ describe('appointment command policy in workerd', () => {
       expect(firstBody.data.appointment_id).toBeTruthy()
 
       const nativeRead = await handlePetshopAppointmentsApiRequest(new Request(
-        'https://edge.test/api/petshop/appointments?start=2026-08-20T00%3A00%3A00-03%3A00&end=2026-08-20T23%3A59%3A59-03%3A00',
+        'https://edge.test/api/petshop/appointments?start=2026-10-15T00%3A00%3A00-03%3A00&end=2026-10-15T23%3A59%3A59-03%3A00',
         {
           headers: {
             cookie,
@@ -148,7 +148,7 @@ describe('appointment command policy in workerd', () => {
           id: firstBody.data.appointment_id,
           client_id: clientId,
           pet_id: petId,
-          scheduled_at: '2026-08-20T13:00:00.000Z',
+          scheduled_at: '2026-10-15T13:00:00.000Z',
           service_type: serviceCode,
           status: 'agendado',
           responsible_staff_key: 'esteticista-1',
@@ -171,12 +171,12 @@ describe('appointment command policy in workerd', () => {
 
       const reusedKey = await book(cookie, tenantId, {
         ...basePayload,
-        scheduled_at: '2026-08-20T14:00:00.000Z',
+        scheduled_at: '2026-10-15T14:00:00.000Z',
       })
       expect(reusedKey.status).toBe(409)
       await expect(reusedKey.json()).resolves.toEqual(expect.objectContaining({ code: 'IDEMPOTENCY_KEY_REUSED' }))
 
-      const updatedScheduledAt = '2026-08-20T15:30:00.000Z'
+      const updatedScheduledAt = '2026-10-15T15:30:00.000Z'
       const update = await handlePetshopAppointmentsApiRequest(new Request(
         `https://edge.test/api/petshop/appointments/${encodeURIComponent(firstBody.data.appointment_id)}`,
         {
@@ -227,7 +227,7 @@ describe('appointment command policy in workerd', () => {
       await expect(machineUpdate?.json()).resolves.toEqual({
         data: expect.objectContaining({
           id: firstBody.data.appointment_id,
-          scheduled_at: '2026-08-20 15:30:00',
+          scheduled_at: '2026-10-15 15:30:00',
           grooming_machine_no: 7,
         }),
         count: null,
@@ -246,6 +246,7 @@ describe('appointment command policy in workerd', () => {
           client_id: petId,
           pet_id: petId,
           idempotency_key: `booking-second-${suffix}`,
+          scheduled_at: '2026-10-16T13:00:00.000Z',
         }),
       }), bindings())
       const secondBody = await second?.json<{ appointment: { id: string; client_id: string; pet_id: string } }>()
@@ -299,7 +300,7 @@ describe('appointment command policy in workerd', () => {
         const changed = await handlePetshopAppointmentsApiRequest(new Request(
           `https://edge.test/api/petshop/appointments/${firstBody.data.appointment_id}`, {
             method: 'PATCH', headers: { 'content-type': 'application/json', cookie, 'x-tenant-id': tenantId, 'x-module-id': 'petshop' },
-            body: JSON.stringify({ ...basePayload, scheduled_at: updatedScheduledAt, service_type: code, services: [{ code }], responsible_staff_key: 'esteticista-2', responsible_staff_name: 'Esteticista 2' }),
+            body: JSON.stringify({ ...basePayload, price: 60, scheduled_at: updatedScheduledAt, service_type: code, services: [{ code }], responsible_staff_key: 'esteticista-2', responsible_staff_name: 'Esteticista 2' }),
           }), bindings())
         expect(changed?.status).toBe(expectedStatus)
         if (expectedStatus === 409) expect(await changed!.json()).toMatchObject({ code: 'SERVICE_WEIGHT_MISMATCH' })
@@ -307,6 +308,43 @@ describe('appointment command policy in workerd', () => {
           .bind(tenantId, firstBody.data.appointment_id).first()
         expect(stored).toMatchObject(expectedStatus === 409 ? { service_code: serviceCode, unit_price_cents: 5500 } : { service_code: code, unit_price_cents: 6000 })
       }
+      await db.prepare("INSERT INTO transport_options(tenant_id,module_id,id,label,fee_cents,pickup_required,dropoff_required,status) VALUES(?1,'petshop','somente_buscar','Somente buscar',1500,1,0,'active')").bind(tenantId).run()
+      const patch = (body: Record<string, unknown>) => handlePetshopAppointmentsApiRequest(new Request(`https://edge.test/api/petshop/appointments/${firstBody.data.appointment_id}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json', cookie, 'x-tenant-id': tenantId, 'x-module-id': 'petshop' }, body: JSON.stringify(body),
+      }), bindings())
+      const transport = await patch({ transport_mode: 'somente_buscar', transport_address: 'Rua do pet, 10', transport_neighborhood: 'Centro', transport_city: 'Muriaé', transport_reference: 'Praça' })
+      expect(transport?.status).toBe(200)
+      expect(await transport!.json()).toMatchObject({ appointment: { transport_mode: 'somente_buscar', transport_address: 'Rua do pet, 10', transport_neighborhood: 'Centro', transport_city: 'Muriaé', transport_reference: 'Praça' } })
+      const unchanged = await patch({ notes: 'Manter motodog' })
+      expect(await unchanged!.json()).toMatchObject({ appointment: { transport_mode: 'somente_buscar', transport_address: 'Rua do pet, 10' } })
+      const invalid = await patch({ transport_mode: 'unknown-mode', notes: 'Não salvar' })
+      expect(invalid?.status).toBe(409)
+      expect(await invalid!.json()).toMatchObject({ code: 'TRANSPORT_OPTION_NOT_AVAILABLE' })
+      const amount = await db.prepare("SELECT subtotal_cents,transport_fee_cents,notes FROM appointments WHERE tenant_id=?1 AND module_id='petshop' AND id=?2").bind(tenantId, firstBody.data.appointment_id).first()
+      expect(amount).toMatchObject({ subtotal_cents: 6000, transport_fee_cents: 1500, notes: 'Manter motodog' })
+      expect((await patch({ transport_mode: 'cliente_leva' }))?.status).toBe(200)
+
+      const rpc = (name: string, args: unknown) => handleCompatApiRequest(new Request('https://edge.test/api/compat/rpc', {
+        method: 'POST', headers: { 'content-type': 'application/json', cookie, 'x-tenant-id': tenantId, 'x-module-id': 'petshop' }, body: JSON.stringify({ name, args }),
+      }), bindings())
+      const appointmentIds = [firstBody.data.appointment_id, secondBody!.appointment.id]
+      for (const id of appointmentIds) {
+        await db.prepare("UPDATE appointments SET status='completed' WHERE tenant_id=?1 AND module_id='petshop' AND id=?2").bind(tenantId, id).run()
+        const payload = { tenant_id: tenantId, module_id: 'petshop', appointment_id: id, payment_method: 'pix', transport_fee: 0 }
+        const firstCheckout = await rpc('checkout_petshop_appointment_transaction', { p_payload: payload })
+        expect(firstCheckout?.status).toBe(200)
+        const sale = await firstCheckout!.json<{ data: { sale_id: string } }>()
+        expect(sale.data.sale_id).toBeTruthy()
+        const replayCheckout = await rpc('checkout_petshop_appointment_transaction', { p_payload: payload })
+        expect(await replayCheckout!.json()).toMatchObject({ data: { sale_id: sale.data.sale_id, idempotent: true } })
+      }
+      const listedSales = await handleCompatApiRequest(new Request('https://edge.test/api/compat/query', {
+        method: 'POST', headers: { 'content-type': 'application/json', cookie, 'x-tenant-id': tenantId, 'x-module-id': 'petshop' },
+        body: JSON.stringify({ table: 'sales', action: 'select', limit: null, range: null, filters: [{ op: 'in', column: 'appointment_id', value: appointmentIds }] }),
+      }), bindings())
+      const sold = await listedSales!.json<{ data: { appointment_id: string }[] }>()
+      expect(sold.data.map(row => row.appointment_id).sort()).toEqual(appointmentIds.sort())
+      expect((await db.prepare("SELECT COUNT(*) n FROM payments WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).first<{ n: number }>())?.n).toBe(2)
       await db.prepare('UPDATE tenant_memberships SET module_permissions_json=?2 WHERE tenant_id=?1').bind(tenantId, JSON.stringify({ petshop: { role: 'admin_pet' } })).run()
       const request = (path: string, method: string, body: unknown) => handlePetshopServicesApiRequest(new Request(`https://edge.test/api/petshop/services${path}`, {
         method, headers: { 'content-type': 'application/json', 'x-tenant-id': tenantId, 'x-module-id': 'petshop', cookie }, body: JSON.stringify(body),
@@ -331,9 +369,13 @@ describe('appointment command policy in workerd', () => {
       expect(await cleared!.json()).toMatchObject({ service: { min_weight_grams: null, max_weight_grams: null } })
       expect((await catalog(7000)).items).toHaveLength(1)
     } finally {
+      await db.prepare("DELETE FROM payments WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
+      await db.prepare("DELETE FROM sale_items WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
+      await db.prepare("DELETE FROM sales WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
       await db.prepare("DELETE FROM appointment_services WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
       await db.prepare("DELETE FROM appointment_transport WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
       await db.prepare("DELETE FROM appointments WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
+      await db.prepare("DELETE FROM transport_options WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
       await db.prepare("DELETE FROM appointment_command_registry WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
       await db.prepare("DELETE FROM services WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()
       await db.prepare("DELETE FROM pets WHERE tenant_id=?1 AND module_id='petshop'").bind(tenantId).run()

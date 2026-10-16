@@ -13,6 +13,8 @@ const ERROR_MESSAGES = Object.freeze({
   PET_NOT_FOUND: 'O pet selecionado não foi encontrado. Atualize os clientes e tente novamente.',
   SERVICE_WEIGHT_MISMATCH: 'Este serviço não atende à faixa de peso cadastrada para o pet selecionado. Confira o peso no cadastro ou escolha um serviço compatível.',
   SERVICE_SPECIES_MISMATCH: 'Este serviço não atende à espécie do pet selecionado. Escolha um serviço compatível.',
+  TRANSPORT_OPTION_NOT_AVAILABLE: 'Este transporte não está disponível. Atualize a agenda e escolha uma opção ativa.',
+  APPOINTMENT_REOPEN_REQUIRED: 'Reabra o atendimento antes de alterar os serviços ou o transporte já concluídos.',
   INVALID_DATE_RANGE: 'O período selecionado para a agenda é inválido.',
 })
 
