@@ -300,7 +300,7 @@ function LegacyClientsImportModal({ onClose, moduleId, tenantId, onDone }) {
 }
 
 export default function PetsPage() {
-  const { clients: pets, loading, load, create, update, remove, speciesIcon, age } = useClients()
+  const { clients: pets, loading, error: clientsError, load, create, update, remove, speciesIcon, age } = useClients()
   const { serviceLabel, statusBadge } = useAppointments()
   const { loadPlans, loadClientSubscriptions, saveClientSubscription } = usePetshopAdvanced()
   const { activeModuleId } = useModuleCtx()
@@ -495,7 +495,7 @@ export default function PetsPage() {
         <button onClick={reloadAll} className="btn btn-secondary"><RefreshCw size={14} /> Atualizar</button>
       </div>
 
-      {pageError && <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">{pageError}</div>}
+      {(pageError || clientsError) && <div role="alert" className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">{pageError || clientsError}</div>}
 
       {!loading && filteredPets.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted">

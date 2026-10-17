@@ -3,13 +3,13 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import PetsPage from './PetsPage'
 
-const mocks = vi.hoisted(() => ({ remove: vi.fn(), load: vi.fn(), subscriptions: [] }))
+const mocks = vi.hoisted(() => ({ remove: vi.fn(), load: vi.fn(), subscriptions: [], clientsError: null }))
 vi.mock('../../../shared/hooks/useClients', () => ({
   useClients: () => ({
     clients: [
       { id: 'rex', tutor_group_id: 'tutor', owner_name: 'Maria', pet_name: 'Rex', species: 'dog' },
       { id: 'luna', tutor_group_id: 'tutor', owner_name: 'Maria', pet_name: 'Luna', species: 'dog' },
-    ], loading: false, load: mocks.load, remove: mocks.remove, speciesIcon: () => () => null,
+    ], loading: false, error: mocks.clientsError, load: mocks.load, remove: mocks.remove, speciesIcon: () => () => null,
   }),
 }))
 vi.mock('../../../shared/hooks/useAppointments', () => ({
@@ -23,7 +23,13 @@ vi.mock('../hooks/usePetshopAdvanced', () => ({
 vi.mock('../../../context/ModuleContext', () => ({ useModuleCtx: () => ({ activeModuleId: 'petshop' }) }))
 vi.mock('../../../context/AuthContext', () => ({ useAuthCtx: () => ({ profile: { role: 'user' } }) }))
 afterEach(cleanup)
-beforeEach(() => { vi.clearAllMocks(); mocks.subscriptions = [] })
+beforeEach(() => { vi.clearAllMocks(); mocks.subscriptions = []; mocks.clientsError = null })
+
+it('mostra falha no carregamento de clientes para não sugerir que os cadastros sumiram', async () => {
+  mocks.clientsError = 'Não foi possível carregar todos os cadastros. Atualize a lista.'
+  render(<PetsPage/>)
+  expect(screen.getByRole('alert')).toHaveTextContent('Não foi possível carregar todos os cadastros')
+})
 
 async function openRemoval() {
   render(<PetsPage/>)
