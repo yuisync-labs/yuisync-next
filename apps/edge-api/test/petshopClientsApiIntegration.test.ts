@@ -82,6 +82,29 @@ describe('native petshop clients API', () => {
       }), bindings())
       await expect(updated?.json()).resolves.toEqual({ client: expect.objectContaining({ id: petId, pet_name: 'Lua Atualizada', weight_kg: 9 }) })
 
+      const extraIds = ['cursor-a', 'cursor-b', 'cursor-c']
+      await db.batch(extraIds.map(id => db.prepare("INSERT INTO pets(tenant_id,module_id,id,client_id,name,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,?3,'Mesmo nome','active',?4,?4)").bind(tenantId, id, clientId, now)))
+      try {
+        const collected: string[] = []
+        let cursor: string | null = null
+        do {
+          const url = new URL('https://edge.test/api/petshop/clients?paginate=1&limit=2')
+          if (cursor) url.searchParams.set('after', cursor)
+          const page = await handlePetshopClientsApiRequest(new Request(url, { headers }), bindings())
+          const body = await page?.json<{ clients: { id: string }[]; next_cursor: string | null }>()
+          expect(page?.status).toBe(200)
+          expect(body?.clients.length).toBeLessThanOrEqual(2)
+          collected.push(...(body?.clients || []).map(row => row.id))
+          cursor = body?.next_cursor || null
+          expect(collected.length).toBeLessThanOrEqual(4)
+        } while (cursor)
+        expect(collected).toEqual([petId, ...extraIds].sort())
+        const badCursor = await handlePetshopClientsApiRequest(new Request('https://edge.test/api/petshop/clients?paginate=1&after=invalid%20cursor', { headers }), bindings())
+        expect(badCursor?.status).toBe(400)
+      } finally {
+        await db.batch(extraIds.map(id => db.prepare("DELETE FROM pets WHERE tenant_id=?1 AND module_id='petshop' AND id=?2").bind(tenantId, id)))
+      }
+
       const removed = await handlePetshopClientsApiRequest(new Request(`https://edge.test/api/petshop/clients/${petId}`, { method: 'DELETE', headers }), bindings())
       expect(removed?.status).toBe(200)
       const pet = await db.prepare('SELECT status FROM pets WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(tenantId, 'petshop', petId).first<{ status: string }>()

@@ -188,6 +188,7 @@ export function useClients() {
           tenantId: activeTenantId,
           moduleId: activeModuleId,
           search: sanitizeSearch(search),
+          allPages: true,
         }))
         return
       }

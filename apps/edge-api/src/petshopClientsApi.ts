@@ -117,16 +117,29 @@ async function listClients(request: Request, bindings: Bindings, petId?: string)
   const search = text(url.searchParams.get('search')).toLowerCase()
   const like = search ? `%${search}%` : null
   const requestedLimit = Number(url.searchParams.get('limit') || (petId ? 1 : 1000))
-  const limit = Math.min(1000, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 1000))
-  const result = await bindings.DB!.prepare(`${CLIENT_PET_SELECT}
+  const limit = Math.floor(Math.min(1000, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 1000)))
+  const paginated = !petId && url.searchParams.get('paginate') === '1'
+  const after = paginated ? text(url.searchParams.get('after')) : ''
+  if (after && !ID.test(after)) return json({ code: 'INVALID_CLIENT_CURSOR' }, 400)
+  // Read each ID range once. The tutor lookup uses its complete scoped primary
+  // key, avoiding a repeated scan of every tutor for each page.
+  const select = paginated ? CLIENT_PET_SELECT.replace('FROM pets p JOIN clients c',
+    'FROM pets p INDEXED BY sqlite_autoindex_pets_1 CROSS JOIN clients c INDEXED BY sqlite_autoindex_clients_1') : CLIENT_PET_SELECT
+  const result = await bindings.DB!.prepare(`${select}
     WHERE p.tenant_id=?1 AND p.module_id=?2 AND p.status='active' AND c.status='active'
       AND (?3 IS NULL OR p.id=?3)
       AND (?4 IS NULL OR lower(c.name) LIKE ?4 OR lower(COALESCE(c.phone,'')) LIKE ?4
         OR lower(COALESCE(c.email,'')) LIKE ?4 OR lower(p.name) LIKE ?4 OR lower(COALESCE(p.breed,'')) LIKE ?4)
-    ORDER BY c.name,p.name,p.id LIMIT ?5
-  `).bind(scope.tenantId, scope.moduleId, petId || null, like, limit).all<ClientPetRow>()
-  const clients = (result.results || []).map(clientPetPayload)
-  if (!petId) return json({ clients })
+      ${paginated ? 'AND p.id > ?6' : ''}
+    ORDER BY ${paginated ? 'p.id' : 'c.name,p.name,p.id'} LIMIT ?5
+  `).bind(...(paginated
+    ? [scope.tenantId, scope.moduleId, null, like, Math.floor(limit) + 1, after]
+    : [scope.tenantId, scope.moduleId, petId || null, like, limit])).all<ClientPetRow>()
+  const rows = result.results || []
+  const clients = (paginated ? rows.slice(0, limit) : rows).map(clientPetPayload)
+  if (!petId) return json(paginated
+    ? { clients, next_cursor: rows.length > limit ? clients.at(-1)?.id || null : null }
+    : { clients })
   if (!clients[0]) return json({ code: 'CLIENT_PET_NOT_FOUND' }, 404)
   const appointments = await bindings.DB!.prepare(`
     SELECT a.id,a.status,a.scheduled_at_ms,

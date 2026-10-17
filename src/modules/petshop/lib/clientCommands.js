@@ -65,11 +65,25 @@ async function request(path, { tenantId, moduleId = 'petshop', method = 'GET', b
   return payload
 }
 
-export async function listClientPetsCommand({ tenantId, moduleId = 'petshop', search = '', limit = 1000 }) {
+export async function listClientPetsCommand({ tenantId, moduleId = 'petshop', search = '', limit = 1000, allPages = false }) {
   const params = new URLSearchParams({ limit: String(limit) })
   if (search) params.set('search', search)
-  const payload = await request(`?${params.toString()}`, { tenantId, moduleId })
-  return payload.clients || []
+  if (allPages) params.set('paginate', '1')
+  const clients = new Map()
+  const cursors = new Set()
+  let cursor
+  do {
+    if (cursor) params.set('after', cursor)
+    const payload = await request(`?${params.toString()}`, { tenantId, moduleId })
+    if (!Array.isArray(payload.clients)) throw new Error('Não foi possível carregar todos os cadastros. Atualize a lista.')
+    for (const client of payload.clients) clients.set(client.id, client)
+    cursor = allPages ? payload.next_cursor : null
+    if (cursor && cursors.has(cursor)) throw new Error('Não foi possível carregar todos os cadastros. Atualize a lista.')
+    if (cursor) cursors.add(cursor)
+  } while (cursor)
+  const rows = [...clients.values()]
+  return allPages ? rows.sort((a, b) => String(a.owner_name || '').localeCompare(String(b.owner_name || ''), 'pt-BR')
+    || String(a.pet_name || '').localeCompare(String(b.pet_name || ''), 'pt-BR') || a.id.localeCompare(b.id)) : rows
 }
 
 export async function getClientPetCommand({ tenantId, moduleId = 'petshop', id }) {
