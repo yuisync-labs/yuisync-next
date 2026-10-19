@@ -95,13 +95,14 @@ const readiness = await fetchJson('/ready', 200)
 if (
   readiness.status !== 'ready'
   || readiness.checks?.database !== 'ready'
-  || readiness.checks?.schema_version !== '22'
+  || readiness.checks?.schema_version !== '30'
+  || readiness.checks?.schema_capabilities !== 'ready'
   || readiness.checks?.auth_database !== 'configured'
   || readiness.checks?.coordination !== 'ready'
   || readiness.checks?.better_auth !== 'enabled'
   || readiness.checks?.migration_capabilities !== 'closed'
 ) {
-  throw new Error('/ready: Worker não está pronto para staging v22')
+  throw new Error('/ready: Worker não está pronto para staging v30')
 }
 
 // Root-level misses are intentionally handled by Cloudflare's SPA fallback and
@@ -116,5 +117,5 @@ console.log(JSON.stringify({
   event: 'edge.staging.smoke.passed',
   base_url: baseUrl.origin,
   request_id: requestId,
-  checks: ['health', 'ready_v22', 'auth_db', 'coordination', 'api_not_found'],
+  checks: ['health', 'ready_v30', 'auth_db', 'coordination', 'api_not_found'],
 }))
