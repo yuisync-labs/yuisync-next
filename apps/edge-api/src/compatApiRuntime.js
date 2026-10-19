@@ -202,7 +202,7 @@ function orderClause(list) {
 function page(body) {
   const r=obj(body.range)
   if (Object.keys(r).length) { const from=Math.max(0,Math.trunc(num(r.from))); const to=Math.max(from,Math.trunc(num(r.to,from))); return {limit:Math.min(MAX_ROWS,to-from+1),offset:from} }
-  return {limit:Math.min(MAX_ROWS,Math.max(1,Math.trunc(num(body.limit ?? 200,200)))),offset:0}
+  return {limit:Math.min(MAX_ROWS,Math.max(1,Math.trunc(body.limit==null?200:num(body.limit,200)))),offset:0}
 }
 
 function normalize(table, row) {
@@ -252,7 +252,7 @@ async function enrich(db,table,columns,rows,scope) {
   if(!rows.length)return
   if(/(?:^|,)\s*clients\s*\(/.test(columns)) {
     const ids=[...new Set(rows.map((r)=>str(r.client_id)).filter(Boolean))]
-    if(ids.length){const q=ids.map(()=>'?').join(',');const source=['sales','loyalty_points'].includes(table)?'clients':'compat_clients';const res=await db.prepare(`SELECT * FROM ${source} WHERE tenant_id=? AND module_id=? AND id IN (${q})`).bind(scope.tenantId,scope.moduleId,...ids).all();const map=new Map(res.results.map((r)=>[String(r.id),source==='clients'?{...r,active:r.status==='active',details:{}}:normalize('clients',r)]));for(const r of rows)r.clients=map.get(String(r.client_id||''))||null}
+    if(ids.length){const source=['sales','loyalty_points','chat_sessions'].includes(table)?'clients':'compat_clients';const res=await db.prepare(`SELECT * FROM ${source} WHERE tenant_id=? AND module_id=? AND id IN (SELECT value FROM json_each(?))`).bind(scope.tenantId,scope.moduleId,JSON.stringify(ids)).all();const map=new Map(res.results.map((r)=>[String(r.id),source==='clients'?{...r,active:r.status==='active',details:{}}:normalize('clients',r)]));for(const r of rows)r.clients=map.get(String(r.client_id||''))||null}
   }
   if(table==='sales'&&/sale_items\s*\(/.test(columns)) {
     const saleIds=[...new Set(rows.map((row)=>str(row.id)).filter(Boolean))]

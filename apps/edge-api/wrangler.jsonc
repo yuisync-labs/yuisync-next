@@ -35,14 +35,14 @@
     "EDGE_COORDINATION_ENABLED": "false",
     "EDGE_BETTER_AUTH_ENABLED": "false",
     "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
-    "EDGE_AUTH_MIGRATION_ENABLED": "false"
-    ,"LUNA_ENABLED": "false"
-    ,"LUNA_PROVIDER": "groq"
-    ,"LUNA_MODEL": "openai/gpt-oss-20b"
-    ,"LUNA_PLAYGROUND_ENABLED": "false"
-    ,"LUNA_MAX_MODEL_CALLS_PER_TURN": "6"
-    ,"LUNA_MAX_TOOL_CALLS_PER_TURN": "10"
-    ,"LUNA_MAX_TOKENS_PER_TURN": "12000"
+    "EDGE_AUTH_MIGRATION_ENABLED": "false",
+    "LUNA_ENABLED": "false",
+    "LUNA_PROVIDER": "groq",
+    "LUNA_MODEL": "openai/gpt-oss-20b",
+    "LUNA_PLAYGROUND_ENABLED": "false",
+    "LUNA_MAX_MODEL_CALLS_PER_TURN": "6",
+    "LUNA_MAX_TOOL_CALLS_PER_TURN": "10",
+    "LUNA_MAX_TOKENS_PER_TURN": "12000"
   },
   "env": {
     "local": {
@@ -56,11 +56,11 @@
         "EDGE_COORDINATION_ENABLED": "false",
         "EDGE_BETTER_AUTH_ENABLED": "false",
         "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
-        "EDGE_AUTH_MIGRATION_ENABLED": "false"
-        ,"LUNA_ENABLED": "false"
-        ,"LUNA_PROVIDER": "groq"
-        ,"LUNA_MODEL": "openai/gpt-oss-20b"
-        ,"LUNA_PLAYGROUND_ENABLED": "false"
+        "EDGE_AUTH_MIGRATION_ENABLED": "false",
+        "LUNA_ENABLED": "false",
+        "LUNA_PROVIDER": "groq",
+        "LUNA_MODEL": "openai/gpt-oss-20b",
+        "LUNA_PLAYGROUND_ENABLED": "false"
       }
     },
     "test": {
@@ -74,11 +74,11 @@
         "EDGE_COORDINATION_ENABLED": "false",
         "EDGE_BETTER_AUTH_ENABLED": "false",
         "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
-        "EDGE_AUTH_MIGRATION_ENABLED": "false"
-        ,"LUNA_ENABLED": "false"
-        ,"LUNA_PROVIDER": "groq"
-        ,"LUNA_MODEL": "openai/gpt-oss-20b"
-        ,"LUNA_PLAYGROUND_ENABLED": "false"
+        "EDGE_AUTH_MIGRATION_ENABLED": "false",
+        "LUNA_ENABLED": "false",
+        "LUNA_PROVIDER": "groq",
+        "LUNA_MODEL": "openai/gpt-oss-20b",
+        "LUNA_PLAYGROUND_ENABLED": "false"
       }
     },
     "staging": {
@@ -92,14 +92,20 @@
         "EDGE_COORDINATION_ENABLED": "true",
         "EDGE_BETTER_AUTH_ENABLED": "true",
         "EDGE_OPERATIONAL_MIGRATION_ENABLED": "false",
-        "EDGE_AUTH_MIGRATION_ENABLED": "false"
-        ,"LUNA_ENABLED": "false"
-        ,"LUNA_PROVIDER": "groq"
-        ,"LUNA_MODEL": "openai/gpt-oss-20b"
-        ,"LUNA_PLAYGROUND_ENABLED": "true"
-        ,"LUNA_MAX_MODEL_CALLS_PER_TURN": "6"
-        ,"LUNA_MAX_TOOL_CALLS_PER_TURN": "10"
-        ,"LUNA_MAX_TOKENS_PER_TURN": "12000"
+        "EDGE_AUTH_MIGRATION_ENABLED": "false",
+        "LUNA_ENABLED": "false",
+        "LUNA_PROVIDER": "groq",
+        "LUNA_MODEL": "openai/gpt-oss-20b",
+        "LUNA_PLAYGROUND_ENABLED": "true",
+        "LUNA_MAX_MODEL_CALLS_PER_TURN": "6",
+        "LUNA_MAX_TOOL_CALLS_PER_TURN": "10",
+        "LUNA_MAX_TOKENS_PER_TURN": "12000",
+        "LUNA_RUNTIME": "think",
+        "LUNA_INTERNAL_CHAT_ENABLED": "true",
+        "LUNA_THINK_TENANT_IDS": "",
+        "LUNA_AI_DAILY_LIMIT": "9000",
+        "LUNA_AI_BASELINE_DATE": "",
+        "LUNA_AI_BASELINE_NEURONS": "0"
       },
       "d1_databases": [
         {
@@ -145,6 +151,14 @@
           {
             "name": "LUNA_AGENT",
             "class_name": "LunaConversationDurableObject"
+          },
+          {
+            "name": "LUNA_THINK",
+            "class_name": "LunaThinkAgent"
+          },
+          {
+            "name": "LUNA_AI_BUDGET",
+            "class_name": "LunaAiBudget"
           }
         ]
       },
@@ -160,7 +174,18 @@
         "LunaNativeAgent": {
           "type": "durable-object",
           "storage": "sqlite"
+        },
+        "LunaThinkAgent": {
+          "type": "durable-object",
+          "storage": "sqlite"
+        },
+        "LunaAiBudget": {
+          "type": "durable-object",
+          "storage": "sqlite"
         }
+      },
+      "ai": {
+        "binding": "AI"
       }
     }
   }

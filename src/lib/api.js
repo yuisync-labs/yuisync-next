@@ -1,4 +1,5 @@
 import { isVisualPreviewSession } from './visualPreview'
+import { waitForLunaTurn } from './lunaTurnPolling'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 
@@ -164,15 +165,39 @@ export function updatePetshopServiceRules(serviceId, { tenantId, moduleId = 'pet
   }).then((response) => response.service)
 }
 
-export function requestChatReply(sessionId, message, options = {}) {
-  return apiRequest('/chat/respond', {
+export function getChatTurnStatus(sessionId, turnId = 'latest', options = {}) {
+  return apiRequest(`/chat/turns/${encodeURIComponent(turnId)}?sessionId=${encodeURIComponent(sessionId)}`, {
+    method: 'GET', signal: options.signal,
+    headers: {'x-tenant-id': options.tenantId || '', 'x-module-id': options.moduleId || ''},
+  })
+}
+
+export async function resumeChatTurn(sessionId, turnId, options = {}) {
+  return waitForLunaTurn({
+    fetchStatus: () => getChatTurnStatus(sessionId, turnId, options),
+    onStatus: options.onStatus, signal: options.signal,
+  })
+}
+export function resumeChatAutomation(sessionId,options={}){
+  return apiRequest('/chat/automation/resume',{method:'POST',headers:{'x-tenant-id':options.tenantId||'','x-module-id':options.moduleId||''},body:JSON.stringify({sessionId})})
+}
+
+export async function requestChatReply(sessionId, message, options = {}) {
+  const accepted = await apiRequest('/chat/respond', {
     method: 'POST',
+    headers: {
+      'x-tenant-id': options.tenantId || '',
+      'x-module-id': options.moduleId || '',
+    },
     body: JSON.stringify({
       sessionId,
       message,
       clientMessageId: options.clientMessageId,
     }),
   })
+  if (!accepted.accepted || !accepted.turn_id) return accepted
+  options.onStatus?.({...accepted, id: accepted.turn_id})
+  return resumeChatTurn(sessionId, accepted.turn_id, options)
 }
 
 export function sendHumanChatMessage(sessionId, message) {
@@ -396,4 +421,11 @@ export function createMetaWhatsappTemplate({
       body_text: bodyText,
     }),
   })
+}
+
+export function getChatQuality({tenantId,moduleId,offset=0,signal}){
+  return apiRequest(`/chat/quality?offset=${offset}`,{method:'GET',signal,headers:{'x-tenant-id':tenantId,'x-module-id':moduleId}})
+}
+export function reviewChatQuality(id,{tenantId,moduleId,status,notes}){
+  return apiRequest(`/chat/quality/${encodeURIComponent(id)}/review`,{method:'PATCH',headers:{'x-tenant-id':tenantId,'x-module-id':moduleId},body:JSON.stringify({status,notes})})
 }

@@ -1,3 +1,4 @@
+import ChatQualityInbox from '../components/ChatQualityInbox'
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -10,6 +11,7 @@ import { useAuthCtx } from '../../../context/AuthContext'
 import { useModuleCtx } from '../../../context/ModuleContext'
 import { fmtDateTime } from '../../../lib/supabase'
 import { resetChatHistory } from '../../../lib/api'
+import { lunaTurnLabels } from '../../../lib/lunaTurnPolling'
 
 // ── Message Bubble ────────────────────────────────────────────────────────────
 function isImageUrl(value = '') {
@@ -139,15 +141,22 @@ function SessionCard({ session, active, onClick, statusConfig }) {
 function NewSessionModal({ onClose, onCreate }) {
   const [form, setForm] = useState({ customer_name:'', customer_phone:'', channel:'whatsapp' })
   const [saving, setSaving] = useState(false)
+  const [creationError, setCreationError] = useState('')
 
   const set = (k,v) => setForm(f => ({...f,[k]:v}))
 
   async function handleSubmit() {
-    if (!form.customer_phone.trim()) return
+    if (!form.customer_phone.trim() || saving) return
+    setCreationError('')
     setSaving(true)
-    await onCreate(form)
-    setSaving(false)
-    onClose()
+    try {
+      await onCreate(form)
+      onClose()
+    } catch {
+      setCreationError('Não foi possível iniciar a conversa. Verifique os dados e tente novamente.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return createPortal(
@@ -188,6 +197,7 @@ function NewSessionModal({ onClose, onCreate }) {
             </div>
           </div>
 
+          {creationError && <p role="alert" className="text-sm text-red-400">{creationError}</p>}
           <div className="flex gap-3 pt-2">
             <button onClick={onClose} className="btn btn-secondary flex-1 justify-center border-white/5">Cancelar</button>
             <button onClick={handleSubmit} disabled={saving || !form.customer_phone}
@@ -271,7 +281,7 @@ function HandoffAlerts({ alerts, onDismiss, onOpen }) {
 
 export default function ChatPage() {
   const {
-    sessions, messages, activeSession, botTyping, quickReplies,
+    sessions, messages, activeSession, botTyping, botTurn, quickReplies,
     handoffAlerts,
     loadSessions, loadMessages, loadQuickReplies, openSession, createSession,
     sendClientMessage, sendHumanMessage,
@@ -281,6 +291,7 @@ export default function ChatPage() {
   const auth = useAuthCtx()
   const { activeModule } = useModuleCtx()
 
+  const [showQuality,setShowQuality]=useState(false)
   const [input, setInput]         = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [showModal, setShowModal] = useState(false)
@@ -393,6 +404,7 @@ export default function ChatPage() {
                 <RefreshCw size={16} className={resettingHistory ? 'animate-spin' : ''}/> Reset Historico
               </button>
             )}
+            <button onClick={()=>setShowQuality(v=>!v)} className="btn btn-secondary" aria-pressed={showQuality}>Avaliações</button>
             <button onClick={() => setShowModal(true)} className="btn btn-primary">
               <Plus size={16}/> Nova Conversa
             </button>
@@ -416,6 +428,7 @@ export default function ChatPage() {
         </div>
       </div>
 
+      {showQuality&&<ChatQualityInbox key={`${auth?.activeTenantId}:${activeModule.id}`} tenantId={auth?.activeTenantId} moduleId={activeModule.id} onOpen={async item=>{await handleOpenSession(sessions.find(s=>s.id===item.id)||{id:item.id,status:item.status,channel:item.channel,customer_name:item.customer_name});setShowQuality(false)}}/>}
       {/* Main area */}
       <div className="flex flex-1 overflow-hidden">
         {/* Session list */}
@@ -438,7 +451,8 @@ export default function ChatPage() {
               <div className="flex flex-col items-center justify-center py-16 gap-3 px-4">
                 <Inbox size={32} className="text-muted/30"/>
                 <p className="text-sm text-muted text-center">Nenhuma conversa</p>
-                <button onClick={() => setShowModal(true)} className="btn btn-primary btn-sm">
+                <button onClick={()=>setShowQuality(v=>!v)} className="btn btn-secondary" aria-pressed={showQuality}>Avaliações</button>
+            <button onClick={() => setShowModal(true)} className="btn btn-primary btn-sm">
                   <Plus size={13}/> Nova Conversa
                 </button>
               </div>
@@ -531,6 +545,13 @@ export default function ChatPage() {
               </div>
 
               {/* Messages */}
+              {activeSession.status==='human'&&activeSession.context?.think?.handoff_summary&&(
+                <div className="mx-5 mt-3 p-3 rounded-xl border border-[var(--border2)] text-sm">
+                  <p className="font-semibold">Resumo para continuar o atendimento</p>
+                  <p>{activeSession.context.think.handoff_summary.reason}</p>
+                  <p className="text-muted">{activeSession.context.think.handoff_summary.request}</p>
+                </div>
+              )}
               <div className="flex-1 overflow-y-auto px-5 py-4">
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full gap-3">
@@ -572,7 +593,14 @@ export default function ChatPage() {
               </div>
 
               {/* Status bar & input */}
-              {activeSession.status !== 'closed' && (
+              {botTurn && (
+                <div role="status" className="px-4 py-2 text-xs text-muted border-t border-[var(--border2)]">
+                  {lunaTurnLabels[botTurn.status] || 'Estado do turno'}
+                  {botTurn.errorCode ? ` · ${botTurn.errorCode} — turno preservado; não reenvie.` : ''}
+                  {botTurn.diagnostic ? ` · ${botTurn.diagnostic}` : ''}
+                </div>
+              )}
+              {(activeSession.status !== 'closed' || activeSession.context?.think?.awaiting_rating || ['internal','interno'].includes(activeSession.channel)) && (
                 <div className="border-t border-[var(--border2)] flex-shrink-0">
                   {/* Quick Replies */}
                   {activeSession.status === 'human' && quickReplies.length > 0 && (
@@ -612,7 +640,7 @@ export default function ChatPage() {
                       placeholder={
                         activeSession.status === 'human'
                           ? 'Digite sua resposta como agente...'
-                          : 'Simule uma mensagem do cliente...'
+                          : activeSession.context?.think?.awaiting_rating?'Avaliação opcional de 1 a 5, ou nova solicitação...': 'Simule uma mensagem do cliente...'
                       }
                       value={input}
                       onChange={e => setInput(e.target.value)}
@@ -621,7 +649,7 @@ export default function ChatPage() {
                     />
                     <button
                       onClick={handleSend}
-                      disabled={sending || !input.trim()}
+                      disabled={(sending && activeSession.channel !== 'interno' && activeSession.channel !== 'internal') || !input.trim()}
                       className="btn btn-primary btn-icon h-[42px] w-[42px] justify-center flex-shrink-0 disabled:opacity-50">
                       <Send size={16}/>
                     </button>
@@ -629,7 +657,7 @@ export default function ChatPage() {
                 </div>
               )}
 
-              {activeSession.status === 'closed' && (
+              {activeSession.status === 'closed' && !activeSession.context?.think?.awaiting_rating && !['internal','interno'].includes(activeSession.channel) && (
                 <div className="px-4 py-3 border-t border-[var(--border2)] text-center">
                   <p className="text-sm text-muted">Esta conversa foi encerrada</p>
                 </div>
