@@ -15,7 +15,7 @@ export async function createLiveHarness(id:number){
   ...[['areia','cat'],['petisco','dog'],['cama-g','dog'],['coleira-azul','dog'],['tapete','dog']].map(([product,species])=>h.db.prepare("INSERT INTO catalog_product_profile_species(tenant_id,module_id,product_id,species) VALUES(?,'petshop',?,?)").bind(h.tenant,product,species)),
   h.db.prepare("INSERT INTO catalog_product_species(tenant_id,module_id,product_id,species) VALUES(?,'petshop','petisco','dog')").bind(h.tenant),
  ])
- await runInDurableObject(h.stub,async agent=>{
+ async function attachLiveModel(){await runInDurableObject(h.stub,async agent=>{
   // This bridge includes external orchestration latency. Keep the production
   // token/step/tool budgets, but exclude bridge overhead from its 60s timeout.
   const beforeTurn=agent.beforeTurn.bind(agent)
@@ -25,7 +25,8 @@ export async function createLiveHarness(id:number){
    if(!response.ok)throw Error('LIVE_MODEL_ERROR_'+response.status+':'+await response.text())
    return response.json()
   }} as never})(THINK_MODEL,{chat_template_kwargs:{enable_thinking:false}})
- })
+ })}
+ await attachLiveModel()
  let index=0
  const turns:Record<string,any>[]=[]
  async function turn(message:string|string[]){
@@ -48,5 +49,5 @@ export async function createLiveHarness(id:number){
   return result.result as {status:string;reply:string;[key:string]:any}
  }
  async function evidence(status:string,extra:Record<string,unknown>={}){await liveService.fetch('https://live-model.local/evidence',{method:'POST',body:JSON.stringify({id,status,turns,...extra})})}
- return {...h,turn,turns,evidence}
+ return {...h,turn,turns,evidence,attachLiveModel}
 }
