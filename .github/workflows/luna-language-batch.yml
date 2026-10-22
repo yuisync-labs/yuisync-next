@@ -1,5 +1,8 @@
 name: Luna language batch (1000 neurons)
 on:
+  push:
+    branches: [codex/luna-think-language-test-plan]
+    paths: [.github/workflows/luna-language-batch.yml, scripts/luna/runLanguageBatch.mjs]
   pull_request:
     types: [opened]
 permissions:
@@ -11,8 +14,9 @@ jobs:
   language:
     if: >-
       github.run_attempt == 1 &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'codex/luna-think-language-test-plan'
+      (github.ref == 'refs/heads/codex/luna-think-language-test-plan' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'codex/luna-think-language-test-plan'))
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: cloudflare-staging
@@ -22,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc

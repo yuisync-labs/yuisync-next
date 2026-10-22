@@ -11,6 +11,13 @@ async function cf(path,options={}){
  const result=await r.json();if(!r.ok||!result.success)throw Error('CLOUDFLARE_CONTROL_FAILED_'+r.status);return result.result
 }
 async function proxy(m,path,body){
+ if(path==='/status'&&!body){
+  for(let attempt=0;attempt<10;attempt++){
+   try{const r=await fetch(m.url+path,{headers:{authorization:`Bearer ${m.token}`},signal:AbortSignal.timeout(10000)});if(r.ok)return await r.json()}catch{}
+   await new Promise(resolve=>setTimeout(resolve,1500))
+  }
+  throw Error('SHARED_BUDGET_UNAVAILABLE')
+ }
  const r=await fetch(m.url+path,{method:body?'POST':'GET',headers:{authorization:`Bearer ${m.token}`,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)})
  const result=await r.json();if(!r.ok)throw Error(result.code??'SHARED_BUDGET_FAILED');return result
 }
@@ -19,7 +26,18 @@ async function deploy(m,active){
  const config={name:m.name,account_id:ACCOUNT,main:resolve('scripts/luna/languageBudgetProxy.mjs'),compatibility_date:'2026-10-22',workers_dev:true,
   ai:{binding:'AI'},durable_objects:{bindings:[{name:'BUDGET',class_name:'LunaAiBudget',script_name:STAGING}]},
   vars:{BATCH_ACTIVE:String(active),BATCH_DAY:m.day??'',BATCH_START_USED:String(m.start??0),BATCH_MAX:String(m.cap??0)},observability:{enabled:true}}
- await writeFile(m.config,JSON.stringify(config));wrangler(['deploy','--config',m.config,'--secrets-file',m.secrets])
+ await writeFile(m.config,JSON.stringify(config))
+ try{wrangler(['deploy','--config',m.config,'--secrets-file',m.secrets])}catch(error){
+  // Wrangler 4.147 may successfully upload a new legacy script, then fail its
+  // workers/workers subdomain lookup. Verify the actual uploaded bindings and
+  // enable only this disposable script through the supported scripts API.
+  if(!String(error.stdout).includes('Uploaded '+m.name)||!String(error.stderr).includes('/workers/workers/'+m.name)||!String(error.stderr).includes('10007'))throw Error('TEMP_PROXY_DEPLOY_FAILED')
+  const uploaded=await cf(`/accounts/${ACCOUNT}/workers/scripts/${m.name}/settings`)
+  const b=name=>uploaded.bindings.find(binding=>binding.name===name)
+  if(b('BUDGET')?.namespace_id!==m.namespace||b('AI')?.type!=='ai'||b('TEST_TOKEN')?.type!=='secret_text'||b('BATCH_ACTIVE')?.text!==String(active)||b('BATCH_DAY')?.text!==(m.day??''))throw Error('TEMP_PROXY_UPLOAD_MISMATCH')
+  await cf(`/accounts/${ACCOUNT}/workers/scripts/${m.name}/subdomain`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enabled:true,previews_enabled:false})})
+  console.log(JSON.stringify({event:'language.proxy.subdomain.enabled',fallback:'verified-script-api'}))
+ }
 }
 if(command==='prepare'){
  if(process.env.GITHUB_RUN_ATTEMPT!=='1')throw Error('AUTOMATIC_RERUN_FORBIDDEN')
@@ -29,7 +47,7 @@ if(command==='prepare'){
  if(binding('APP_ENV')!=='staging'||binding('LUNA_RUNTIME')!=='think'||binding('LUNA_AI_DAILY_LIMIT')!=='9000')throw Error('STAGING_RUNTIME_MISMATCH')
  await mkdir(dir,{recursive:true});await mkdir(out,{recursive:true})
  const run=process.env.GITHUB_RUN_ID;if(!/^\d+$/.test(run??''))throw Error('RUN_ID_REQUIRED')
- const m={name:'luna-language-budget-'+run,token:randomBytes(32).toString('base64url'),config:resolve(dir,'wrangler.json'),secrets:resolve(dir,'secrets.json'),runtimeSha:binding('RELEASE_SHA'),usageBefore:usage}
+ const m={name:'luna-language-budget-'+run,token:randomBytes(32).toString('base64url'),config:resolve(dir,'wrangler.json'),secrets:resolve(dir,'secrets.json'),runtimeSha:binding('RELEASE_SHA'),namespace:settings.bindings.find(b=>b.name==='LUNA_AI_BUDGET')?.namespace_id,usageBefore:usage}
  m.url=`https://${m.name}.gabrielboalento3004.workers.dev`
  console.log('::add-mask::'+m.token)
  await writeFile(m.secrets,JSON.stringify({TEST_TOKEN:m.token}),{mode:0o600});await writeFile(manifest,JSON.stringify(m),{mode:0o600})
@@ -47,6 +65,7 @@ if(command==='prepare'){
  if(!existsSync(manifest)){console.log(JSON.stringify({event:'language.batch.not_started'}));process.exit(0)}
  const m=JSON.parse(await readFile(manifest,'utf8')),report={event:'language.batch.finished',runtimeSha:m.runtimeSha,day:m.day,batchCap:m.cap,holdReleased:false,proxyDeleted:false}
  try{
+  if(!m.day){report.stopReason='PREFLIGHT_FAILED_NO_INFERENCE';throw Error(report.stopReason)}
   const state=await proxy(m,'/status');report.counter=state;report.spent=state.used-m.start
   const usage=await accountUsage();report.accountObservedAfter=usage.used
   const hold=m.hold?.bound??0
