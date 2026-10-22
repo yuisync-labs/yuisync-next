@@ -40,3 +40,16 @@ for(const [index,family] of families.entries())it('seeds '+family+' without infe
   if(family==='last_unit'){expect(setup.peer).toBeDefined();expect(await h.db.prepare("SELECT on_hand_milliunits,reserved_milliunits FROM inventory_balances WHERE tenant_id=? AND product_id='racao-a'").bind(h.tenant).first()).toEqual({on_hand_milliunits:1000,reserved_milliunits:0})}
  }finally{restore();h.close()}
 })
+
+it('controls the store date while native alarms keep real time',async()=>{
+ const h=await createLiveHarness(8600),wall=Date.now();let restore=()=>{}
+ try{
+  restore=(await prepareLanguageCase(h,'date_boundary')).restore
+  expect(Date.now()-wall).toBeLessThan(3000)
+  expect(new Date().toISOString().slice(0,16)).toBe('2026-11-02T02:55')
+  const at='2026-11-02T09:00:00-03:00'
+  await h.run('Banho da Mel amanhã às nove. Eu levo e busco.',[c('open_tools',{capability:'agenda'}),h.update([h.add('banho'),{action:'set_field',field:'pet_id',value:'mel'},{action:'set_field',field:'scheduled_at',value:at}],true,'banho-mel','booking')])
+  const p=await h.db.prepare("SELECT payload_json FROM luna_proposals WHERE tenant_id=? AND operation_kind='appointment_create'").bind(h.tenant).first<{payload_json:string}>()
+  expect(JSON.parse(p!.payload_json).scheduled_at_ms).toBe(Date.parse(at))
+ }finally{restore();h.close()}
+})

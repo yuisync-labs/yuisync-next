@@ -1,7 +1,7 @@
 import {env} from 'cloudflare:workers'
 import {runInDurableObject} from 'cloudflare:test'
 import {getAgentByName} from 'agents'
-import {expect} from 'vitest'
+import {expect,vi} from 'vitest'
 import {command as c} from './thinkHarness'
 import type {createLiveHarness} from './liveHarness'
 import type {ThinkRecoveryTestAgent} from '../../thinkTestWorker'
@@ -35,6 +35,15 @@ export async function prepareLanguageCase(h:Harness,family:string){
   peer={stub:stub as unknown as Harness['stub'],job}
  }
  let restore=()=>{}
+ if(family==='date_boundary'){
+  // Control the store time exposed by new Date() without moving Date.now(),
+  // which native workflow leases/alarms and the daily budget must keep real.
+  // Domain validation keeps real time; the selected appointment is future in
+  // both clocks. This tests relative-date interpretation and offset roundtrip.
+  const realDate=Date,offset=Date.parse('2026-11-02T02:55:00Z')-Date.now()
+  const storeDate=new Proxy(realDate,{construct(target,args,newTarget){return Reflect.construct(target,args.length?args:[target.now()+offset],newTarget)}})
+  vi.stubGlobal('Date',storeDate);restore=()=>vi.stubGlobal('Date',realDate)
+ }
  if(family==='tenant_injection'){
   const now=Date.now()
   await h.db.batch([

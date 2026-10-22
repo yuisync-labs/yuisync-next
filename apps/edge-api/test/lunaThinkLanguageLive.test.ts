@@ -13,12 +13,6 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
  for(const s of cases)it(s.id+' '+s.name,async test=>{
   const control=await(await liveService.fetch('https://live-model.local/control')).json() as {stop:boolean}
   if(control.stop){test.skip();return}
-  if(s.family==='date_boundary'){
-   // A process-wide Date.now override does not control new Date() in the prompt
-   // and can strand native workflow alarms. Do not spend AI on that fixture.
-   await liveService.fetch('https://live-model.local/evidence',{method:'POST',body:JSON.stringify({id:2000+Number(s.id.split('-')[1])*100+Number(s.id.split('-')[2]),status:'blocked',languageCaseId:s.id,reason:'CONTROLLED_STORE_CLOCK_NOT_YET_VALIDATED',turns:[]})})
-   test.skip();return
-  }
   const number=Number(s.id.split('-')[1])*100+Number(s.id.split('-')[2]),h=await createLiveHarness(2000+number)
   const sales=()=>h.saleRows().then(r=>r.results)
   const appointments=()=>h.db.prepare('SELECT id,status FROM appointments WHERE tenant_id=?').bind(h.tenant).all()
@@ -116,7 +110,7 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
    }
    }
    expect(await h.db.prepare('SELECT count(*) n FROM payments WHERE tenant_id=?').bind(h.tenant).first()).toEqual({n:0})
-   await h.evidence('passed',{languageCaseId:s.id,setup:'deterministic_fixture',after:{sales:await sales(),appointments:(await appointments()).results},model:'@cf/zai-org/glm-4.7-flash'})
-  }catch(error){await h.evidence('failed',{languageCaseId:s.id,error:String(error),observed:{sales:await sales(),appointments:(await appointments()).results,payments:(await h.db.prepare('SELECT id FROM payments WHERE tenant_id=?').bind(h.tenant).all()).results,proposals:(await h.db.prepare('SELECT operation_kind,status,payload_json FROM luna_proposals WHERE tenant_id=?').bind(h.tenant).all()).results,state:await h.state()}});throw error}finally{restore();h.close()}
- })
+   await h.evidence('passed',{languageCaseId:s.id,setup:'deterministic_fixture',after:{sales:await sales(),appointments:(await appointments()).results},model:'@cf/zai-org/glm-4.7-flash',...(s.family==='date_boundary'?{clockFixture:'store_date_constructor_native_lease_clock_unchanged'}:{})})
+  }catch(error){await h.evidence('failed',{languageCaseId:s.id,error:String(error),...(s.family==='date_boundary'?{clockFixture:'store_date_constructor_native_lease_clock_unchanged'}:{}),observed:{sales:await sales(),appointments:(await appointments()).results,payments:(await h.db.prepare('SELECT id FROM payments WHERE tenant_id=?').bind(h.tenant).all()).results,proposals:(await h.db.prepare('SELECT operation_kind,status,payload_json FROM luna_proposals WHERE tenant_id=?').bind(h.tenant).all()).results,state:await h.state()}});throw error}finally{restore();h.close()}
+ },s.family==='date_boundary'?180000:600000)
 })
