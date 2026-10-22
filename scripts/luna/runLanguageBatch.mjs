@@ -21,6 +21,14 @@ async function proxy(m,path,body){
  const r=await fetch(m.url+path,{method:body?'POST':'GET',headers:{authorization:`Bearer ${m.token}`,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)})
  const result=await r.json();if(!r.ok)throw Error(result.code??'SHARED_BUDGET_FAILED');return result
 }
+async function waitForActivation(m,active){
+ for(let attempt=0;attempt<12;attempt++){
+  const s=await proxy(m,'/status')
+  if(s.active===active&&(!active||(s.day===m.day&&Math.abs(s.spent-(s.used-m.start))<0.00001)))return s
+  await new Promise(resolve=>setTimeout(resolve,1500))
+ }
+ throw Error('BATCH_ACTIVATION_FAILED')
+}
 function wrangler(args){return execFileSync('npx',['wrangler',...args],{encoding:'utf8',maxBuffer:4e6,stdio:['ignore','pipe','pipe']})}
 async function deploy(m,active){
  const config={name:m.name,account_id:ACCOUNT,main:resolve('scripts/luna/languageBudgetProxy.mjs'),compatibility_date:'2026-10-22',workers_dev:true,
@@ -58,7 +66,7 @@ if(command==='prepare'){
  m.start=reconciled.used;m.day=reconciled.day;m.cap=limits.cap
  if(limits.hold>0)m.hold=await proxy(m,'/reserve',{bound:limits.hold})
  await writeFile(manifest,JSON.stringify(m),{mode:0o600});await deploy(m,true)
- const activated=await proxy(m,'/status');if(!activated.active||activated.stop||activated.day!==usage.day)throw Error('BATCH_ACTIVATION_FAILED')
+ const activated=await waitForActivation(m,true);if(activated.stop)throw Error('BATCH_BUDGET_UNAVAILABLE')
  await appendFile(process.env.GITHUB_ENV,`LANGUAGE_PROXY_URL=${m.url}\nLANGUAGE_PROXY_TOKEN=${m.token}\nLANG_CASE_IDS=LANG-01-1,LANG-02-1,LANG-04-1\n`)
  console.log(JSON.stringify({event:'language.batch.ready',day:m.day,accountObserved:usage.used,sharedUsed:m.start,sharedReserved:activated.reserved,batchCap:m.cap,runtimeSha:m.runtimeSha,cases:['LANG-01-1','LANG-02-1','LANG-04-1']}))
 }else if(command==='finish'){
@@ -72,6 +80,7 @@ if(command==='prepare'){
   if(state.day===m.day&&Math.abs(state.reserved-hold)<0.00001){
    // No model reservation is in flight. Disabling inference precedes release.
    await deploy(m,false)
+   await waitForActivation(m,false)
    if(m.hold)await proxy(m,'/settle',{...m.hold,actual:0})
    report.holdReleased=true
   }else report.stopReason='IN_FLIGHT_OR_DAY_CHANGED_HOLD_RETAINED'
