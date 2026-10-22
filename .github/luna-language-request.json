@@ -1,1 +1,17 @@
-{"cases":["LANG-10-1","LANG-10-2","LANG-10-3"],"reason":"validated_clock_fixture_reexecution_not_inference_retry"}
+{
+  "cases": [
+    "LANG-09-1",
+    "LANG-10-1",
+    "LANG-11-1",
+    "LANG-12-1",
+    "LANG-09-2",
+    "LANG-10-2",
+    "LANG-11-2",
+    "LANG-12-2",
+    "LANG-09-3",
+    "LANG-10-3",
+    "LANG-11-3",
+    "LANG-12-3"
+  ],
+  "reason": "validated_persistent_test_provider_and_clock_fixture_reexecution"
+}

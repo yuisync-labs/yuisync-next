@@ -15,6 +15,7 @@ export async function prepareLanguageCase(h:Harness,family:string){
   const at=date.toISOString().slice(0,10)+'T09:00:00-03:00'
   await h.run('Prepare também só banho da Mel em '+at+'. Eu levo e busco.',[c('open_tools',{capability:'agenda'}),h.update([h.add('banho'),{action:'set_field',field:'pet_id',value:'mel'},{action:'set_field',field:'scheduled_at',value:at}],true,'banho-mel','booking')])
  }
+ if(family==='unknown_attribute')await h.run('Mostre a Cama G.',[c('search_products',{query:'cama',filters:{catalogCategory:'accessory'}}),'Encontrei a Cama G no catálogo.'])
  if(family==='price_race')await h.db.prepare("UPDATE catalog_products SET price_cents=9500 WHERE tenant_id=? AND id='racao-a'").bind(h.tenant).run()
  let peer:undefined|{stub:Harness['stub'];job:Harness['job']}
  if(family==='last_unit'){

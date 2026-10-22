@@ -109,3 +109,37 @@ Este plano não altera o agente, não implementa o runner da nova bateria e não
 ativa nenhuma inferência, publicação, produção ou automação. A próxima entrega
 operacional é adaptar a execução ao orçamento compartilhado e então escolher o
 primeiro lote pelo saldo observado naquele momento.
+
+## Continuação executável
+
+A execução autorizada usa `scripts/luna/runLanguageQueue.mjs`. A lista explícita
+em `.github/luna-language-request.json` é dividida em lotes de até três casos.
+Cada lote lê o consumo atual, usa o contador compartilhado do staging e reserva
+no máximo 1.000 neurons. Os cenários são seriais; a disputa da última unidade
+é um único cenário com duas conversas concorrentes. A falha funcional de um
+caso é registrada e permite avançar aos independentes (`bail: 0`, `retry: 0`).
+O executor encerra a fila por saldo indisponível, uso incerto, mudança de dia
+UTC ou limpeza que exija revisão. O relatório de cada lote confirma a liberação
+da reserva e a remoção do proxy antes de iniciar o próximo.
+
+A primeira fixture de data alterava `Date.now()` e interferia nos alarmes
+nativos; essas tentativas não certificam a Luna. A fixture corrigida controla
+somente o construtor `new Date()` sem argumentos, mantendo `Date.now()` real.
+Um teste local verifica o relógio apresentado, a execução da fila nativa e a
+persistência de `scheduled_at_ms`. Ela cobre interpretação de amanhã e o fuso;
+a validação de disponibilidade mantém o relógio real, com o agendamento futuro
+em ambos os relógios. Não cobre toda política de expiração ou virada de dia.
+
+Os resultados consolidados distinguem asserções implementadas de cobertura
+integral da especificação. Asserções textuais exigem revisão das transcrições.
+Preparação determinística, casos pulados e erros da fixture não são passes de
+linguagem. Alterações no relatório não devem iniciar inferências adicionais.
+
+A ponte de modelo também precisa sobreviver à inicialização de uma conversa
+fria. Sobrescrever um método apenas na instância do teste não foi suficiente:
+algumas primeiras mensagens chegaram ao provider padrão sem binding de AI.
+O Worker exclusivo de testes agora fornece a ponte no método da própria classe.
+`vitest.language-fixture.config.ts` verifica esse caminho com uma resposta local
+estática, sem Workers AI, antes de qualquer admissão de consumo real.
+Erros `AI_NOT_CONFIGURED` de tentativas anteriores são bloqueios da fixture;
+não são classificados como falhas de interpretação da Luna.

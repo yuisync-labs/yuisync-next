@@ -33,6 +33,9 @@ jobs:
       - run: npm ci
       - run: node --test test/lunaLanguageBudgetProxy.test.mjs
       - run: npm run edge:typecheck
+      - name: Verify persistent cold-start bridge without Workers AI
+        working-directory: apps/edge-api
+        run: npx vitest run --config vitest.language-fixture.config.ts
       - name: Run authorized queue in serial batches of at most three cases
         run: node scripts/luna/runLanguageQueue.mjs
       - name: Reconcile usage, release idle hold and delete temporary proxy
