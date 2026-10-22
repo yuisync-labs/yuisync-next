@@ -1,8 +1,6 @@
 name: Luna language batch (1000 neurons)
 on:
-  push:
-    branches: [codex/luna-think-language-test-plan]
-    paths: [.github/luna-language-request.json]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
