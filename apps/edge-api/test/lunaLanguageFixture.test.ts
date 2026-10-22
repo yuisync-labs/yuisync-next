@@ -38,6 +38,5 @@ for(const [index,family] of families.entries())it('seeds '+family+' without infe
   expect(proposals).toHaveLength(expected)
   if(family==='ambiguous_reference')expect(JSON.parse(proposals[0].payload_json).items).toHaveLength(2)
   if(family==='last_unit'){expect(setup.peer).toBeDefined();expect(await h.db.prepare("SELECT on_hand_milliunits,reserved_milliunits FROM inventory_balances WHERE tenant_id=? AND product_id='racao-a'").bind(h.tenant).first()).toEqual({on_hand_milliunits:1000,reserved_milliunits:0})}
-  if(family==='date_boundary')expect(new Date(Date.now()).toISOString().slice(0,16)).toBe('2026-11-02T02:55')
  }finally{restore();h.close()}
 })

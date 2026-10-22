@@ -1,7 +1,7 @@
 import {env} from 'cloudflare:workers'
 import {runInDurableObject} from 'cloudflare:test'
 import {getAgentByName} from 'agents'
-import {expect,vi} from 'vitest'
+import {expect} from 'vitest'
 import {command as c} from './thinkHarness'
 import type {createLiveHarness} from './liveHarness'
 import type {ThinkRecoveryTestAgent} from '../../thinkTestWorker'
@@ -35,12 +35,6 @@ export async function prepareLanguageCase(h:Harness,family:string){
   peer={stub:stub as unknown as Harness['stub'],job}
  }
  let restore=()=>{}
- if(family==='date_boundary'){
-  // Advance monotonically from store-local Sunday 23:55. The host-side budget
-  // service keeps the real UTC day; this clock applies only inside workerd.
-  const wall=performance.now(),base=Date.parse('2026-11-02T02:55:00Z')
-  const clock=vi.spyOn(Date,'now').mockImplementation(()=>base+performance.now()-wall);restore=()=>clock.mockRestore()
- }
  if(family==='tenant_injection'){
   const now=Date.now()
   await h.db.batch([

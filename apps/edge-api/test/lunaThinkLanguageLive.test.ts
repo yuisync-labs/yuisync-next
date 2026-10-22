@@ -13,6 +13,12 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
  for(const s of cases)it(s.id+' '+s.name,async test=>{
   const control=await(await liveService.fetch('https://live-model.local/control')).json() as {stop:boolean}
   if(control.stop){test.skip();return}
+  if(s.family==='date_boundary'){
+   // A process-wide Date.now override does not control new Date() in the prompt
+   // and can strand native workflow alarms. Do not spend AI on that fixture.
+   await liveService.fetch('https://live-model.local/evidence',{method:'POST',body:JSON.stringify({id:2000+Number(s.id.split('-')[1])*100+Number(s.id.split('-')[2]),status:'blocked',languageCaseId:s.id,reason:'CONTROLLED_STORE_CLOCK_NOT_YET_VALIDATED',turns:[]})})
+   test.skip();return
+  }
   const number=Number(s.id.split('-')[1])*100+Number(s.id.split('-')[2]),h=await createLiveHarness(2000+number)
   const sales=()=>h.saleRows().then(r=>r.results)
   const appointments=()=>h.db.prepare('SELECT id,status FROM appointments WHERE tenant_id=?').bind(h.tenant).all()
@@ -75,7 +81,7 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
     expect(await sales()).toHaveLength(0)
    }else if(s.family==='date_boundary'){
     expect(await sales()).toHaveLength(0);expect((await appointments()).results).toHaveLength(0)
-    const p=await payload('appointment_create');expect(Date.parse(p.scheduled_at)).toBe(Date.parse('2026-11-02T09:00:00-03:00'))
+    const p=await payload('appointment_create');expect(Number(p.scheduled_at_ms)).toBe(Date.parse('2026-11-02T09:00:00-03:00'))
     await h.turn(s.follow_up!);expect((await appointments()).results).toHaveLength(1)
     expect(await h.db.prepare('SELECT scheduled_at_ms FROM appointments WHERE tenant_id=?').bind(h.tenant).first()).toEqual({scheduled_at_ms:Date.parse('2026-11-02T09:00:00-03:00')})
    }else if(s.family==='rating_quantity'){
@@ -111,6 +117,6 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
    }
    expect(await h.db.prepare('SELECT count(*) n FROM payments WHERE tenant_id=?').bind(h.tenant).first()).toEqual({n:0})
    await h.evidence('passed',{languageCaseId:s.id,setup:'deterministic_fixture',after:{sales:await sales(),appointments:(await appointments()).results},model:'@cf/zai-org/glm-4.7-flash'})
-  }catch(error){await h.evidence('failed',{languageCaseId:s.id,error:String(error),observed:{sales:await sales(),appointments:(await appointments()).results,payments:(await h.db.prepare('SELECT id FROM payments WHERE tenant_id=?').bind(h.tenant).all()).results,state:await h.state()}});throw error}finally{restore();h.close()}
+  }catch(error){await h.evidence('failed',{languageCaseId:s.id,error:String(error),observed:{sales:await sales(),appointments:(await appointments()).results,payments:(await h.db.prepare('SELECT id FROM payments WHERE tenant_id=?').bind(h.tenant).all()).results,proposals:(await h.db.prepare('SELECT operation_kind,status,payload_json FROM luna_proposals WHERE tenant_id=?').bind(h.tenant).all()).results,state:await h.state()}});throw error}finally{restore();h.close()}
  })
 })
