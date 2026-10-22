@@ -31,3 +31,5 @@ jobs:
           }
           console.log(JSON.stringify({event:'language.readonly.snapshot',usage,active}))
           JS
+
+# Explicit read-only snapshot 2. No model invocation.
