@@ -16,7 +16,7 @@ jobs:
       (github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.ref == 'codex/luna-think-language-test-plan'))
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 90
     environment: cloudflare-staging
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -33,11 +33,8 @@ jobs:
       - run: npm ci
       - run: node --test test/lunaLanguageBudgetProxy.test.mjs
       - run: npm run edge:typecheck
-      - name: Read account usage and reserve shared daily headroom
-        run: node scripts/luna/runLanguageBatch.mjs prepare
-      - name: Run three admitted real-model language cases
-        working-directory: apps/edge-api
-        run: npx vitest run --config vitest.language-live.config.ts
+      - name: Run authorized queue in serial batches of at most three cases
+        run: node scripts/luna/runLanguageQueue.mjs
       - name: Reconcile usage, release idle hold and delete temporary proxy
         if: always()
         run: node scripts/luna/runLanguageBatch.mjs finish

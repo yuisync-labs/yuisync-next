@@ -1,10 +1,11 @@
-import {readFile,writeFile,mkdir,appendFile} from 'node:fs/promises'
+import {readFile,writeFile,mkdir,appendFile,unlink} from 'node:fs/promises'
 import {existsSync} from 'node:fs'
 import {resolve} from 'node:path'
 import {execFileSync} from 'node:child_process'
 import {randomBytes} from 'node:crypto'
 import {ACCOUNT,STAGING,accountUsage,batchHeadroom} from './languageBatchBudget.mjs'
-const dir=resolve('.wrangler/luna-language-run'),manifest=resolve(dir,'private.json'),out=resolve('.artifacts/luna-language')
+const dir=resolve('.wrangler/luna-language-run'),manifest=resolve(dir,'private.json'),out=resolve('.artifacts/luna-language',process.env.LANGUAGE_BATCH_INDEX?'batch-'+process.env.LANGUAGE_BATCH_INDEX:'')
+if(process.env.LANGUAGE_BATCH_INDEX&&!/^\d{2}$/.test(process.env.LANGUAGE_BATCH_INDEX))throw Error('INVALID_BATCH_INDEX')
 const command=process.argv[2]
 async function cf(path,options={}){
  const r=await fetch('https://api.cloudflare.com/client/v4'+path,{method:options.method??'GET',headers:{authorization:`Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,...options.headers},body:options.body,signal:AbortSignal.timeout(30000)})
@@ -49,7 +50,7 @@ async function deploy(m,active){
 }
 if(command==='prepare'){
  if(process.env.GITHUB_RUN_ATTEMPT!=='1')throw Error('AUTOMATIC_RERUN_FORBIDDEN')
- const requested=JSON.parse(await readFile('.github/luna-language-request.json','utf8')).cases
+ const requested=process.env.LANG_CASE_IDS?process.env.LANG_CASE_IDS.split(','):JSON.parse(await readFile('.github/luna-language-request.json','utf8')).cases
  const catalogue=JSON.parse(await readFile('docs/luna-think-language-cases.json','utf8'))
  if(!Array.isArray(requested)||requested.length<1||requested.length>3||new Set(requested).size!==requested.length||requested.some(id=>!catalogue.cases.some(c=>c.id===id)))throw Error('INVALID_LANGUAGE_BATCH_SELECTION')
  const usage=await accountUsage();if(usage.floor>=9000)throw Error('DAILY_BUDGET_UNAVAILABLE')
@@ -57,7 +58,7 @@ if(command==='prepare'){
  const binding=name=>settings.bindings.find(b=>b.name===name)?.text
  if(binding('APP_ENV')!=='staging'||binding('LUNA_RUNTIME')!=='think'||binding('LUNA_AI_DAILY_LIMIT')!=='9000')throw Error('STAGING_RUNTIME_MISMATCH')
  await mkdir(dir,{recursive:true});await mkdir(out,{recursive:true})
- const run=process.env.GITHUB_RUN_ID;if(!/^\d+$/.test(run??''))throw Error('RUN_ID_REQUIRED')
+ const run=(process.env.GITHUB_RUN_ID??'')+(process.env.LANGUAGE_BATCH_INDEX??'');if(!/^\d+$/.test(run??''))throw Error('RUN_ID_REQUIRED')
  const m={name:'luna-language-budget-'+run,token:randomBytes(32).toString('base64url'),config:resolve(dir,'wrangler.json'),secrets:resolve(dir,'secrets.json'),runtimeSha:binding('RELEASE_SHA'),namespace:settings.bindings.find(b=>b.name==='LUNA_AI_BUDGET')?.namespace_id,usageBefore:usage}
  m.url=`https://${m.name}.gabrielboalento3004.workers.dev`
  console.log('::add-mask::'+m.token)
@@ -91,5 +92,6 @@ if(command==='prepare'){
  }catch(error){report.stopReason=error.message}
  try{if(!/^luna-language-budget-\d+$/.test(m.name))throw Error('TEMP_SCRIPT_NAME_INVALID');await cf(`/accounts/${ACCOUNT}/workers/scripts/${m.name}`,{method:'DELETE'});report.proxyDeleted=true}catch{report.cleanupError='TEMP_PROXY_DELETE_FAILED'}
  await mkdir(out,{recursive:true});await writeFile(resolve(out,'budget-report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report))
+ if(report.holdReleased&&report.proxyDeleted)await unlink(manifest)
  if(report.stopReason||report.cleanupError)process.exitCode=1
 }else throw Error('COMMAND_REQUIRED')

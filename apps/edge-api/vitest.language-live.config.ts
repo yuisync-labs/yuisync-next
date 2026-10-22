@@ -5,7 +5,9 @@ import {defineConfig} from 'vitest/config'
 import {accountUsage} from '../../scripts/luna/languageBatchBudget.mjs'
 const url=process.env.LANGUAGE_PROXY_URL,token=process.env.LANGUAGE_PROXY_TOKEN,ids=process.env.LANG_CASE_IDS
 if(!url||!/^https:\/\/luna-language-budget-\d+\.gabrielboalento3004\.workers\.dev$/.test(url)||!token||!ids)throw Error('BUDGETED_LIVE_CONFIGURATION_REQUIRED')
-const dir=fileURLToPath(new URL('../../.artifacts/luna-language/',import.meta.url));mkdirSync(dir,{recursive:true})
+const batchIndex=process.env.LANGUAGE_BATCH_INDEX
+if(batchIndex&&!/^\d{2}$/.test(batchIndex))throw Error('INVALID_BATCH_INDEX')
+const dir=fileURLToPath(new URL('../../.artifacts/luna-language/'+(batchIndex?'batch-'+batchIndex+'/':''),import.meta.url));mkdirSync(dir,{recursive:true})
 let stopped=false
 async function status(){const r=await fetch(url+'/status',{headers:{authorization:`Bearer ${token}`}});if(!r.ok)throw Error('SHARED_BUDGET_UNAVAILABLE');return r.json()}
 export default defineConfig({plugins:[cloudflareTest(async()=>({wrangler:{configPath:'./wrangler.test.jsonc'},miniflare:{d1Databases:['DB','AUTH_DB'],bindings:{LANG_CASE_IDS:ids,TEST_MIGRATIONS:await readD1Migrations(fileURLToPath(new URL('./migrations',import.meta.url))),TEST_AUTH_MIGRATIONS:await readD1Migrations(fileURLToPath(new URL('./auth-migrations',import.meta.url)))},serviceBindings:{LIVE_MODEL:async(request:Request)=>{

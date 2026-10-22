@@ -22,3 +22,22 @@ it('keeps separate prepared cart and booking proposals for scoped confirmation',
   expect((await h.db.prepare('SELECT id FROM appointments WHERE tenant_id=?').bind(h.tenant).all()).results).toHaveLength(0)
  }finally{h.close()}
 })
+
+// The extended fixture paths must work on real local D1 without any AI call.
+import {createLiveHarness} from './fixtures/luna/liveHarness'
+import {prepareLanguageCase} from './fixtures/luna/languageSetup'
+const families=['confirmation_quote','fragmented_correction','scoped_operations','price_race','last_unit','transport_retry','handoff_interrupt','ambiguous_reference','tenant_injection','date_boundary','unknown_attribute','rating_quantity']
+for(const [index,family] of families.entries())it('seeds '+family+' without inference or business effects',async()=>{
+ const h=await createLiveHarness(8500+index);let restore=()=>{}
+ try{
+  const setup=await prepareLanguageCase(h,family);restore=setup.restore
+  expect((await h.saleRows()).results).toHaveLength(0)
+  expect((await h.db.prepare('SELECT id FROM appointments WHERE tenant_id=?').bind(h.tenant).all()).results).toHaveLength(0)
+  const proposals=(await h.db.prepare("SELECT payload_json FROM luna_proposals WHERE tenant_id=? AND status='awaiting_confirmation'").bind(h.tenant).all<{payload_json:string}>()).results
+  const expected=['tenant_injection','date_boundary','unknown_attribute','rating_quantity'].includes(family)?0:['scoped_operations','last_unit'].includes(family)?2:1
+  expect(proposals).toHaveLength(expected)
+  if(family==='ambiguous_reference')expect(JSON.parse(proposals[0].payload_json).items).toHaveLength(2)
+  if(family==='last_unit'){expect(setup.peer).toBeDefined();expect(await h.db.prepare("SELECT on_hand_milliunits,reserved_milliunits FROM inventory_balances WHERE tenant_id=? AND product_id='racao-a'").bind(h.tenant).first()).toEqual({on_hand_milliunits:1000,reserved_milliunits:0})}
+  if(family==='date_boundary')expect(new Date(Date.now()).toISOString().slice(0,16)).toBe('2026-11-02T02:55')
+ }finally{restore();h.close()}
+})
