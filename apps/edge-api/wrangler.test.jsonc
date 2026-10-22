@@ -43,6 +43,10 @@
       {
         "name": "LUNA_AI_BUDGET",
         "class_name": "LunaAiBudget"
+      },
+      {
+        "name": "LUNA_NATIVE_PRESERVED",
+        "class_name": "PreservedLunaNativeAgent"
       }
     ]
   },
@@ -68,6 +72,10 @@
       "storage": "sqlite"
     },
     "LunaAiBudget": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "PreservedLunaNativeAgent": {
       "type": "durable-object",
       "storage": "sqlite"
     }

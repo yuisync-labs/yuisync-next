@@ -2,6 +2,7 @@
 export {default} from '../src/index'
 export * from '../src/index'
 export {LunaNativeAgent} from '../src/luna/nativeCloudflareAgent'
+export {LunaNativeAgent as PreservedLunaNativeAgent} from '../src/luna/preservedNativeAgent'
 import {LunaThinkAgent} from '../src/luna/thinkAgent'
 import {action} from '@cloudflare/think'
 import {MockLanguageModelV3} from 'ai/test'

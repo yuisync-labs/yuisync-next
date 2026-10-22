@@ -18,7 +18,8 @@ export default defineConfig({
         configPath: './wrangler.test.jsonc',
       },
       miniflare: {
-        d1Databases: ['DB', 'AUTH_DB'],
+        // Upgrade fixtures start empty and stay independent within a test file.
+        d1Databases: ['DB', 'AUTH_DB', 'MIGRATION_DB', ...[25, 26, 27, 28, 29].map(version => `MIGRATION_V${version}`)],
         bindings: {
           TEST_MIGRATIONS: await readD1Migrations(migrationsPath),
           TEST_AUTH_MIGRATIONS: await readD1Migrations(authMigrationsPath),

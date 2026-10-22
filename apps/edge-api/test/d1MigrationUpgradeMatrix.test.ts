@@ -1,98 +1,20 @@
 import { env } from 'cloudflare:workers'
-import { applyD1Migrations } from 'cloudflare:test'
+import type { applyD1Migrations } from 'cloudflare:test'
+import { upgradeHistoricalDatabase } from './d1ColdUpgradeV25Harness'
 import { describe, expect, it } from 'vitest'
 
-type Migration = Parameters<typeof applyD1Migrations>[1][number]
 type TestEnv = EdgeEnv & {
-  DB: D1Database
+  MIGRATION_V25: D1Database
+  MIGRATION_V26: D1Database
+  MIGRATION_V27: D1Database
+  MIGRATION_V28: D1Database
+  MIGRATION_V29: D1Database
   TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1]
 }
 
 const testEnv = env as TestEnv
-const db = testEnv.DB
 
-function migrationsFrom(version: number): Migration[] {
-  return testEnv.TEST_MIGRATIONS.filter((migration) => {
-    const parsed = Number.parseInt(String(migration.name).split('_', 1)[0], 10)
-    return Number.isFinite(parsed) && parsed > version
-  })
-}
-
-async function setSchemaSnapshot(version: number) {
-  await db.prepare("UPDATE _yuisync_system_metadata SET value=?1 WHERE key='schema_version'")
-    .bind(String(version))
-    .run()
-
-  for (const migration of migrationsFrom(version)) {
-    await db.prepare('DELETE FROM d1_migrations WHERE name=?1')
-      .bind(migration.name)
-      .run()
-  }
-}
-
-async function dropVersion30() {
-  await db.exec(`
-    DROP TRIGGER IF EXISTS cash_register_single_open_insert_guard;
-    DROP TRIGGER IF EXISTS cash_register_single_open_reopen_guard;
-    DROP VIEW IF EXISTS compat_chat_sessions;
-    DROP VIEW IF EXISTS compat_chat_messages;
-    DROP VIEW IF EXISTS compat_appointments;
-    DROP VIEW IF EXISTS compat_client_subscriptions;
-    DROP INDEX IF EXISTS client_subscriptions_scope_pet_idx;
-
-    ALTER TABLE chat_threads DROP COLUMN context_json;
-    ALTER TABLE chat_threads DROP COLUMN closed_at_ms;
-    ALTER TABLE chat_threads DROP COLUMN csat_score;
-    ALTER TABLE chat_threads DROP COLUMN assigned_staff_key;
-    ALTER TABLE chat_threads DROP COLUMN intent;
-    ALTER TABLE chat_threads DROP COLUMN customer_name;
-
-    ALTER TABLE appointments DROP COLUMN grooming_machine_no;
-    ALTER TABLE loyalty_points DROP COLUMN expires_at_ms;
-    ALTER TABLE client_subscriptions DROP COLUMN legacy_metadata_json;
-    ALTER TABLE client_subscriptions DROP COLUMN recurring_appointments_created_at_ms;
-    ALTER TABLE client_subscriptions DROP COLUMN first_appointment_at_ms;
-    ALTER TABLE client_subscriptions DROP COLUMN pet_id;
-    ALTER TABLE support_threads DROP COLUMN assigned_to;
-    ALTER TABLE support_threads DROP COLUMN last_message_preview;
-  `)
-}
-
-async function dropVersion29() {
-  await dropVersion30()
-  await db.exec(`
-    DROP TRIGGER IF EXISTS client_subscription_base_usage_capacity_guard;
-    DROP TRIGGER IF EXISTS client_subscription_usage_projection_from_base;
-    DROP TRIGGER IF EXISTS subscription_usage_projection_after_allocation_insert;
-    DROP TRIGGER IF EXISTS subscription_usage_projection_after_allocation_update;
-    DROP TRIGGER IF EXISTS subscription_usage_projection_after_allocation_delete;
-    DROP TRIGGER IF EXISTS package_allocation_from_late_service_consumption;
-  `)
-}
-
-async function dropVersion28() {
-  await dropVersion29()
-  await db.exec(`
-    DROP TABLE IF EXISTS whatsapp_delivery_receipts;
-    DROP TABLE IF EXISTS whatsapp_outbound_messages;
-  `)
-}
-
-async function dropVersion27() {
-  await dropVersion28()
-  await db.exec('DROP TABLE IF EXISTS whatsapp_access_credentials;')
-}
-
-async function dropVersion26() {
-  await dropVersion27()
-  await db.exec(`
-    DROP TABLE IF EXISTS whatsapp_ingress_receipts;
-    DROP TABLE IF EXISTS whatsapp_phone_connections;
-    DROP TABLE IF EXISTS whatsapp_waba_accounts;
-  `)
-}
-
-async function assertLatestSchema() {
+async function assertLatestSchema(db: D1Database) {
   const version = await db.prepare("SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'")
     .first<{ value: string }>()
   expect(version?.value).toBe('30')
@@ -186,30 +108,9 @@ async function assertLatestSchema() {
 }
 
 describe('D1 recent migration upgrade matrix', () => {
-  it('upgrades v29, v28, v27, v26 and v25 snapshots to v30 using the repository migrations', async () => {
-    await dropVersion30()
-    await setSchemaSnapshot(29)
-    await applyD1Migrations(db, migrationsFrom(29))
-    await assertLatestSchema()
-
-    await dropVersion29()
-    await setSchemaSnapshot(28)
-    await applyD1Migrations(db, migrationsFrom(28))
-    await assertLatestSchema()
-
-    await dropVersion28()
-    await setSchemaSnapshot(27)
-    await applyD1Migrations(db, migrationsFrom(27))
-    await assertLatestSchema()
-
-    await dropVersion27()
-    await setSchemaSnapshot(26)
-    await applyD1Migrations(db, migrationsFrom(26))
-    await assertLatestSchema()
-
-    await dropVersion26()
-    await setSchemaSnapshot(25)
-    await applyD1Migrations(db, migrationsFrom(25))
-    await assertLatestSchema()
+  it.each([29, 28, 27, 26, 25] as const)('upgrades a fresh v%i database through all current migrations', async (version) => {
+    const db = testEnv[`MIGRATION_V${version}`]
+    await upgradeHistoricalDatabase(db, testEnv.TEST_MIGRATIONS, version)
+    await assertLatestSchema(db)
   }, 30_000)
 })
