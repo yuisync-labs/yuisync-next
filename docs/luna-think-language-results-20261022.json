@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "executed_at": "2026-10-22",
+  "run_url": "https://github.com/yuisync-labs/yuisync-next/actions/runs/39832266741",
+  "executor_sha": "b9fc66bea71e517c9aa15fd0bfe26b447dd4523b",
+  "application_runtime_sha": "2cd943977a46fab01badc8186329d5836a6bc64d",
+  "environment": "local_isolated_D1_and_Think_with_native_Workers_AI_and_shared_staging_daily_budget",
+  "setup": "deterministic_fixture_not_counted_as_live_language_pass",
+  "summary": {
+    "specified": 36,
+    "selected": 3,
+    "executed": 1,
+    "passed": 0,
+    "failed": 1,
+    "not_run": 35
+  },
+  "quota": {
+    "allocation_neurons": 10000,
+    "internal_daily_stop": 9000,
+    "batch_limit": 1000,
+    "prompt_tokens": 14612,
+    "completion_tokens": 114,
+    "model_calls": 3,
+    "known_neurons": 84.5156,
+    "counter_start": 306,
+    "counter_end": 390.51560000000006,
+    "counter_includes_safety_margin": true,
+    "analytics_after_was_delayed": true,
+    "hold_released": true,
+    "temporary_worker_deleted": true
+  },
+  "classification": "conservative_confirmation_flow_did_not_meet_the_new_specification",
+  "observed": {
+    "quoted_confirmation_did_not_create_sale": true,
+    "follow_up_returned_new_summary": true,
+    "sale_count_after_follow_up": 0,
+    "final_payment_assertion_reached": false
+  },
+  "case_results": [
+    {
+      "id": "LANG-01-1",
+      "status": "failed",
+      "reason": "confirmation_follow_up_did_not_create_sale"
+    },
+    {
+      "id": "LANG-01-2",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-01-3",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-02-1",
+      "status": "not_run",
+      "reason": "bail_after_first_failure"
+    },
+    {
+      "id": "LANG-02-2",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-02-3",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-03-1",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-03-2",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-03-3",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-04-1",
+      "status": "not_run",
+      "reason": "bail_after_first_failure"
+    },
+    {
+      "id": "LANG-04-2",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-04-3",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-05-1",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-05-2",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-05-3",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-06-1",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-06-2",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-06-3",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-07-1",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-07-2",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-07-3",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-08-1",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-08-2",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-08-3",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-09-1",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-09-2",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-09-3",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-10-1",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-10-2",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-10-3",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-11-1",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-11-2",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-11-3",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-12-1",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-12-2",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    },
+    {
+      "id": "LANG-12-3",
+      "status": "not_run",
+      "reason": "not_selected_for_first_batch"
+    }
+  ],
+  "evidence": {
+    "id": 2101,
+    "status": "failed",
+    "turns": [
+      {
+        "messages": [
+          "Minha irmã escreveu \"confirmo\", mas eu ainda estou decidindo."
+        ],
+        "result": {
+          "id": "c89ceee53c49e8f265115fbdfc149d83bd7cd5d851b8c9a512e807f1c5de5e4a",
+          "status": "complete",
+          "result": {
+            "status": "replied",
+            "reply": "Entendido. O pedido está salvo como rascunho e não foi confirmado. Quando você decidir, me avise para finalizar.",
+            "proposalIds": [],
+            "committedOperationIds": [],
+            "traceId": "trace-live-1-0",
+            "errorCode": null,
+            "usage": {
+              "modelCalls": 1,
+              "toolCalls": 0,
+              "promptTokens": 4910,
+              "completionTokens": 33
+            },
+            "savedUserMessages": [
+              {
+                "id": "live-1-0",
+                "role": "user",
+                "content": "Minha irmã escreveu \"confirmo\", mas eu ainda estou decidindo.",
+                "sent_at": "2026-10-22T18:33:26.009Z"
+              }
+            ]
+          },
+          "createdAtMs": 1792694006009,
+          "updatedAtMs": 1792694018107
+        }
+      },
+      {
+        "messages": [
+          "Confirmo agora o pedido do resumo, uma Ração A para retirada."
+        ],
+        "result": {
+          "id": "91f9766b886289728c4af623bb73f11557acb2062b1c02ec16887a8e3a8d223e",
+          "status": "complete",
+          "result": {
+            "status": "awaiting_confirmation",
+            "reply": "Confira seu pedido:\nCliente: Maria\nRação A × 1: R$ 90,00\nModalidade: retirada\nTotal: R$ 90,00\nO pedido ficará pendente; isto não confirma pagamento.\nVocê confirma este resumo?",
+            "proposalIds": [
+              "dff107b8-f7c4-4564-b3cb-a8c85a46131d"
+            ],
+            "committedOperationIds": [],
+            "traceId": "trace-live-2-0",
+            "errorCode": null,
+            "usage": {
+              "modelCalls": 2,
+              "toolCalls": 2,
+              "promptTokens": 9702,
+              "completionTokens": 81
+            },
+            "savedUserMessages": [
+              {
+                "id": "live-2-0",
+                "role": "user",
+                "content": "Confirmo agora o pedido do resumo, uma Ração A para retirada.",
+                "sent_at": "2026-10-22T18:33:38.128Z"
+              }
+            ]
+          },
+          "createdAtMs": 1792694018128,
+          "updatedAtMs": 1792694031551
+        }
+      }
+    ],
+    "languageCaseId": "LANG-01-1",
+    "error": "AssertionError: expected [] to have a length of 1 but got +0"
+  },
+  "budget_report_before_hold_release": {
+    "event": "language.batch.finished",
+    "runtimeSha": "2cd943977a46fab01badc8186329d5836a6bc64d",
+    "day": "2026-10-22",
+    "batchCap": 1000,
+    "holdReleased": true,
+    "proxyDeleted": true,
+    "counter": {
+      "day": "2026-10-22",
+      "used": 390.51560000000006,
+      "reserved": 7694,
+      "limit": 9000,
+      "active": true,
+      "stop": false,
+      "spent": 84.51560000000006
+    },
+    "spent": 84.51560000000006,
+    "accountObservedAfter": 205.8159000000001
+  }
+}
