@@ -12,7 +12,7 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
  for(const s of cases)it(s.id+' '+s.name,async test=>{
   const control=await(await liveService.fetch('https://live-model.local/control')).json() as {stop:boolean}
   if(control.stop){test.skip();return}
-  if(!['confirmation_quote','fragmented_correction','scoped_operations'].includes(s.family))throw Error('VARIANT_NOT_IMPLEMENTED')
+  if(!['confirmation_quote','fragmented_correction','scoped_operations','price_race'].includes(s.family))throw Error('VARIANT_NOT_IMPLEMENTED')
   const number=Number(s.id.split('-')[1])*100+Number(s.id.split('-')[2]),h=await createLiveHarness(2000+number)
   const sales=()=>h.saleRows().then(r=>r.results)
   const appointments=()=>h.db.prepare('SELECT id,status FROM appointments WHERE tenant_id=?').bind(h.tenant).all()
@@ -26,6 +26,7 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
     at=date.toISOString().slice(0,10)+'T09:00:00-03:00'
     await h.run('Prepare também só banho da Mel em '+at+'. Eu levo e busco.',[c('open_tools',{capability:'agenda'}),h.update([h.add('banho'),{action:'set_field',field:'pet_id',value:'mel'},{action:'set_field',field:'scheduled_at',value:at}],true,'banho-mel','booking')])
    }
+   if(s.family==='price_race')await h.db.prepare("UPDATE catalog_products SET price_cents=9500 WHERE tenant_id=? AND id='racao-a'").bind(h.tenant).run()
    await h.attachLiveModel()
    expect(await sales()).toHaveLength(0)
    const challenge=await h.turn(s.input_fragments)
@@ -39,12 +40,16 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
     const p=await h.db.prepare("SELECT payload_json FROM luna_proposals WHERE tenant_id=? AND operation_kind='product_order_create' AND status='awaiting_confirmation' ORDER BY updated_at_ms DESC LIMIT 1").bind(h.tenant).first<{payload_json:string}>()
     const payload=JSON.parse(p!.payload_json);expect(payload.items).toHaveLength(1);expect(payload.items[0].quantity).toBe(1)
    }
+   if(s.family==='price_race'){
+    const p=await h.db.prepare("SELECT payload_json FROM luna_proposals WHERE tenant_id=? AND operation_kind='product_order_create' AND status='awaiting_confirmation' ORDER BY updated_at_ms DESC LIMIT 1").bind(h.tenant).first<{payload_json:string}>()
+    expect(p,'A revised summary is required').not.toBeNull();expect(JSON.parse(p!.payload_json).total_cents).toBe(9500)
+   }
    const follow=await h.turn(s.follow_up!)
    expect(follow.status,'Follow-up failed: '+follow.reply).not.toBe('handoff')
    const rows=await sales()
    if(s.family==='scoped_operations'){expect(rows).toHaveLength(0);expect((await appointments()).results).toHaveLength(1)}
    else{
-    expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({status:'pending',total_cents:9000})
+    expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({status:'pending',total_cents:s.family==='price_race'?9500:9000})
     expect(await h.db.prepare("SELECT reserved_milliunits FROM inventory_balances WHERE tenant_id=? AND product_id='racao-a'").bind(h.tenant).first()).toEqual({reserved_milliunits:1000})
    }
    expect(await h.db.prepare('SELECT count(*) n FROM payments WHERE tenant_id=?').bind(h.tenant).first()).toEqual({n:0})

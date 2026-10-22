@@ -49,6 +49,9 @@ async function deploy(m,active){
 }
 if(command==='prepare'){
  if(process.env.GITHUB_RUN_ATTEMPT!=='1')throw Error('AUTOMATIC_RERUN_FORBIDDEN')
+ const requested=JSON.parse(await readFile('.github/luna-language-request.json','utf8')).cases
+ const catalogue=JSON.parse(await readFile('docs/luna-think-language-cases.json','utf8'))
+ if(!Array.isArray(requested)||requested.length<1||requested.length>3||new Set(requested).size!==requested.length||requested.some(id=>!catalogue.cases.some(c=>c.id===id)))throw Error('INVALID_LANGUAGE_BATCH_SELECTION')
  const usage=await accountUsage();if(usage.floor>=9000)throw Error('DAILY_BUDGET_UNAVAILABLE')
  const settings=await cf(`/accounts/${ACCOUNT}/workers/scripts/${STAGING}/settings`)
  const binding=name=>settings.bindings.find(b=>b.name===name)?.text
@@ -67,8 +70,8 @@ if(command==='prepare'){
  if(limits.hold>0)m.hold=await proxy(m,'/reserve',{bound:limits.hold})
  await writeFile(manifest,JSON.stringify(m),{mode:0o600});await deploy(m,true)
  const activated=await waitForActivation(m,true);if(activated.stop)throw Error('BATCH_BUDGET_UNAVAILABLE')
- await appendFile(process.env.GITHUB_ENV,`LANGUAGE_PROXY_URL=${m.url}\nLANGUAGE_PROXY_TOKEN=${m.token}\nLANG_CASE_IDS=LANG-01-1,LANG-02-1,LANG-04-1\n`)
- console.log(JSON.stringify({event:'language.batch.ready',day:m.day,accountObserved:usage.used,sharedUsed:m.start,sharedReserved:activated.reserved,batchCap:m.cap,runtimeSha:m.runtimeSha,cases:['LANG-01-1','LANG-02-1','LANG-04-1']}))
+ await appendFile(process.env.GITHUB_ENV,`LANGUAGE_PROXY_URL=${m.url}\nLANGUAGE_PROXY_TOKEN=${m.token}\nLANG_CASE_IDS=${requested.join(',')}\n`)
+ console.log(JSON.stringify({event:'language.batch.ready',day:m.day,accountObserved:usage.used,sharedUsed:m.start,sharedReserved:activated.reserved,batchCap:m.cap,runtimeSha:m.runtimeSha,cases:requested}))
 }else if(command==='finish'){
  if(!existsSync(manifest)){console.log(JSON.stringify({event:'language.batch.not_started'}));process.exit(0)}
  const m=JSON.parse(await readFile(manifest,'utf8')),report={event:'language.batch.finished',runtimeSha:m.runtimeSha,day:m.day,batchCap:m.cap,holdReleased:false,proxyDeleted:false}

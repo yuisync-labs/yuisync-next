@@ -21,4 +21,4 @@ export default defineConfig({plugins:[cloudflareTest(async()=>({wrangler:{config
   const r=await fetch(url+'/run',{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(await request.json()),signal:AbortSignal.timeout(150000)})
   const body=await r.json();if(!r.ok){stopped=true;writeFileSync(dir+'stop.json',JSON.stringify({status:r.status,code:body.code}));}return Response.json(body,{status:r.status})
  }catch{stopped=true;writeFileSync(dir+'stop.json',JSON.stringify({code:'USAGE_OR_TRANSPORT_UNCERTAIN'}));return Response.json({code:'USAGE_OR_TRANSPORT_UNCERTAIN'},{status:502})}
-}}}}))],test:{include:['test/lunaThinkLanguageLive.test.ts'],setupFiles:['./test/applyD1Migrations.ts'],maxWorkers:1,bail:1,retry:0,testTimeout:600000}})
+}}}}))],test:{include:['test/lunaThinkLanguageLive.test.ts'],setupFiles:['./test/applyD1Migrations.ts'],maxWorkers:1,bail:0,retry:0,testTimeout:600000}})
