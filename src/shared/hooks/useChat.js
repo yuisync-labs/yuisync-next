@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
-import { requestChatReply, sendHumanChatMessage } from '../../lib/api'
+import { requestChatReply, sendHumanChatMessage, getChatTurnStatus, resumeChatTurn, resumeChatAutomation } from '../../lib/api'
 import { useModuleCtx } from '../../context/ModuleContext'
 import { useAuthCtx } from '../../context/AuthContext'
 import { applyTenantFilter, buildTenantPayload, runWithTenantFallback } from '../../lib/tenant'
@@ -176,6 +176,7 @@ export function useChat() {
   const [activeSession, setActiveSession] = useState(null)
   const [loading, setLoading] = useState(false)
   const [botTyping, setBotTyping] = useState(false)
+  const [botTurn, setBotTurn] = useState(null)
   const [quickReplies, setQuickReplies] = useState([])
   const [handoffAlerts, setHandoffAlerts] = useState([])
   const channelRef = useRef(null)
@@ -183,12 +184,19 @@ export function useChat() {
   const activeSessionIdRef = useRef(null)
   const handoffAlertIdsRef = useRef(new Set())
   const botRequestsInFlightRef = useRef(0)
+  const botPollControllersRef = useRef(new Map())
   const { activeModuleId } = useModuleCtx()
   const { activeTenantId } = useAuthCtx()
 
   useEffect(() => {
     activeSessionIdRef.current = activeSession?.id || null
   }, [activeSession?.id])
+
+  useEffect(()=>{
+    for(const controller of botPollControllersRef.current.values())controller.abort()
+    botPollControllersRef.current.clear()
+    activeSessionIdRef.current=null;setActiveSession(null);setMessages([]);setSessions([]);setBotTurn(null)
+  },[activeTenantId,activeModuleId])
 
   const pushHandoffAlert = useCallback((source, session) => {
     const alert = source?.metadata
@@ -213,7 +221,7 @@ export function useChat() {
       const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
         let query = supabase
           .from('chat_sessions')
-          .select('id, customer_phone, customer_name, status, intent, last_message_at, opened_at, csat_score, clients(name, details)')
+          .select('id, customer_phone, customer_name, channel, context, status, intent, last_message_at, opened_at, csat_score, clients(name, details)')
           .eq('module_id', activeModuleId)
           .order('last_message_at', { ascending: false })
 
@@ -237,6 +245,10 @@ export function useChat() {
       })
 
       setSessions(mapped)
+      setActiveSession(previous=>{
+        const current=previous&&activeSessionIdRef.current===previous.id?mapped.find(session=>session.id===previous.id):null
+        return current?{...previous,...current}:previous
+      })
     } finally {
       setLoading(false)
     }
@@ -252,9 +264,34 @@ export function useChat() {
 
     const normalized = sortChatMessages((data || []).map(normalizeIncomingMessage))
 
-    setMessages(normalized)
+    if (activeSessionIdRef.current === sessionId) setMessages(normalized)
     return normalized
   }, [])
+
+  // Reload restores a persisted turn using GET only. Closing/switching the
+  // conversation cancels polling, never the durable execution or its draft.
+  useEffect(() => {
+    setBotTurn(null)
+    if (!activeSession?.id || !['internal', 'interno'].includes(activeSession.channel)) return
+    const controller = new AbortController(), sessionId = activeSession.id
+    const options = {tenantId: activeTenantId, moduleId: activeModuleId, signal: controller.signal,
+      onStatus: job => {if (activeSessionIdRef.current === sessionId) setBotTurn(job)}}
+    ;(async () => {
+      try {
+        const job = await getChatTurnStatus(sessionId, 'latest', options)
+        options.onStatus(job)
+        if (['queued', 'running', 'waiting_quota'].includes(job.status)) {
+          await resumeChatTurn(sessionId, job.id, options)
+          if (activeSessionIdRef.current === sessionId) await loadMessages(sessionId)
+        }
+      } catch (error) {
+        if (error.name !== 'AbortError' && error.status !== 404 && activeSessionIdRef.current === sessionId) {
+          setBotTurn(previous => ({...previous, diagnostic: error.message}))
+        }
+      }
+    })()
+    return () => controller.abort()
+  }, [activeSession?.id, activeSession?.channel, activeTenantId, activeModuleId, loadMessages])
 
   const openSession = useCallback(async (session) => {
     setActiveSession(session)
@@ -286,8 +323,13 @@ export function useChat() {
   const createSession = useCallback(async ({ customer_phone, customer_name, pet_id, channel = 'whatsapp' }) => {
     if (!activeModuleId) throw new Error('Modulo nao definido')
 
+    // The D1 compatibility endpoint re-selects rows after an insert.
+    // Without an ID filter, .single() fails when the tenant already has chats,
+    // even if the insert succeeded. Reuse this ID across scoped retries.
+    const sessionId = crypto.randomUUID()
     const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
       const payload = buildTenantPayload({
+        id: sessionId,
         customer_phone,
         customer_name,
         client_id: pet_id,
@@ -299,6 +341,7 @@ export function useChat() {
       return supabase
         .from('chat_sessions')
         .insert(payload)
+        .eq('id', sessionId)
         .select()
         .single()
     })
@@ -316,10 +359,16 @@ export function useChat() {
     setMessages((prev) => sortChatMessages([...prev, optimisticMessage]))
     botRequestsInFlightRef.current += 1
     setBotTyping(true)
+    const controller = new AbortController()
+    botPollControllersRef.current.set(optimisticMessage.id, controller)
 
     try {
       const result = await requestChatReply(sessionId, trimmed, {
         clientMessageId: optimisticMessage.id,
+        tenantId: activeTenantId,
+        moduleId: activeModuleId,
+        signal: controller.signal,
+        onStatus: job => {if (activeSessionIdRef.current === sessionId) setBotTurn(job)},
       })
 
       const persistedMessage = (result?.savedUserMessages || []).find((message) => (
@@ -332,23 +381,26 @@ export function useChat() {
       }
 
       if (activeSessionIdRef.current === sessionId) {
-        await loadMessages(sessionId)
+        await Promise.all([loadMessages(sessionId),loadSessions()])
       }
 
       return result
     } catch (error) {
+      if (error.name === 'AbortError') throw error // polling cancelled; durable turn is not cancelled
       setMessages((prev) => prev.map((message) => (
         message.id === optimisticMessage.id
           ? { ...message, metadata: { ...(message.metadata || {}), pending: false, failed: true } }
           : message
       )))
       console.error('Falha na ingestão serverless do chat:', error)
+      if(activeSessionIdRef.current===sessionId)await loadSessions().catch(()=>undefined)
       throw error
     } finally {
+      botPollControllersRef.current.delete(optimisticMessage.id)
       botRequestsInFlightRef.current = Math.max(0, botRequestsInFlightRef.current - 1)
       if (botRequestsInFlightRef.current === 0) setBotTyping(false)
     }
-  }, [loadMessages])
+  }, [loadMessages, loadSessions, activeTenantId, activeModuleId])
 
   const sendHumanMessage = useCallback(async (sessionId, text) => {
     const trimmed = String(text || '').trim()
@@ -378,10 +430,12 @@ export function useChat() {
   }, [activeTenantId])
 
   const returnToBot = useCallback(async (sessionId) => {
+    const thinkResumed=await resumeChatAutomation(sessionId,{tenantId:activeTenantId,moduleId:activeModuleId}).then(()=>true).catch(error=>{if(error.status===404)return false;throw error})
     const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
       let query = supabase
         .from('chat_sessions')
-        .update({ status: 'bot', employee_id: null })
+      if(!thinkResumed)query=query.update({status:'bot',employee_id:null})
+      query=query
         .eq('id', sessionId)
         .select()
         .single()
@@ -393,7 +447,7 @@ export function useChat() {
     if (response.error) throw response.error
     setActiveSession(response.data)
     setSessions((prev) => prev.map((session) => (session.id === sessionId ? { ...session, status: 'bot' } : session)))
-  }, [activeTenantId])
+  }, [activeTenantId,activeModuleId])
 
   const closeSession = useCallback(async (sessionId, csatScore) => {
     const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
@@ -444,6 +498,8 @@ export function useChat() {
   }, [])
 
   useEffect(() => () => {
+    for (const controller of botPollControllersRef.current.values()) controller.abort()
+    botPollControllersRef.current.clear()
     channelRef.current?.unsubscribe()
     msgChannelRef.current?.unsubscribe()
     activeSessionIdRef.current = null
@@ -462,6 +518,7 @@ export function useChat() {
     activeSession,
     loading,
     botTyping,
+    botTurn,
     quickReplies,
     handoffAlerts,
     loadSessions,

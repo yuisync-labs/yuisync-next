@@ -8,6 +8,8 @@ import { defineConfig } from 'vitest/config'
 
 const migrationsPath = fileURLToPath(new URL('./migrations', import.meta.url))
 const authMigrationsPath = fileURLToPath(new URL('./auth-migrations', import.meta.url))
+// Keep local test logs in the ignored workspace, not the user's roaming profile.
+process.env.WRANGLER_LOG_PATH ??= fileURLToPath(new URL('../../.wrangler/test-logs/', import.meta.url))
 
 export default defineConfig({
   plugins: [
@@ -16,7 +18,8 @@ export default defineConfig({
         configPath: './wrangler.test.jsonc',
       },
       miniflare: {
-        d1Databases: ['DB', 'AUTH_DB'],
+        // Upgrade fixtures start empty and stay independent within a test file.
+        d1Databases: ['DB', 'AUTH_DB', 'MIGRATION_DB', ...[25, 26, 27, 28, 29].map(version => `MIGRATION_V${version}`)],
         bindings: {
           TEST_MIGRATIONS: await readD1Migrations(migrationsPath),
           TEST_AUTH_MIGRATIONS: await readD1Migrations(authMigrationsPath),
@@ -25,6 +28,9 @@ export default defineConfig({
     })),
   ],
   test: {
+    // Each file creates a real workerd/D1 migration fixture. Unbounded CPU-based
+    // concurrency can saturate Windows instead of accelerating certification.
+    maxWorkers: 2,
     include: ['test/**/*.test.ts'],
     setupFiles: ['./test/applyD1Migrations.ts'],
     clearMocks: true,

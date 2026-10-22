@@ -1,17 +1,22 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "yuisync-edge-api-durable-test",
-  "main": "src/index.ts",
+  "main": "test/thinkTestWorker.ts",
   "compatibility_date": "2026-08-05",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "vars": {
     "APP_ENV": "test",
     "SERVICE_NAME": "yuisync-edge-api",
     "RELEASE_CHANNEL": "test",
     "EDGE_DATABASE_ENABLED": "false",
     "EDGE_ASYNC_ENABLED": "false",
-    "EDGE_COORDINATION_ENABLED": "false"
-    ,"LUNA_ENABLED": "false"
-    ,"LUNA_PLAYGROUND_ENABLED": "false"
+    "EDGE_COORDINATION_ENABLED": "false",
+    "LUNA_ENABLED": "false",
+    "LUNA_PLAYGROUND_ENABLED": "false",
+    "LUNA_RUNTIME": "think",
+    "LUNA_INTERNAL_CHAT_ENABLED": "true"
   },
   "durable_objects": {
     "bindings": [
@@ -24,8 +29,24 @@
         "class_name": "LunaConversationDurableObject"
       },
       {
-        "name": "LUNA_NATIVE_PRESERVED",
+        "name": "LUNA_NATIVE",
         "class_name": "LunaNativeAgent"
+      },
+      {
+        "name": "LUNA_THINK",
+        "class_name": "LunaThinkAgent"
+      },
+      {
+        "name": "LUNA_THINK_RECOVERY",
+        "class_name": "ThinkRecoveryTestAgent"
+      },
+      {
+        "name": "LUNA_AI_BUDGET",
+        "class_name": "LunaAiBudget"
+      },
+      {
+        "name": "LUNA_NATIVE_PRESERVED",
+        "class_name": "PreservedLunaNativeAgent"
       }
     ]
   },
@@ -39,6 +60,22 @@
       "storage": "sqlite"
     },
     "LunaNativeAgent": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "LunaThinkAgent": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "ThinkRecoveryTestAgent": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "LunaAiBudget": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "PreservedLunaNativeAgent": {
       "type": "durable-object",
       "storage": "sqlite"
     }

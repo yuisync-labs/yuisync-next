@@ -2,8 +2,46 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { GroqProvider } from '../src/luna/providers/groqProvider'
 import { createLunaBudget, LunaBudgetError } from '../src/luna/quotaBudget'
+import { createLunaToolRegistry } from '../src/luna/toolRegistry'
 
 describe('Luna Groq provider and budget', () => {
+  it('reports only known argument key names for a failed generation, never customer values or unknown keys',async()=>{
+    const tool=createLunaToolRegistry({} as D1Database).definitions.find(t=>t.name==='record_turn_decision')!
+    const error={type:'invalid_request_error',code:'tool_use_failed',message:'additionalProperties validation failed',failed_generation:JSON.stringify({name:tool.name,arguments:{events:[{operationId:'private@example.com',expectedVersion:0,itemId:'gsk_secret','secret-key-that-must-not-escape':'private'}]}})}
+    const provider=new GroqProvider({apiKey:'fixture',model:'openai/gpt-oss-20b',fetchFn:async()=>Response.json({error},{status:400})})
+    try{await provider.complete({messages:[],tools:[tool],toolChoice:'required'});throw new Error('Expected rejection')}catch(thrown){
+      expect(thrown).toMatchObject({code:'GROQ_REQUEST_INVALID',diagnostic:{generatedArgumentKeys:['events','operationId','expectedVersion','itemId','[unexpected]']}})
+      expect(JSON.stringify(thrown)).not.toMatch(/private|gsk_secret|secret-key/)
+    }
+  })
+  it('round-trips the real draft command and its history through one wire convention', async () => {
+    const tool=createLunaToolRegistry({} as D1Database).definitions.find(t=>t.name==='update_operation_draft')!
+    const wire={operation_id:'cart',kind:'cart',expected_version:1,action:'set_field',field:'fulfillment_type',value:'counter',item_id:null,replacement_id:null,quantity:null}
+    const fetchFn=vi.fn(async (_url:Parameters<typeof fetch>[0],_init?:Parameters<typeof fetch>[1])=>new Response(JSON.stringify({choices:[{message:{tool_calls:[{id:'draft',function:{name:tool.name,arguments:JSON.stringify(wire)}}]}}],usage:{prompt_tokens:100,completion_tokens:20}}),{status:200}))
+    const provider=new GroqProvider({apiKey:'fixture',model:'openai/gpt-oss-20b',fetchFn})
+    const domain={operationId:'cart',kind:'cart',expectedVersion:1,action:'set_field',field:'fulfillment_type',value:'counter'}
+    const response=await provider.complete({messages:[{role:'assistant',content:null,tool_calls:[{id:'old',type:'function',function:{name:tool.name,arguments:JSON.stringify(domain)}}]}],tools:[tool],toolChoice:'required'})
+    expect(JSON.parse(response.toolCalls[0].function.arguments)).toEqual(domain)
+    const body=JSON.parse(String(fetchFn.mock.calls[0][1]?.body))
+    expect(body.tools[0].function.parameters.properties).toHaveProperty('expected_version')
+    expect(body.tools[0].function.parameters.properties).not.toHaveProperty('expectedVersion')
+    expect(JSON.parse(body.messages[0].tool_calls[0].function.arguments)).toMatchObject({operation_id:'cart',expected_version:1})
+  })
+  it('requires native termination and accounts prose violations without hiding usage', async () => {
+    const fetchFn=vi.fn(async (_url:Parameters<typeof fetch>[0],_init?:Parameters<typeof fetch>[1])=>new Response(JSON.stringify({choices:[{message:{content:'Certo!'}}],usage:{prompt_tokens:100,completion_tokens:20}}),{status:200}))
+    const provider=new GroqProvider({apiKey:'fixture',model:'openai/gpt-oss-20b',fetchFn})
+    await expect(provider.complete({messages:[],tools:[{name:'finish_turn',description:'Read only',parameters:{type:'object',properties:{},required:[],additionalProperties:false}}],toolChoice:'required'})).rejects.toMatchObject({code:'GROQ_RESPONSE_INVALID',usage:{promptTokens:100,completionTokens:20}})
+    expect(JSON.parse(String(fetchFn.mock.calls[0][1]?.body)).tool_choice).toBe('required')
+  })
+  it('rejects a function not exposed in this call before execution', async () => {
+    const provider=new GroqProvider({apiKey:'fixture',model:'test-model',fetchFn:async()=>new Response(JSON.stringify({choices:[{message:{tool_calls:[{id:'bad',function:{name:'create_payment',arguments:'{}'}}]}}],usage:{prompt_tokens:100,completion_tokens:20}}),{status:200})})
+    await expect(provider.complete({messages:[],tools:[]})).rejects.toMatchObject({code:'GROQ_RESPONSE_INVALID',usage:{promptTokens:100,completionTokens:20}})
+  })
+  it('preserva uso conhecido de completion vazia e diagnostica somente a forma, sem raciocínio privado', async () => {
+    const provider=new GroqProvider({apiKey:'fixture',model:'openai/gpt-oss-20b',fetchFn:async()=>new Response(JSON.stringify({choices:[{finish_reason:'length',message:{content:null,reasoning:'private reasoning'}}],usage:{prompt_tokens:400,completion_tokens:1200}}),{status:200})})
+    await expect(provider.complete({messages:[{role:'user',content:'oi'}],tools:[]})).rejects.toMatchObject({code:'GROQ_RESPONSE_INVALID',usage:{promptTokens:400,completionTokens:1200},responseShape:{messagePresent:true,finishReason:'length',contentPresent:false,toolCount:0}})
+    try { await provider.complete({messages:[],tools:[]}) } catch(error) { expect(JSON.stringify(error)).not.toContain('private reasoning') }
+  })
   it('normaliza resposta, chamada de ferramenta, uso e limites', async () => {
     const fetchFn = vi.fn(async () => new Response(JSON.stringify({
       choices: [{ message: { content: null, tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'search_services', arguments: '{"query":"banho"}' } }] } }],
@@ -72,7 +110,7 @@ describe('Luna Groq provider and budget', () => {
 
   it('reserva 1.200 tokens por padrão para modelos com raciocínio', async () => {
     const fetchFn = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => (
-      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 })
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { status: 200 })
     ))
     const provider = new GroqProvider({ apiKey: 'test-key', model: 'test-model', fetchFn })
     await provider.complete({ messages: [], tools: [] })
@@ -82,6 +120,40 @@ describe('Luna Groq provider and budget', () => {
       reasoning_format: 'hidden',
       reasoning_effort: 'low',
     })
+  })
+
+  it('preserva diagnóstico técnico limitado sem mensagem, geração ou credencial', async () => {
+    const provider = new GroqProvider({apiKey:'test-key',model:'test-model',fetchFn:async()=>new Response(JSON.stringify({error:{type:'invalid_request_error',code:'tool_use_failed',param:'tools[0].function',message:'private prompt',failed_generation:'private generation'}}),{status:400})})
+    await expect(provider.complete({messages:[],tools:[]})).rejects.toMatchObject({code:'GROQ_REQUEST_INVALID',diagnostic:{status:400,type:'invalid_request_error',code:'tool_use_failed',param:'tools[0].function'}})
+    const unsafe = new GroqProvider({apiKey:'test-key',model:'test-model',fetchFn:async()=>new Response(JSON.stringify({error:{type:'user@example.com',code:'gsk_private',param:'customer information'}}),{status:400})})
+    await expect(unsafe.complete({messages:[],tools:[]})).rejects.toMatchObject({diagnostic:{status:400,type:null,code:null,param:null}})
+  })
+
+  it('não trata headers ausentes como cota zero nem envia tools vazias na reformulação', async () => {
+    const fetchFn = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { status: 200, headers: { 'x-ratelimit-limit-requests': '1000' } }))
+    const provider = new GroqProvider({ apiKey: 'test-key', model: 'test-model', fetchFn })
+    const response = await provider.complete({ messages: [], tools: [] })
+    expect(response.rateLimit.remainingRequests).toBeNull()
+    expect(response.tokenLimit).toBeNull()
+    const body = JSON.parse(String(fetchFn.mock.calls[0][1]?.body))
+    expect(body).not.toHaveProperty('tools')
+    expect(body).not.toHaveProperty('tool_choice')
+  })
+
+  it.each(['openai/gpt-oss-20b','openai/gpt-oss-120b'])('usa configuração de raciocínio suportada por %s', async model => {
+    const fetchFn=vi.fn(async (_url:Parameters<typeof fetch>[0],_init?:Parameters<typeof fetch>[1])=>new Response(JSON.stringify({choices:[{message:{content:'ok',reasoning:'private'}}],usage:{prompt_tokens:10,completion_tokens:10}}),{status:200}))
+    const provider=new GroqProvider({apiKey:'test-key',model,fetchFn})
+    const response=await provider.complete({messages:[],tools:[{name:'get_customer_context',description:'Identity',parameters:{type:'object',properties:{},required:[],additionalProperties:false}}]})
+    const body=JSON.parse(String(fetchFn.mock.calls[0][1]?.body))
+    expect(body).toMatchObject({model,include_reasoning:false,reasoning_effort:'low'})
+    expect(body).not.toHaveProperty('reasoning_format')
+    expect(body.tools[0].function.strict).toBe(true)
+    expect(response).not.toHaveProperty('reasoning')
+  })
+
+  it.each([undefined, { prompt_tokens: -1, completion_tokens: 10 }, { prompt_tokens: 10, completion_tokens: 0.5 }])('não certifica consumo desconhecido ou inválido como zero', async usage => {
+    const provider = new GroqProvider({ apiKey: 'test-key', model: 'test-model', fetchFn: async () => new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage }), { status: 200 }) })
+    await expect(provider.complete({ messages: [], tools: [] })).rejects.toMatchObject({ code: 'GROQ_USAGE_UNAVAILABLE' })
   })
 
   it('preserva margem de vinte por cento da cota de requests', () => {

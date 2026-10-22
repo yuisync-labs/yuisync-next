@@ -25,6 +25,7 @@ export type LunaToolFailure = Readonly<{
   code: string
   retryable: boolean
   missing_fields?: readonly string[]
+  validation_errors?: readonly Readonly<{ field: string; rule: string }>[]
 }>
 export type LunaToolResult<T = unknown> = LunaToolSuccess<T> | LunaToolFailure
 
@@ -35,8 +36,12 @@ export type LunaExecutionContext = Readonly<{
   customerAddress: string
   phoneNumberId: string
   sourceMessageId: string
+  /** Server-owned ordered IDs admitted together by the Think inbox. */
+  sourceMessageIds?: readonly string[]
   traceId: string
   executionMode: 'fixture' | 'staging' | 'production'
+  actionIndex?: number
+  nowMs?: number
 }>
 
 export type LunaProviderUsage = Readonly<{

@@ -3,6 +3,8 @@ import { authorizePetshopRequest } from './operationAuthorization'
 import { resolveRequestId, requestRouteFamily } from './requestContext'
 import { emitEdgeLog } from './observability'
 import { handleAdminMaintenanceRequest } from './adminMaintenance'
+import { handleChatQualityApiRequest } from './chatQualityApi'
+import { handleInternalChatApiRequest } from './internalChatApi'
 import { handleAiLabApiRequest } from './aiLabApi'
 import { handleAppApiRequest } from './appApi'
 import { handleBetterAuthRequest } from './auth/betterAuthRuntime'
@@ -38,6 +40,8 @@ import { handleWhatsappTemplateApiRequest } from './whatsappTemplateApi'
 
 export { CoordinationDurableObject } from './coordination/coordinationDurableObject'
 export { LunaConversationDurableObject } from './luna/conversationDurableObject'
+export { LunaAiBudget } from './luna/aiBudget'
+export { LunaThinkAgent } from './luna/thinkAgent'
 export { LunaNativeAgent } from './luna/preservedNativeAgent'
 
 async function dispatch(request: Request, env: EdgeEnv, context: ExecutionContext): Promise<Response> {
@@ -99,6 +103,12 @@ async function dispatch(request: Request, env: EdgeEnv, context: ExecutionContex
 
     const aiLabResponse = await handleAiLabApiRequest(request, bindings)
     if (aiLabResponse) return respond(aiLabResponse)
+
+    const qualityResponse = await handleChatQualityApiRequest(request, bindings)
+    if (qualityResponse) return respond(qualityResponse)
+
+    const internalChatResponse = await handleInternalChatApiRequest(request, bindings)
+    if (internalChatResponse) return respond(internalChatResponse)
 
     const checkoutResponse = await handleCheckoutApiRequest(request, bindings)
     if (checkoutResponse) return respond(checkoutResponse)

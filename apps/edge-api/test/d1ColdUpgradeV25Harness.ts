@@ -1,67 +1,36 @@
 import { applyD1Migrations } from 'cloudflare:test'
 import { expect } from 'vitest'
 
-type Migration = Parameters<typeof applyD1Migrations>[1][number]
+/** Build a real historical database, then apply every subsequent migration.
+ * MIGRATION_DB deliberately skips the latest-schema setup used by API tests.
+ */
+export async function upgradeHistoricalDatabase(
+  db: D1Database,
+  migrations: Parameters<typeof applyD1Migrations>[1],
+  version: number,
+) {
+  const migrationVersion = (name: string) => Number.parseInt(name.split('_', 1)[0], 10)
+  const historical = migrations.filter(migration => migrationVersion(migration.name) <= version)
+  const subsequent = migrations.filter(migration => migrationVersion(migration.name) > version)
+  expect(historical.length).toBeGreaterThan(0)
+  expect(subsequent.length).toBeGreaterThan(0)
+  // A fresh fixture prevents newer columns, indexes or receipts surviving a fake downgrade.
+  expect(await db.prepare("SELECT name FROM sqlite_schema WHERE name='d1_migrations'").first()).toBeNull()
+  await applyD1Migrations(db, historical)
+  const before = await db.prepare("SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'")
+    .first<{value: string}>()
+  expect(before?.value).toBe(String(version))
+  const oldLuna = await db.prepare("SELECT name FROM sqlite_schema WHERE name='luna_proposals'").first()
+  expect(oldLuna).toBeNull()
 
-function migrationsFrom(migrations: Parameters<typeof applyD1Migrations>[1], version: number): Migration[] {
-  return migrations.filter((migration) => {
-    const parsed = Number.parseInt(String(migration.name).split('_', 1)[0], 10)
-    return Number.isFinite(parsed) && parsed > version
-  })
-}
-
-async function resetMigrationHistoryTo(db: D1Database, migrations: Parameters<typeof applyD1Migrations>[1], version: number) {
-  await db.prepare("UPDATE _yuisync_system_metadata SET value=?1 WHERE key='schema_version'")
-    .bind(String(version))
-    .run()
-
-  for (const migration of migrationsFrom(migrations, version)) {
-    await db.prepare('DELETE FROM d1_migrations WHERE name=?1')
-      .bind(migration.name)
-      .run()
-  }
-}
-
-async function removePostV25Schema(db: D1Database) {
-  await db.exec(`
-    DROP TRIGGER IF EXISTS cash_register_single_open_insert_guard;
-    DROP TRIGGER IF EXISTS cash_register_single_open_reopen_guard;
-    DROP VIEW IF EXISTS compat_chat_sessions;
-    DROP VIEW IF EXISTS compat_chat_messages;
-    DROP VIEW IF EXISTS compat_appointments;
-    DROP VIEW IF EXISTS compat_client_subscriptions;
-    DROP INDEX IF EXISTS client_subscriptions_scope_pet_idx;
-
-    ALTER TABLE chat_threads DROP COLUMN context_json;
-    ALTER TABLE chat_threads DROP COLUMN closed_at_ms;
-    ALTER TABLE chat_threads DROP COLUMN csat_score;
-    ALTER TABLE chat_threads DROP COLUMN assigned_staff_key;
-    ALTER TABLE chat_threads DROP COLUMN intent;
-    ALTER TABLE chat_threads DROP COLUMN customer_name;
-
-    ALTER TABLE appointments DROP COLUMN grooming_machine_no;
-    ALTER TABLE loyalty_points DROP COLUMN expires_at_ms;
-    ALTER TABLE client_subscriptions DROP COLUMN legacy_metadata_json;
-    ALTER TABLE client_subscriptions DROP COLUMN recurring_appointments_created_at_ms;
-    ALTER TABLE client_subscriptions DROP COLUMN first_appointment_at_ms;
-    ALTER TABLE client_subscriptions DROP COLUMN pet_id;
-    ALTER TABLE support_threads DROP COLUMN assigned_to;
-    ALTER TABLE support_threads DROP COLUMN last_message_preview;
-
-    DROP TRIGGER IF EXISTS client_subscription_base_usage_capacity_guard;
-    DROP TRIGGER IF EXISTS client_subscription_usage_projection_from_base;
-    DROP TRIGGER IF EXISTS subscription_usage_projection_after_allocation_insert;
-    DROP TRIGGER IF EXISTS subscription_usage_projection_after_allocation_update;
-    DROP TRIGGER IF EXISTS subscription_usage_projection_after_allocation_delete;
-    DROP TRIGGER IF EXISTS package_allocation_from_late_service_consumption;
-
-    DROP TABLE IF EXISTS whatsapp_delivery_receipts;
-    DROP TABLE IF EXISTS whatsapp_outbound_messages;
-    DROP TABLE IF EXISTS whatsapp_access_credentials;
-    DROP TABLE IF EXISTS whatsapp_ingress_receipts;
-    DROP TABLE IF EXISTS whatsapp_phone_connections;
-    DROP TABLE IF EXISTS whatsapp_waba_accounts;
-  `)
+  await applyD1Migrations(db, subsequent)
+  // Migration receipts must also make a deployment retry safe.
+  await applyD1Migrations(db, migrations)
+  const applied = await db.prepare('SELECT name FROM d1_migrations ORDER BY name').all<{name: string}>()
+  expect(applied.results.map(row => row.name)).toEqual(migrations.map(migration => migration.name).sort())
+  expect((await db.prepare('PRAGMA foreign_key_check').all()).results).toEqual([])
+  const proposalColumns = await db.prepare('PRAGMA table_info(luna_proposals)').all<{name: string}>()
+  expect(proposalColumns.results.filter(column => column.name === 'operation_id')).toHaveLength(1)
 }
 
 async function assertV30(db: D1Database) {
@@ -140,13 +109,6 @@ export async function runColdUpgradeV25(
   db: D1Database,
   migrations: Parameters<typeof applyD1Migrations>[1],
 ) {
-  await removePostV25Schema(db)
-  await resetMigrationHistoryTo(db, migrations, 25)
-
-  const before = await db.prepare("SELECT value FROM _yuisync_system_metadata WHERE key='schema_version'")
-    .first<{ value: string }>()
-  expect(before?.value).toBe('25')
-
-  await applyD1Migrations(db, migrationsFrom(migrations, 25))
+  await upgradeHistoricalDatabase(db, migrations, 25)
   await assertV30(db)
 }
