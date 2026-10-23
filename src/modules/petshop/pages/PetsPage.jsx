@@ -54,7 +54,7 @@ function getRegistrationBadge(pet = {}) {
   return { label: 'Pendente cadastro', cls: 'badge-amber' }
 }
 
-function PetModal({ pet, tutorPets = [], plans, subscription, onClose, onSave, onSelectPet }) {
+function PetModal({ pet, tutorPets = [], plans, subscription, onClose, onSave, onSelectPet, onRemoveClient, confirmingRemoval = false }) {
   const addingPetForTutor = Boolean(pet?.adding_pet_for_tutor)
   const [form, setForm] = useState({
     ...(pet ? { ...EMPTY_FORM, ...pet } : EMPTY_FORM),
@@ -95,7 +95,7 @@ function PetModal({ pet, tutorPets = [], plans, subscription, onClose, onSave, o
   const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }))
 
   return createPortal(
-    <div className="modal-overlay theme-petshop-modal" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay theme-petshop-modal" style={confirmingRemoval ? { display: 'none' } : undefined} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal-box max-w-3xl">
         <div className="modal-header">
           <div>
@@ -141,7 +141,10 @@ function PetModal({ pet, tutorPets = [], plans, subscription, onClose, onSave, o
             </div>
           </div>
           {error && <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400 flex items-center gap-2"><AlertCircle size={14} /> {error}</div>}
-          <div className="flex gap-3"><button onClick={onClose} className="btn btn-secondary flex-1 justify-center">Cancelar</button><button onClick={submit} disabled={saving} className="btn btn-primary flex-1 justify-center">{saving ? 'Salvando...' : addingPetForTutor ? 'Salvar novo pet' : 'Salvar cadastro'}</button></div>
+          <div className="flex flex-wrap gap-3">
+            {pet?.id && !addingPetForTutor && <button type="button" disabled={saving} onClick={() => onRemoveClient(pet)} className="btn btn-secondary text-red-400"><Trash2 size={14} />Excluir cliente</button>}
+            <button onClick={onClose} disabled={saving} className="btn btn-secondary flex-1 justify-center">Cancelar</button><button onClick={submit} disabled={saving} className="btn btn-primary flex-1 justify-center">{saving ? 'Salvando...' : addingPetForTutor ? 'Salvar novo pet' : 'Salvar cadastro'}</button>
+          </div>
         </div>
       </div>
     </div>,
@@ -300,7 +303,7 @@ function LegacyClientsImportModal({ onClose, moduleId, tenantId, onDone }) {
 }
 
 export default function PetsPage() {
-  const { clients: pets, loading, error: clientsError, load, create, update, remove, speciesIcon, age } = useClients()
+  const { clients: pets, loading, error: clientsError, load, create, update, remove, removeTutor, speciesIcon, age } = useClients()
   const { serviceLabel, statusBadge } = useAppointments()
   const { loadPlans, loadClientSubscriptions, saveClientSubscription } = usePetshopAdvanced()
   const { activeModuleId } = useModuleCtx()
@@ -316,6 +319,7 @@ export default function PetsPage() {
   const [removingPet, setRemovingPet] = useState(null)
   const [removing, setRemoving] = useState(false)
   const [removeError, setRemoveError] = useState('')
+  const [removingClient, setRemovingClient] = useState(false)
   const [legacyImportModal, setLegacyImportModal] = useState(false)
   const [plans, setPlans] = useState([])
   const [subscriptions, setSubscriptions] = useState([])
@@ -457,12 +461,12 @@ export default function PetsPage() {
     setRemoving(true)
     setRemoveError('')
     try {
-      await remove(removingPet.id)
-      if (drawerPet?.id === removingPet.id) setDrawerPet(null)
-      if (modalPet?.id === removingPet.id) setModalPet(null)
+      await (removingClient ? removeTutor(removingPet.id) : remove(removingPet.id))
+      if (removingClient || drawerPet?.id === removingPet.id) setDrawerPet(null)
+      if (removingClient || modalPet?.id === removingPet.id) setModalPet(null)
       setRemovingPet(null)
     } catch (error) {
-      setRemoveError(error.message || 'Não foi possível remover o pet. Tente novamente.')
+      setRemoveError(error.message || 'Não foi possível excluir o cadastro. Tente novamente.')
     } finally {
       setRemoving(false)
     }
@@ -525,9 +529,9 @@ export default function PetsPage() {
         <div className="bg-card border border-[var(--border)] rounded-2xl overflow-hidden"><div className="overflow-x-auto"><table className="tbl"><thead><tr><th>Tutor</th><th>Pets</th><th>Telefone</th><th>Pacotes ativos</th><th className="text-right">Acoes</th></tr></thead><tbody>{visibleTutorGroups.map((group) => { const pet = group.pets[0]; const activePackages = group.pets.flatMap((item) => subscriptionsByClient.get(item.id) || []).filter((item) => item.status === 'active'); return <tr key={group.key}><td className="font-semibold text-text">{formatPersonName(group.owner_name || pet.owner_name)}</td><td><div className="flex flex-wrap gap-1">{group.pets.map((item) => <button key={item.id} type="button" onClick={() => setDrawerPet(item)} className="badge badge-green">{item.pet_name || 'Pet'}</button>)}</div></td><td>{formatPhone(pet.phone)}</td><td>{activePackages.length}</td><td className="text-right"><div className="flex justify-end gap-2"><button type="button" data-yuisync-client-history={group.key} className="btn btn-secondary btn-sm"><History size={13}/> Histórico</button><button type="button" data-yuisync-add-pet-action onClick={() => openAddPetForTutor(pet)} className="btn btn-primary btn-sm"><Plus size={13}/> Adicionar pet</button><button onClick={() => setModalPet(pet)} className="btn btn-secondary btn-sm">Editar</button></div></td></tr>})}{filteredTutorGroups.length === 0 && <tr><td colSpan={5} className="text-center text-muted py-10">Nenhum cadastro encontrado.</td></tr>}</tbody></table></div></div>
       )}
 
-      {modalPet !== null && <PetModal key={modalPet?.id || (modalPet?.adding_pet_for_tutor ? 'new-pet' : 'new-client')} pet={modalPet} tutorPets={modalPet?.id ? (tutorPetsByPetId.get(modalPet.id) || [modalPet]) : []} plans={plans.filter((plan) => plan.active)} subscription={modalPet?.id ? latestSubscriptionByClient.get(modalPet.id) : null} onSelectPet={setModalPet} onClose={() => setModalPet(null)} onSave={handleSave} />}
-      {drawerPet && <PetDrawer pet={drawerPet} historyGroupKey={tutorGroupKeyByPetId.get(drawerPet.id) || ''} tutorPets={tutorPetsByPetId.get(drawerPet.id) || [drawerPet]} subscriptions={subscriptionsByClient.get(drawerPet.id) || []} onSelectPet={setDrawerPet} onClose={() => setDrawerPet(null)} onAddPet={openAddPetForTutor} onRemove={(pet) => { setRemoveError(''); setRemovingPet(pet) }} onEdit={(pet) => { setDrawerPet(null); setModalPet(pet) }} speciesIcon={speciesIcon} serviceLabel={serviceLabel} statusBadge={statusBadge} />}
-      {removingPet && (
+      {modalPet !== null && <PetModal confirmingRemoval={Boolean(removingPet)} key={modalPet?.id || (modalPet?.adding_pet_for_tutor ? 'new-pet' : 'new-client')} pet={modalPet} tutorPets={modalPet?.id ? (tutorPetsByPetId.get(modalPet.id) || [modalPet]) : []} plans={plans.filter((plan) => plan.active)} subscription={modalPet?.id ? latestSubscriptionByClient.get(modalPet.id) : null} onSelectPet={setModalPet} onClose={() => setModalPet(null)} onSave={handleSave} onRemoveClient={(pet) => { setRemoveError(''); setRemovingClient(true); setRemovingPet(pet) }} />}
+      {drawerPet && <PetDrawer pet={drawerPet} historyGroupKey={tutorGroupKeyByPetId.get(drawerPet.id) || ''} tutorPets={tutorPetsByPetId.get(drawerPet.id) || [drawerPet]} subscriptions={subscriptionsByClient.get(drawerPet.id) || []} onSelectPet={setDrawerPet} onClose={() => setDrawerPet(null)} onAddPet={openAddPetForTutor} onRemove={(pet) => { setRemoveError(''); setRemovingClient(false); setRemovingPet(pet) }} onEdit={(pet) => { setDrawerPet(null); setModalPet(pet) }} speciesIcon={speciesIcon} serviceLabel={serviceLabel} statusBadge={statusBadge} />}
+      {removingPet && createPortal(
         <div className="modal-overlay theme-petshop-modal" onClick={(event) => !removing && event.target === event.currentTarget && setRemovingPet(null)}>
           <Card role="dialog" aria-modal="true" aria-labelledby="remove-pet-title" onKeyDown={(event) => {
             if (event.key === 'Escape' && !removing) { event.stopPropagation(); setRemovingPet(null) }
@@ -538,16 +542,17 @@ export default function PetsPage() {
               if (document.activeElement === edge) { event.preventDefault(); target?.focus() }
             }
           }} className="w-full max-w-md p-6 shadow-2xl">
-            <h2 id="remove-pet-title" className="text-lg font-bold text-text">Remover {removingPet.pet_name || 'pet'}?</h2>
-            <p className="mt-3 text-sm text-muted">Este pet sairá dos cadastros ativos. O histórico de atendimentos será preservado. Os outros pets deste tutor continuarão cadastrados.</p>
-            {(subscriptionsByClient.get(removingPet.id) || []).some((item) => ['active', 'paused'].includes(item.status)) && <p className="mt-3 text-sm text-amber-400">Este pet tem um pacote ativo ou pausado. A remoção do cadastro não cancela o pacote; gerencie-o na aba Planos.</p>}
+            <h2 id="remove-pet-title" className="text-lg font-bold text-text">{removingClient ? `Excluir cliente ${removingPet.owner_name || 'sem nome'}?` : `Remover ${removingPet.pet_name || 'pet'}?`}</h2>
+            <p className="mt-3 text-sm text-muted">{removingClient ? 'Confirma a exclusão deste cliente e de todos os seus pets dos cadastros ativos? O histórico de atendimentos será preservado.' : 'Este pet sairá dos cadastros ativos. O histórico de atendimentos será preservado. Os outros pets deste tutor continuarão cadastrados.'}</p>
+            {(removingClient ? (tutorPetsByPetId.get(removingPet.id) || [removingPet]).flatMap(pet => subscriptionsByClient.get(pet.id) || []) : (subscriptionsByClient.get(removingPet.id) || [])).some((item) => ['active', 'paused'].includes(item.status)) && <p className="mt-3 text-sm text-amber-400">{removingClient ? 'Há pacote ativo ou pausado vinculado ao cadastro. A exclusão não cancela pacotes; gerencie-os na aba Planos.' : 'Este pet tem um pacote ativo ou pausado. A remoção do cadastro não cancela o pacote; gerencie-o na aba Planos.'}</p>}
             {removeError && <p role="alert" className="mt-3 text-sm text-red-400">{removeError}</p>}
             <div className="mt-5 flex justify-end gap-3">
               <button type="button" autoFocus disabled={removing} onClick={() => setRemovingPet(null)} className="btn btn-secondary">Cancelar</button>
-              <button type="button" disabled={removing} onClick={handleDelete} className="btn btn-secondary text-red-400"><Trash2 size={14}/>{removing ? 'Removendo...' : 'Remover pet'}</button>
+              <button type="button" disabled={removing} onClick={handleDelete} className="btn btn-secondary text-red-400"><Trash2 size={14}/>{removing ? 'Excluindo...' : removingClient ? 'Confirmar exclusão' : 'Remover pet'}</button>
             </div>
           </Card>
-        </div>
+        </div>,
+        document.body,
       )}
       {legacyImportModal && <LegacyClientsImportModal moduleId={activeModuleId} tenantId={auth?.activeTenantId} onClose={() => setLegacyImportModal(false)} onDone={reloadAll} />}
     </div>

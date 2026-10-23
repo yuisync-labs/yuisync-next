@@ -10,6 +10,7 @@ import {
   getClientPetCommand,
   listClientPetsCommand,
   removeClientPetCommand,
+  removeTutorCommand,
   updateClientPetCommand,
 } from '../../modules/petshop/lib/clientCommands'
 
@@ -349,6 +350,11 @@ export function useClients() {
     setClients(prev => prev.filter(p => p.id !== id))
   }, [activeModuleId, activeTenantId])
 
+  const removeTutor = useCallback(async (id) => {
+    const result = await removeTutorCommand({ tenantId: activeTenantId, moduleId: activeModuleId, id })
+    setClients(prev => prev.filter(p => p.tutor_group_id !== result.client_id && p.id !== id))
+  }, [activeModuleId, activeTenantId])
+
   const speciesIcon = (s) => ({
     dog:Dog, cat:Cat, bird:Bird, rabbit:Ghost, fish:Fish, other:PawPrint
   }[s] || PawPrint)
@@ -359,5 +365,5 @@ export function useClients() {
     return months < 12 ? `${months}m` : `${Math.floor(months/12)}a`
   }
 
-  return { clients, loading, error, load, search, getById, create, update, remove, speciesIcon, age }
+  return { clients, loading, error, load, search, getById, create, update, remove, removeTutor, speciesIcon, age }
 }
