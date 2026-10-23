@@ -232,6 +232,16 @@ async function removeClient(request: Request, bindings: Bindings, petId: string)
     .bind(scope.tenantId, scope.moduleId, petId).first<{ client_id: string }>()
   if (!current) return json({ code: 'CLIENT_PET_NOT_FOUND' }, 404)
   const now = Date.now()
+  if (new URL(request.url).searchParams.get('scope') === 'client') {
+    // Keep historical references and archive the complete tutor in one transaction.
+    await bindings.DB!.batch([
+      bindings.DB!.prepare("UPDATE pets SET status='inactive',updated_at_ms=?4 WHERE tenant_id=?1 AND module_id=?2 AND client_id=?3 AND status='active'")
+        .bind(scope.tenantId, scope.moduleId, current.client_id, now),
+      bindings.DB!.prepare("UPDATE clients SET status='inactive',updated_at_ms=?4 WHERE tenant_id=?1 AND module_id=?2 AND id=?3")
+        .bind(scope.tenantId, scope.moduleId, current.client_id, now),
+    ])
+    return json({ deleted: true, id: petId, client_id: current.client_id })
+  }
   await bindings.DB!.prepare("UPDATE pets SET status='inactive',updated_at_ms=?4 WHERE tenant_id=?1 AND module_id=?2 AND id=?3")
     .bind(scope.tenantId, scope.moduleId, petId, now).run()
   const remaining = await bindings.DB!.prepare("SELECT COUNT(*) AS total FROM pets WHERE tenant_id=?1 AND module_id=?2 AND client_id=?3 AND status='active'")

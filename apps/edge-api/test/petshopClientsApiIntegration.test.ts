@@ -101,6 +101,36 @@ describe('native petshop clients API', () => {
         expect(collected).toEqual([petId, ...extraIds].sort())
         const badCursor = await handlePetshopClientsApiRequest(new Request('https://edge.test/api/petshop/clients?paginate=1&after=invalid%20cursor', { headers }), bindings())
         expect(badCursor?.status).toBe(400)
+
+        // A single-pet removal must leave the tutor and siblings active.
+        const single = await handlePetshopClientsApiRequest(new Request(`https://edge.test/api/petshop/clients/cursor-a`, { method: 'DELETE', headers }), bindings())
+        expect(single?.status).toBe(200)
+        expect(await db.prepare('SELECT status FROM clients WHERE tenant_id=?1 AND id=?2').bind(tenantId, clientId).first('status')).toBe('active')
+
+        // Scope is checked before any mutation, even when deleting a complete tutor.
+        const forbidden = await handlePetshopClientsApiRequest(new Request(`https://edge.test/api/petshop/clients/${petId}?scope=client`, {
+          method: 'DELETE', headers: { ...headers, 'x-tenant-id': 'another-tenant' },
+        }), bindings())
+        expect(forbidden?.status).toBe(403)
+        const unauthenticated = await handlePetshopClientsApiRequest(new Request(`https://edge.test/api/petshop/clients/${petId}?scope=client`, {
+          method: 'DELETE', headers: { 'x-tenant-id': tenantId, 'x-module-id': 'petshop' },
+        }), bindings())
+        expect(unauthenticated?.status).toBe(401)
+        expect(await db.prepare("SELECT COUNT(*) AS total FROM pets WHERE tenant_id=?1 AND client_id=?2 AND status='active'").bind(tenantId, clientId).first('total')).toBe(3)
+
+        const deletedClient = await handlePetshopClientsApiRequest(new Request(`https://edge.test/api/petshop/clients/${petId}?scope=client`, { method: 'DELETE', headers }), bindings())
+        await expect(deletedClient?.json()).resolves.toEqual({ deleted: true, id: petId, client_id: clientId })
+        expect(await db.prepare("SELECT COUNT(*) AS total FROM pets WHERE tenant_id=?1 AND client_id=?2 AND status='inactive'").bind(tenantId, clientId).first('total')).toBe(4)
+        expect(await db.prepare('SELECT status FROM clients WHERE tenant_id=?1 AND id=?2').bind(tenantId, clientId).first('status')).toBe('inactive')
+        const afterReload = await handlePetshopClientsApiRequest(new Request('https://edge.test/api/petshop/clients', { headers }), bindings())
+        await expect(afterReload?.json()).resolves.toEqual({ clients: [] })
+        const duplicate = await handlePetshopClientsApiRequest(new Request(`https://edge.test/api/petshop/clients/${petId}?scope=client`, { method: 'DELETE', headers }), bindings())
+        expect(duplicate?.status).toBe(404)
+        // Restore the original fixture to keep the existing single-pet regression below.
+        await db.batch([
+          db.prepare("UPDATE pets SET status='active' WHERE tenant_id=?1 AND id=?2").bind(tenantId, petId),
+          db.prepare("UPDATE clients SET status='active' WHERE tenant_id=?1 AND id=?2").bind(tenantId, clientId),
+        ])
       } finally {
         await db.batch(extraIds.map(id => db.prepare("DELETE FROM pets WHERE tenant_id=?1 AND module_id='petshop' AND id=?2").bind(tenantId, id)))
       }
