@@ -104,3 +104,7 @@ export async function updateClientPetCommand({ tenantId, moduleId = 'petshop', i
 export async function removeClientPetCommand({ tenantId, moduleId = 'petshop', id }) {
   return request(`/${encodeURIComponent(id)}`, { tenantId, moduleId, method: 'DELETE' })
 }
+
+export async function removeTutorCommand({ tenantId, moduleId = 'petshop', id }) {
+  return request(`/${encodeURIComponent(id)}?scope=client`, { tenantId, moduleId, method: 'DELETE' })
+}
