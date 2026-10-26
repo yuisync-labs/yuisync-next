@@ -42,6 +42,12 @@ jobs:
         run: node scripts/migration/staging-e2e-fixtures.mjs setup
       - name: Read today's account usage
         run: node scripts/luna/staging-budget-baseline.mjs
+      - name: Give the staging worker the OpenAI key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        working-directory: apps/edge-api
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then printf '%s' "$OPENAI_API_KEY" | npx wrangler secret put OPENAI_API_KEY --env staging; else echo "OPENAI_API_KEY not set; staging keeps the Workers AI model"; fi
       - name: Deploy staging with a single authorized test tenant
         working-directory: apps/edge-api
         run: >-
@@ -85,6 +91,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - uses: actions/checkout@v6
       - id: gate
@@ -106,6 +113,7 @@ jobs:
         working-directory: apps/edge-api
         run: |
           export LANG_CASE_IDS=$(node -p "JSON.parse(require('fs').readFileSync('../../.github/luna-language-request.json','utf8')).cases.join(',')")
+          export LANG_MODEL=$(node -p "JSON.parse(require('fs').readFileSync('../../.github/luna-language-request.json','utf8')).model??''")
           npx vitest run --config vitest.language-live.config.ts
       - if: always() && steps.gate.outputs.run == 'true'
         name: Report results on the pull request

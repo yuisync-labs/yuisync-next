@@ -17,7 +17,12 @@ const rows=request.cases.map(id=>{
 })
 const stop=existsSync(join(root,'stop.json'))?JSON.parse(await readFile(join(root,'stop.json'),'utf8')):null
 const count=s=>rows.filter(r=>r.status===s).length,neurons=rows.reduce((n,r)=>n+r.neurons,0)
-const lines=[`## Bateria real da Luna`,'',`**${count('passed')} de ${rows.length} passaram** · ${count('failed')} falharam · ${count('incomplete')+count('not_run')} sem resultado · ${neurons.toFixed(0)} neurons em ${rows.reduce((n,r)=>n+r.calls,0)} chamadas ao modelo`,...(stop?['',`Parou porque o Workers AI recusou: **${stop.code}** (neurons gratuitos do dia acabaram).`]:[]),'','| Caso | Assunto | Resultado | Neurons |','| --- | --- | --- | --- |',
+// OpenAI list prices in USD per million tokens [input, output]; check before relying on them.
+const PRICES={'gpt-4.1-mini':[0.4,1.6],'gpt-4o-mini':[0.15,0.6],'gpt-4.1-nano':[0.1,0.4]}
+const model=String(request.model??''),price=PRICES[model.replace(/^openai:/,'')]
+const tokens=rows.flatMap(r=>(r.turns??[]).map(t=>t.result?.result?.usage).filter(Boolean)).reduce((a,u)=>[a[0]+(u.promptTokens??0),a[1]+(u.completionTokens??0)],[0,0])
+const usage=price?`US$ ${((tokens[0]*price[0]+tokens[1]*price[1])/1e6).toFixed(4)} (${tokens[0]} tokens de entrada, ${tokens[1]} de saída, ${model})`:`${neurons.toFixed(0)} neurons`
+const lines=[`## Bateria real da Luna`,'',`**${count('passed')} de ${rows.length} passaram** · ${count('failed')} falharam · ${count('incomplete')+count('not_run')} sem resultado · ${usage} em ${rows.reduce((n,r)=>n+r.calls,0)} chamadas ao modelo`,...(stop?['',`Parou porque o Workers AI recusou: **${stop.code}** (neurons gratuitos do dia acabaram).`]:[]),'','| Caso | Assunto | Resultado | Neurons |','| --- | --- | --- | --- |',
  ...rows.map(r=>`| ${r.id} | ${r.name??r.family} | ${{passed:'✅ passou',failed:'❌ falhou',incomplete:'⚠️ incompleto',not_run:'⏭️ não rodou'}[r.status]} | ${r.neurons.toFixed(0)} |`)]
 for(const r of rows.filter(r=>r.status!=='passed'&&r.turns.length)){
  lines.push('',`<details><summary>${r.id}: ${clip(r.error,160)}</summary>`,'')

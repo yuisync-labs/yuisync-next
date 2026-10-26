@@ -970,6 +970,55 @@
         "appointments": 0,
         "reply": "R\\$"
       }
+    },
+    {
+      "id": "FLOW-04-1",
+      "family": "flow",
+      "name": "Porte e data na mensagem seguinte ao pedido de banho",
+      "input_fragments": [],
+      "turns": [
+        "Ola bom dia",
+        "Quero agendar um banho pro Thor",
+        "e pequeno, um shihtzu tem pra amanha?"
+      ],
+      "expect": {
+        "sales": 0,
+        "appointments": 0,
+        "reply": "hor|vaga|dispon|agend|banho|:00"
+      }
+    },
+    {
+      "id": "FLOW-04-2",
+      "family": "flow",
+      "name": "Preço e horário perguntados aos poucos",
+      "input_fragments": [],
+      "turns": [
+        "Quero marcar banho pra Mel",
+        "quanto fica?",
+        "e amanha de manha tem?"
+      ],
+      "expect": {
+        "sales": 0,
+        "appointments": 0,
+        "reply": "hor|vaga|dispon|:00"
+      }
+    },
+    {
+      "id": "FLOW-04-3",
+      "family": "flow",
+      "name": "Cliente sem cadastro pede banho e completa os dados depois",
+      "input_fragments": [],
+      "turns": [
+        "Ola bom dia",
+        "Quero agendar um banho pro Thor",
+        "e pequeno, um shihtzu tem pra amanha?"
+      ],
+      "expect": {
+        "sales": 0,
+        "appointments": 0,
+        "reply": "cadastr|nome|esp[eé]cie|confirm|resumo"
+      },
+      "unregistered": true
     }
   ]
 }

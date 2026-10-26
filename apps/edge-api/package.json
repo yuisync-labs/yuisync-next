@@ -14,15 +14,16 @@
     "rollback:staging": "wrangler rollback --env staging"
   },
   "dependencies": {
-    "bcryptjs": "3.0.3",
-    "better-auth": "1.6.25",
-    "drizzle-orm": "^0.45.2",
-    "hono": "^4.13.8",
     "@ai-sdk/groq": "4.0.57",
+    "@ai-sdk/openai": "4.0.92",
     "@cloudflare/shell": "^0.4.3",
     "@cloudflare/think": "^0.20.2",
     "agents": "^0.28.0",
     "ai": "^7.0.137",
+    "bcryptjs": "3.0.3",
+    "better-auth": "1.6.25",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.8",
     "workers-ai-provider": "4.0.0",
     "zod": "^4.6.7"
   },

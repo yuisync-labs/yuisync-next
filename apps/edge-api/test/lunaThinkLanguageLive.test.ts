@@ -37,7 +37,9 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
    if(s.family==='flow'){
     // Whole conversations from greeting to commit: every turn must avoid handoff
     // and the final database effect must match the case.
-    const flow=s as typeof s&{turns:string[];expect:{sales?:number;appointments?:number;reply?:string}}
+    const flow=s as typeof s&{turns:string[];unregistered?:boolean;expect:{sales?:number;appointments?:number;reply?:string}}
+    // A new customer: the conversation phone matches no client, the chat carries only a name.
+    if(flow.unregistered){await h.db.prepare("UPDATE clients SET phone='0000000001' WHERE tenant_id=?").bind(h.tenant).run();await h.db.prepare("UPDATE chat_threads SET customer_name='Joberson' WHERE tenant_id=?").bind(h.tenant).run()}
     for(const message of flow.turns){const r=await h.turn(message);expect(r.status,'Handoff at "'+message+'": '+r.reply).not.toBe('handoff')}
     if(flow.expect.sales!==undefined)expect(await sales()).toHaveLength(flow.expect.sales)
     if(flow.expect.appointments!==undefined)expect((await appointments()).results).toHaveLength(flow.expect.appointments)

@@ -2,6 +2,7 @@ import {env} from 'cloudflare:workers'
 import {runInDurableObject} from 'cloudflare:test'
 import {expect} from 'vitest'
 import {createWorkersAI} from 'workers-ai-provider'
+import {createOpenAI} from '@ai-sdk/openai'
 import {createThinkHarness} from './thinkHarness'
 import {THINK_MODEL} from '../../../src/luna/thinkPolicy'
 export const liveService=(env as unknown as {LIVE_MODEL:Fetcher}).LIVE_MODEL
@@ -20,6 +21,10 @@ export async function createLiveHarness(id:number){
   // token/step/tool budgets, but exclude bridge overhead from its 60s timeout.
   const beforeTurn=agent.beforeTurn.bind(agent)
   agent.beforeTurn=async ctx=>({...await beforeTurn(ctx),timeout:600000})
+  // LANG_MODEL=openai:<model> runs the same conversations on an OpenAI model;
+  // the key stays in the Node bridge, never inside the worker.
+  const other=String((env as unknown as {LANG_MODEL?:string}).LANG_MODEL??'')
+  if(other.startsWith('openai:')){agent.getModel=()=>createOpenAI({apiKey:'bridge',fetch:async(url,init)=>liveService.fetch('https://live-model.local/openai'+new URL(String(url)).pathname,{method:'POST',body:init?.body as string})}).chat(other.slice(7));return}
   agent.getModel=()=>createWorkersAI({binding:{run:async(model:string,input:unknown)=>{
    const response=await liveService.fetch('https://live-model.local/run',{method:'POST',body:JSON.stringify({caseId:id,model,input})})
    if(!response.ok)throw Error('LIVE_MODEL_ERROR_'+response.status+':'+await response.text())
