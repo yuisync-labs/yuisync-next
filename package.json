@@ -82,7 +82,7 @@
     "read-excel-file": "9.3.5",
     "recharts": "^3.9.2",
     "three": "^0.185.1",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.22.0",
@@ -114,8 +114,10 @@
     "node": "22.x"
   },
   "overrides": {
-    "undici": "7.29.1",
+    "undici": "7.30.1",
     "nanoid": "3.3.18",
+    "body-parser": "2.4.0",
+    "zod": "$zod",
     "qs": "6.16.0",
     "sharp": "0.35.5",
     "shell-quote": "1.12.0"
