@@ -10,6 +10,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   staging:
+    permissions:
+      contents: read
+      pull-requests: write
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment: cloudflare-staging
@@ -51,11 +54,20 @@ jobs:
         run: npm run edge:smoke -- "$YUISYNC_E2E_BASE_URL"
       - run: npx playwright install --with-deps chromium
       - name: Verify native AI, debounce, permissions and quality UI
-        run: node scripts/luna/staging-think-smoke.mjs
+        run: |
+          set -o pipefail
+          node scripts/luna/staging-think-smoke.mjs 2>&1 | tee smoke.log
         env:
           LUNA_INBOX_DEBOUNCE_MS: "0"
       - name: Enable verified QuatroPatas staging pilot
         run: node scripts/luna/staging-activate-pilot.mjs
+      - name: Report a failed smoke on the pull request
+        if: failure() && hashFiles('smoke.log') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr=$(gh api "repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${{ github.ref_name }}&state=open" --jq '.[0].number')
+          if [ -n "$pr" ]; then printf '## Smoke do staging falhou\n\nNeurons usados hoje antes do deploy: %s\n\n```\n%s\n```\n' "$LUNA_AI_BASELINE_NEURONS" "$(tail -c 3000 smoke.log)" > smoke.md; gh pr comment "$pr" --repo "${{ github.repository }}" --body-file smoke.md; fi
       - name: Clean disposable records
         if: always()
         run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
