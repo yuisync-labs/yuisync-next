@@ -766,7 +766,7 @@
       "status": "planned_not_executed",
       "setup": "Relógio controlado: domingo 01/11/2026 23:55 em America/Sao_Paulo (02/11 02:55 UTC). Loja aberta na segunda e terça, com vaga às 09h. A data correta é 02/11, nunca 03/11 por usar o dia UTC.",
       "input_fragments": [
-        "Quero o banho dela no dia seguinte, às 09:00. Eu mesmo faço o transporte."
+        "Quero o banho da Mel no dia seguinte, às 09:00. Eu mesmo faço o transporte."
       ],
       "follow_up": "Confirmo o banho da Mel nesse dia e horário do resumo.",
       "assertions": [

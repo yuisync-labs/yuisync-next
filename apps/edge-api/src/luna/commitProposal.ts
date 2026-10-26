@@ -387,7 +387,10 @@ export async function commitConfirmedProposal(database: D1Database, context: Lun
     await markProposal(database, context, proposal.id, 'invalidated')
     return { ok: false, code: 'PROPOSAL_EXPIRED', retryable: false }
   }
-  if (!await latestConfirmation(database, context, proposal)) return { ok: false, code: 'CONFIRMATION_REQUIRED', retryable: false }
+  const others = await database.prepare(`SELECT id,operation_kind,status,version,payload_json,fingerprint,source_message_id,expires_at_ms,committed_operation_id FROM luna_proposals
+    WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND status='awaiting_confirmation' AND expires_at_ms>=?4 AND id<>?5 LIMIT 3`)
+    .bind(context.tenantId, context.moduleId, context.conversationId, lunaNow(context), proposal.id).all<ProposalRow>()
+  if (!await latestConfirmation(database, context, proposal, others.results)) return { ok: false, code: 'CONFIRMATION_REQUIRED', retryable: false }
   const claimed = await database.prepare(`UPDATE luna_proposals SET status='executing',updated_at_ms=?6 WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4 AND version=?5 AND status='awaiting_confirmation' RETURNING id`)
     .bind(context.tenantId, context.moduleId, context.conversationId, proposal.id, proposalVersion, lunaNow(context)).first()
   if (!claimed) return getProposalOperationStatus(database, context, proposal.id)

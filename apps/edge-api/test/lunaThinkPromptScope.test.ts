@@ -45,3 +45,10 @@ describe('Think: agendamento guiado pelo servidor',()=>{
   }finally{h.close()}
  },30000)
 })
+
+import {validateThinkReply} from '../src/luna/thinkPresentation'
+describe('preço multiplicado pela quantidade dita',()=>{
+ const search=[{name:'search_products',result:{ok:true,data:{products:[{id:'sache',price_cents:800}]}}}]
+ it('aceita 5 × preço real quando o cliente disse cinco',()=>expect(validateThinkReply('Cinco sachês ficam R$ 40,00.',search,'Quero cinco sachês pra retirar.')).toEqual({ok:true}))
+ it('recusa total sem a quantidade dita',()=>expect(validateThinkReply('Ficam R$ 40,00.',search,'Quero sachê.')).toMatchObject({ok:false,reason:'UNSUPPORTED_PRICE'}))
+})
