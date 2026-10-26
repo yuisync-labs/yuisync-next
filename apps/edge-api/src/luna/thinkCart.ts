@@ -23,3 +23,16 @@ export function cartSnapshotChanges(input:z.infer<typeof cartSnapshotSchema>,pri
   if(input.reference!==undefined&&prior?.fields.reference!==input.reference)changes.push({action:'set_field',field:'reference',value:input.reference})
   return changes.length>8?{ok:false as const,code:'DRAFT_CHANGE_LIMIT'}:{ok:true as const,changes}
 }
+
+const plain=(v:string)=>v.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
+// "Dessa coloca duas" with two items in the cart must name the item. A snapshot
+// that gives the same new quantity to several existing items, while the
+// customer named neither and said nothing like "cada"/"as duas", is a guess.
+export function ambiguousQuantityChange(prior:{items:{id:string;quantity:number}[]}|undefined,changes:DraftChange[],text:string,names:Record<string,string>){
+  if(!prior||prior.items.length<2||changes.some(c=>c.action==='add_item'||c.action==='remove_item'))return false
+  const changed=changes.filter(c=>c.action==='set_quantity'&&prior.items.some(i=>i.id===c.item_id))
+  if(changed.length<2||new Set(changed.map(c=>c.quantity)).size!==1)return false
+  const said=' '+plain(text)+' '
+  if(/ (todas?|todos?|as duas|os dois|ambas?|ambos|cada|tudo) /.test(said))return false
+  return prior.items.filter(i=>names[i.id]&&said.includes(' '+plain(names[i.id])+' ')).length<2
+}

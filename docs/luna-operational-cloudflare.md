@@ -43,6 +43,12 @@ em `LUNA_THINK_TENANT_IDS`; a configuração versionada deixa a lista vazia.
 - Carrinho com múltiplos itens, quantidades, retirada ou entrega e frete.
 - Cadastro de cliente/pet e preparação de agendamento, reagendamento e cancelamento.
 - Consulta de vagas, regras de serviço, benefícios de pacote e transporte.
+- Datas relativas (hoje, amanhã, dia da semana) vêm de um calendário calculado pelo
+  servidor no fuso da loja.
+- Confirmação de um único resumo apresentado é decidida pelo servidor; se preço,
+  estoque ou vaga mudaram, o servidor refaz o resumo e pede nova confirmação.
+- Alteração de quantidade sem dizer qual item, com vários itens no carrinho, gera
+  pergunta em vez de mudar todos.
 - Transferência para humano quando solicitada, em identidade ambígua, risco
   clínico ou exceção sem ferramenta disponível.
 
@@ -66,6 +72,8 @@ permissão administrativa para a revisão.
 
 - Até 6 chamadas de modelo e 10 ferramentas por turno.
 - Saída limitada a 800 tokens por chamada de atendimento.
+- Teto de 32.000 tokens por turno (entrada e saída somadas). Cada chamada reenvia o prompt
+  de cerca de 5.000 tokens, então o teto cobre os 6 passos sem encaminhar no terceiro.
 - Compactação da sessão a partir de 4.000 tokens, preservando contexto recente;
   a chamada de resumo também passa pelo orçamento diário.
 - Em staging, um Durable Object compartilha reservas e contabilização de uso
