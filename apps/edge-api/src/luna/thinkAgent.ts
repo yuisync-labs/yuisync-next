@@ -407,7 +407,10 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const receiptRows=await db.prepare("SELECT payload_json,operation_kind FROM luna_proposals WHERE tenant_id=? AND module_id='petshop' AND conversation_id=? AND status='completed' AND id IN (SELECT value FROM json_each(?))").bind(c.tenantId,c.conversationId,JSON.stringify(t.results.filter(r=>r.name==='commit_confirmed_proposal'&&record(r.result).ok).map(r=>record(r.input).proposal_id))).all<{payload_json:string;operation_kind:string}>()
     if(committed){const receipts:Record<string,string>={product_order_create:'Pedido registrado e estoque reservado. O pagamento continua pendente.',appointment_create:'Agendamento registrado na Agenda.',appointment_reschedule:'Horário alterado na Agenda.',appointment_cancel:'Agendamento cancelado na Agenda.',customer_registration:'Cadastro do cliente registrado.',pet_registration:'Cadastro do pet registrado.'};reply=receiptRows.results.map(r=>receipts[r.operation_kind]??'Operação registrada.').join('\n')}
     if(closed)reply+='\nComo foi o atendimento? Se quiser, avalie de 1 a 5 estrelas.'
-    const validation=rows.length?{ok:true}:validateThinkReply(reply,[...t.results,...receiptRows.results.map(r=>({name:'validated_commit_receipt',result:JSON.parse(r.payload_json)}))],this.text(t))
+    // Prices the conversation already established also back the reply: summaries
+    // still awaiting confirmation and the current price of products already shown.
+    const known=rows.length?[]:await this.knownPriceEvidence(c)
+    const validation=rows.length?{ok:true}:validateThinkReply(reply,[...t.results,...known,...receiptRows.results.map(r=>({name:'validated_commit_receipt',result:JSON.parse(r.payload_json)}))],this.text(t))
     if(!validation.ok)console.log(JSON.stringify({event:'think_response_rejected',reason:validation.reason,...('unverifiedHour' in validation?{unverified_hour:validation.unverifiedHour}:{})}))
     let handoff=t.results.some(r=>r.name==='handoff_to_human'&&record(r.result).ok===true)
     let lastTool=-1;response.message.parts.forEach((p,index)=>{if(p.type.startsWith('tool-')||p.type==='dynamic-tool')lastTool=index})
@@ -434,6 +437,12 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const turns={...this.state.turns};for(const id of Object.keys(turns).slice(0,-4))if(await this.ctx.storage.get('think-result:'+id))delete turns[id]
     this.setState({...this.state,turns})
     console.log(JSON.stringify({event:'think_response',status:result.status,model_calls:t.modelCalls,tool_calls:t.calls,input_tokens:t.inputTokens,output_tokens:t.outputTokens}))
+  }
+  private async knownPriceEvidence(c:LunaExecutionContext){
+    const pending=await this.db.prepare("SELECT payload_json FROM luna_proposals WHERE tenant_id=? AND module_id='petshop' AND conversation_id=? AND status='awaiting_confirmation' LIMIT 4").bind(c.tenantId,c.conversationId).all<{payload_json:string}>()
+    const shown=[...new Set(Object.values(this.state.catalog).flatMap(m=>m.lastProductIds))].slice(0,12)
+    const products=shown.length?(await this.db.prepare("SELECT id,price_cents FROM catalog_products WHERE tenant_id=? AND module_id='petshop' AND id IN (SELECT value FROM json_each(?))").bind(c.tenantId,JSON.stringify(shown)).all()).results:[]
+    return [...pending.results.map(r=>({name:'pending_proposal',result:JSON.parse(r.payload_json) as unknown})),{name:'shown_products',result:products as unknown}]
   }
   private async writeHandoff(t:Turn,reason:string){
     let operations:unknown[]=[]
