@@ -14,6 +14,7 @@ import { saleDeliveryAddressStatement } from '../saleDeliveryAddress'
 import { appointmentScheduleGuardStatement } from '../appointmentScheduleGuard'
 import { validateGroomingMachine } from '../groomingMachinePolicy'
 import { resolveTransportSnapshot } from './transportContract'
+import { naturalConfirmation, namesSummary, confirmationWords, requestsChange } from './confirmationLanguage'
 
 type ProposalRow = {
   id: string
@@ -67,9 +68,12 @@ async function latestConfirmation(database: D1Database, context: LunaExecutionCo
   if(messages.results.length!==ids.length)return false
   const confirmation=messages.results.map(m=>m.content_text.trim()).join(' '),message=messages.results.at(-1)!
   const payload=record(JSON.parse(proposal.payload_json))
-  if (!explicitConfirmation(confirmation, proposal.operation_kind, text(payload.fulfillment_type))) return false
   const pending=await database.prepare("SELECT COUNT(*) count FROM luna_proposals WHERE tenant_id=? AND module_id=? AND conversation_id=? AND status='awaiting_confirmation' AND expires_at_ms>=?").bind(context.tenantId,context.moduleId,context.conversationId,lunaNow(context)).first<{count:number}>()
-  if(Number(pending?.count)>1&&explicitConfirmation(confirmation,''))return false
+  const single=Number(pending?.count)<=1
+  // A natural restatement is accepted only while exactly one summary is pending.
+  const natural=single&&naturalConfirmation(confirmation,proposal.operation_kind,payload)
+  if (!natural&&!explicitConfirmation(confirmation, proposal.operation_kind, text(payload.fulfillment_type))) return false
+  if(!single&&explicitConfirmation(confirmation,''))return false
   const presentation = await database.prepare(`SELECT outbound_message_id,presented_at_ms FROM luna_proposal_presentations
     WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND proposal_id=?4 AND proposal_version=?5 AND fingerprint=?6`)
     .bind(context.tenantId, context.moduleId, context.conversationId, proposal.id, proposal.version, proposal.fingerprint)
@@ -77,12 +81,18 @@ async function latestConfirmation(database: D1Database, context: LunaExecutionCo
   if (!presentation || messages.results.some(m=>m.created_at_ms <= presentation.presented_at_ms)) return false
   // Any intervening question/answer suspends the target. Multiple summaries in
   // one message are deliberately ambiguous: a bare "sim" cannot select one.
-  const intervening = await database.prepare(`SELECT id FROM chat_messages WHERE tenant_id=?1 AND module_id=?2 AND thread_id=?3
-    AND id NOT IN (SELECT value FROM json_each(?4)) AND id<>?5 AND created_at_ms>=?6 AND created_at_ms<=?7 LIMIT 1`)
-    .bind(context.tenantId, context.moduleId, context.conversationId, JSON.stringify(messages.results.map(m=>m.id)), presentation.outbound_message_id, presentation.presented_at_ms, message.created_at_ms).first()
-  const other = await database.prepare(`SELECT proposal_id FROM luna_proposal_presentations WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND outbound_message_id=?4 AND proposal_id<>?5 LIMIT 1`)
-    .bind(context.tenantId, context.moduleId, context.conversationId, presentation.outbound_message_id, proposal.id).first()
-  return !intervening && !other
+  const intervening = await database.prepare(`SELECT id,direction,actor_type,content_text FROM chat_messages WHERE tenant_id=?1 AND module_id=?2 AND thread_id=?3
+    AND id NOT IN (SELECT value FROM json_each(?4)) AND id<>?5 AND created_at_ms>=?6 AND created_at_ms<=?7 ORDER BY created_at_ms,rowid LIMIT 21`)
+    .bind(context.tenantId, context.moduleId, context.conversationId, JSON.stringify(messages.results.map(m=>m.id)), presentation.outbound_message_id, presentation.presented_at_ms, message.created_at_ms).all<{ id: string; direction: string; actor_type: string; content_text: string }>()
+  const other = await database.prepare(`SELECT proposal_id FROM luna_proposal_presentations WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND (outbound_message_id=?4 OR presented_at_ms>?6) AND proposal_id<>?5 LIMIT 1`)
+    .bind(context.tenantId, context.moduleId, context.conversationId, presentation.outbound_message_id, proposal.id, presentation.presented_at_ms).first()
+  if (other) return false
+  if (!intervening.results.length) return true
+  // A bare "sim" may answer whatever was asked in between. A confirmation that
+  // names the summary survives only hesitation from the customer and Luna's
+  // replies, never a requested change, a human/system message or a long detour.
+  return single && natural && namesSummary(confirmationWords(confirmation), proposal.operation_kind) && intervening.results.length <= 20
+    && intervening.results.every(m => m.direction === 'outbound' ? m.actor_type === 'assistant' : m.actor_type === 'customer' && !requestsChange(m.content_text))
 }
 
 async function markProposal(database: D1Database, context: LunaExecutionContext, proposalId: string, status: string, operationId: string | null = null): Promise<void> {
@@ -400,4 +410,19 @@ export async function commitConfirmedProposal(database: D1Database, context: Lun
     await markProposal(database, context, proposal.id, result.retryable ? 'executing' : 'invalidated')
   }
   return result
+}
+
+// Server-side routing: when the latest customer messages already authorize the
+// single presented summary, the turn executes that exact proposal instead of
+// letting the model choose between re-drafting and committing.
+export async function findConfirmationTarget(database: D1Database, context: LunaExecutionContext): Promise<{ proposal_id: string; proposal_version: number } | null> {
+  const rows = await database.prepare(`SELECT id,operation_kind,status,version,payload_json,fingerprint,source_message_id,expires_at_ms,committed_operation_id FROM luna_proposals
+    WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND status='awaiting_confirmation' AND expires_at_ms>=?4 LIMIT 2`)
+    .bind(context.tenantId, context.moduleId, context.conversationId, lunaNow(context)).all<ProposalRow>()
+  if (rows.results.length !== 1) return null
+  const proposal = rows.results[0]
+  try {
+    if (!await proposalCustomerAuthorized(database, context, proposal.operation_kind, record(JSON.parse(proposal.payload_json)))) return null
+    return await latestConfirmation(database, context, proposal) ? { proposal_id: proposal.id, proposal_version: proposal.version } : null
+  } catch { return null }
 }
