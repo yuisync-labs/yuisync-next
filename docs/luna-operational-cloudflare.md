@@ -78,6 +78,12 @@ permissão administrativa para a revisão.
   Com o antigo teto de 32.000 tokens, um agendamento simples no piloto QuatroPatas era encaminhado.
   No staging o teto do turno cai para o que resta do orçamento diário; esgotado, a Luna encaminha
   e avisa que atingiu o limite diário.
+- O prompt é montado por assunto (`thinkTopics`): regras de catálogo só em conversas de compra,
+  regras de agenda só em agendamento, e as ferramentas de remarcar/cancelar só quando o cliente
+  fala de um agendamento existente. Num pedido de agendamento de cliente cadastrado, o servidor
+  já abre a agenda e roda `search_services` (com o pet citado, se for único) antes da primeira
+  chamada ao modelo: "quero agendar um banho" passou de 3 chamadas (~45 mil caracteres) para 1
+  (~12 mil).
   O encaminhamento grava `usage` (chamadas, tokens e ferramentas) em `handoff_summary`.
 - Compactação da sessão a partir de 4.000 tokens, preservando contexto recente;
   a chamada de resumo também passa pelo orçamento diário.
