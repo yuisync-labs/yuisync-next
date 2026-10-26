@@ -1,9 +1,10 @@
 import React, { Suspense, lazy, useState, useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { Menu } from 'lucide-react'
+import { Menu, Moon, Sun } from 'lucide-react'
 import { useAuthCtx } from '../context/AuthContext'
 import { useModuleCtx } from '../context/ModuleContext'
 import { usePerformanceCtx } from '../context/PerformanceContext'
+import { canAccessPlanItem } from '../config/planEntitlements'
 import StarField from '../shared/components/StarField'
 import { LoadingScreen } from '../components/LoadingScreen'
 import { Sidebar } from '../components/Sidebar'
@@ -25,6 +26,7 @@ const PublicHomePage = lazy(() => import('../public/pages/PublicHomePage'))
 const PublicSalesPage = lazy(() => import('../public/pages/PublicSalesPage'))
 const PublicCheckoutPage = lazy(() => import('../public/pages/PublicCheckoutPage'))
 const PublicWelcomePage = lazy(() => import('../public/pages/PublicWelcomePage'))
+const CustomerFirstRunPage = lazy(() => import('../modules/petshop/pages/CustomerFirstRunPage'))
 const PublicBookingPage = lazy(() => import('../public/pages/PublicBookingPage'))
 const PublicClientPortalPage = lazy(() => import('../public/pages/PublicClientPortalPage'))
 const PublicLegalPage = lazy(() => import('../public/pages/PublicLegalPage'))
@@ -40,23 +42,43 @@ function getModuleNavItems(activeModule) {
   ]
 }
 
-function getAccessiblePages(activeModule, profile) {
+export function getAccessiblePages(activeModule, profile, activeTenant = null) {
   if (!activeModule) return []
   const allItems = getModuleNavItems(activeModule)
   const isGlobalAdmin = profile?.role === 'admin'
   const currentRole = (profile?.module_permissions || {})[activeModule.id]
+  const planItems = allItems.filter((item) => canAccessPlanItem(item, activeTenant))
 
   const visibleItems = isGlobalAdmin
-    ? allItems
-    : allItems.filter((item) => !item.roles || item.roles.includes(currentRole))
+    ? planItems
+    : planItems.filter((item) => !item.roles || item.roles.includes(currentRole))
 
   const pageIds = visibleItems.map((item) => item.id)
-  const dashboardItem = allItems.find((item) => item.id === 'dashboard')
-  const canAccessDashboard = isGlobalAdmin || !dashboardItem?.roles || dashboardItem.roles.includes(currentRole)
+  const configuredDashboardItem = allItems.find((item) => item.id === 'dashboard')
+  const dashboardItem = planItems.find((item) => item.id === 'dashboard')
+  const canAccessDashboard = configuredDashboardItem
+    ? Boolean(dashboardItem) && (isGlobalAdmin || !dashboardItem.roles || dashboardItem.roles.includes(currentRole))
+    : isGlobalAdmin
   if (canAccessDashboard && !pageIds.includes('dashboard') && activeModule.pages?.dashboard) {
     pageIds.unshift('dashboard')
   }
   return [...new Set(pageIds)].filter((pageId) => activeModule.pages?.[pageId])
+}
+
+export function tenantOnboardingStatus(activeTenant) {
+  const rawStatus = activeTenant?.tenant_first_run?.status
+    ?? activeTenant?.tenant_first_run_status
+    ?? activeTenant?.onboarding_status
+    ?? activeTenant?.first_run_status
+  return String(rawStatus || '').trim().toLowerCase()
+}
+
+function needsOnboarding(activeTenant) {
+  return ['pending', 'in_progress', 'blocked'].includes(tenantOnboardingStatus(activeTenant))
+}
+
+function completedOnboarding(activeTenant) {
+  return tenantOnboardingStatus(activeTenant) === 'completed'
 }
 
 function AppLayout() {
@@ -67,6 +89,7 @@ function AppLayout() {
     signOut,
     storeSettings,
     activeTenantId,
+    activeTenant,
     tenantLoading,
     tenantEnabledModules = [],
   } = useAuthCtx()
@@ -112,7 +135,15 @@ function AppLayout() {
   }
 
   const currentPath = location.pathname.split('/')[2] || 'dashboard'
-  const accessiblePages = getAccessiblePages(activeModule, profile)
+  const onboardingAllowedPages = new Set(['primeiros-passos', 'meta-whatsapp'])
+  if (activeModuleId === 'petshop' && needsOnboarding(activeTenant) && !onboardingAllowedPages.has(currentPath)) {
+    return <Navigate to="/onboarding" replace />
+  }
+  if (activeModuleId === 'petshop' && completedOnboarding(activeTenant) && currentPath === 'primeiros-passos') {
+    return <Navigate to="/petshop/dashboard" replace />
+  }
+
+  const accessiblePages = getAccessiblePages(activeModule, profile, activeTenant)
   if (accessiblePages.length === 0) {
     return <Navigate to="/" replace />
   }
@@ -186,6 +217,48 @@ function AppLayout() {
   )
 }
 
+function OnboardingRoute() {
+  const { activeTenantId, activeTenant, tenantLoading } = useAuthCtx()
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('@yuisync-color-mode') === 'dark')
+
+  useEffect(() => {
+    localStorage.setItem('@yuisync-color-mode', darkMode ? 'dark' : 'light')
+    document.body.classList.toggle('yuisync-dark', darkMode)
+    return () => document.body.classList.remove('yuisync-dark')
+  }, [darkMode])
+
+  if (tenantLoading) return <LoadingScreen />
+  if (!activeTenantId) return <Navigate to="/" replace />
+  if (completedOnboarding(activeTenant)) return <Navigate to="/petshop/dashboard" replace />
+
+  return (
+    <div className={`theme-petshop ${darkMode ? 'theme-dark' : ''} min-h-screen bg-bg font-body text-text`}>
+      <header className="sticky top-0 z-30 border-b border-[var(--border2)] bg-surface/95 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-7">
+          <div>
+            <p className="font-display text-sm font-extrabold tracking-[-0.03em]">YuiSync</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">Configuração inicial</p>
+          </div>
+          <button
+            type="button"
+            aria-label={darkMode ? 'Ativar modo claro' : 'Ativar modo noturno'}
+            title={darkMode ? 'Ativar modo claro' : 'Ativar modo noturno'}
+            onClick={() => setDarkMode((current) => !current)}
+            className="btn btn-ghost btn-sm btn-icon"
+          >
+            {darkMode ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+        </div>
+      </header>
+      <ProductPageSurface moduleId="petshop" pageId="onboarding">
+        <Suspense fallback={<LoadingState label="Preparando configuração..." />}>
+          <CustomerFirstRunPage />
+        </Suspense>
+      </ProductPageSurface>
+    </div>
+  )
+}
+
 function PublicRoutes({ authenticated = false }) {
   return (
     <>
@@ -216,6 +289,8 @@ export function AppRouter() {
           <Route path="/" element={<PublicHomePage />} />
           {PublicRoutes({ authenticated: false })}
           <Route path="/entrar" element={<LoginPage />} />
+          <Route path="/onboarding" element={<Navigate to="/entrar?next=%2Fonboarding" replace />} />
+          <Route path="/dashboard" element={<Navigate to="/entrar?next=%2Fdashboard" replace />} />
           <Route path="/:moduleId/*" element={<Navigate to="/entrar" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
@@ -231,6 +306,8 @@ export function AppRouter() {
         {PublicRoutes({ authenticated: true })}
         <Route path="/entrar" element={<Navigate to="/" replace />} />
         <Route path="/minha-conta" element={<AccountPasswordPage />} />
+        <Route path="/onboarding" element={<OnboardingRoute />} />
+        <Route path="/dashboard" element={<Navigate to="/petshop/dashboard" replace />} />
         <Route path="/:moduleId/*" element={<AppLayout />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -2,6 +2,14 @@ import { hash } from 'bcryptjs'
 
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
 import { sendCustomerActivationEmail } from './auth/passwordRecoveryEmail'
+import {
+  allowedModulesForPlan,
+  normalizePlanSlug,
+  parseAllowedModules,
+  setTenantOnboardingCompleted,
+  syncTenantPlanAccess,
+  type TenantPlanAccessRow,
+} from './tenantPlanAccess'
 
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database; AUTH_DB?: D1Database }
 type SessionResolver = typeof getBetterAuthSession
@@ -18,6 +26,7 @@ type InvitationContext = {
   expires_at_ms: number
   customer_name: string
   business_name: string
+  plan_code: string
   order_status: string
   tenant_id: string | null
   billing_status: string | null
@@ -92,7 +101,7 @@ async function invitationByToken(database: D1Database, token: string): Promise<I
   const tokenHash = await sha256(token)
   return database.prepare(`
     SELECT i.id AS invitation_id,i.checkout_order_id,i.email,i.token_hash,i.status AS invitation_status,
-           i.send_count,i.sent_at_ms,i.expires_at_ms,o.customer_name,o.business_name,o.status AS order_status,
+           i.send_count,i.sent_at_ms,i.expires_at_ms,o.customer_name,o.business_name,o.plan_code,o.status AS order_status,
            o.tenant_id,s.status AS billing_status
     FROM platform_onboarding_invitations i
     JOIN platform_checkout_orders o ON o.id=i.checkout_order_id
@@ -254,7 +263,17 @@ async function provision(
   principalId: string,
 ): Promise<string> {
   const database = bindings.DB!
-  if (invitation.tenant_id) return invitation.tenant_id
+  if (invitation.tenant_id) {
+    await syncTenantPlanAccess(database, {
+      tenantId: invitation.tenant_id,
+      plan: invitation.plan_code,
+      status: invitation.billing_status || 'active',
+      source: 'stripe',
+    })
+    await database.prepare(`UPDATE platform_onboarding_invitations SET status='accepted',accepted_at_ms=?1,updated_at_ms=?1
+      WHERE id=?2 AND status='pending'`).bind(Date.now(), invitation.invitation_id).run()
+    return invitation.tenant_id
+  }
   const suffix = (await sha256(invitation.checkout_order_id)).slice(0, 24)
   const tenantId = `tenant-${suffix}`
   const slug = `${slugify(invitation.business_name) || 'empresa'}-${suffix.slice(0, 8)}`
@@ -307,9 +326,17 @@ async function provision(
       .bind(tenantId, principalId, now, invitation.checkout_order_id),
     database.prepare('UPDATE platform_billing_subscriptions SET tenant_id=?1,updated_at_ms=?2 WHERE checkout_order_id=?3 AND (tenant_id IS NULL OR tenant_id=?1)')
       .bind(tenantId, now, invitation.checkout_order_id),
-    database.prepare(`UPDATE platform_onboarding_invitations SET status='accepted',accepted_at_ms=?1,updated_at_ms=?1
-      WHERE id=?2 AND status='pending'`).bind(now, invitation.invitation_id),
   ])
+  await syncTenantPlanAccess(database, {
+    tenantId,
+    plan: invitation.plan_code,
+    status: invitation.billing_status || 'active',
+    source: 'stripe',
+    onboardingCompleted: false,
+    now,
+  })
+  await database.prepare(`UPDATE platform_onboarding_invitations SET status='accepted',accepted_at_ms=?1,updated_at_ms=?1
+    WHERE id=?2 AND status='pending'`).bind(now, invitation.invitation_id).run()
   return tenantId
 }
 
@@ -421,7 +448,7 @@ async function resolveFirstRunScope(
 }
 
 async function firstRunSnapshot(database: D1Database, tenantId: string) {
-  const [row, settings, serviceCount, extension] = await Promise.all([
+  const [row, settings, serviceCount, extension, planAccess] = await Promise.all([
     database.prepare(`SELECT status,current_step,completed_steps_json,support_status,support_availability,completed_at_ms,updated_at_ms
       FROM tenant_first_run WHERE tenant_id=?1 LIMIT 1`).bind(tenantId).first<FirstRunRow>(),
     database.prepare(`SELECT store_name FROM tenant_module_settings WHERE tenant_id=?1 AND module_id='petshop' LIMIT 1`)
@@ -430,6 +457,8 @@ async function firstRunSnapshot(database: D1Database, tenantId: string) {
       .bind(tenantId).first<{ count: number }>(),
     database.prepare(`SELECT data_json FROM module_settings_extensions WHERE tenant_id=?1 AND module_id='petshop' LIMIT 1`)
       .bind(tenantId).first<{ data_json: string }>(),
+    database.prepare(`SELECT tenant_id,plan_slug,allowed_modules_json,onboarding_completed,status,source,created_at_ms,updated_at_ms
+      FROM tenant_plan_access WHERE tenant_id=?1 LIMIT 1`).bind(tenantId).first<TenantPlanAccessRow>(),
   ])
   let hoursReady = false
   try {
@@ -441,6 +470,13 @@ async function firstRunSnapshot(database: D1Database, tenantId: string) {
     schedule: hoursReady,
     services: Number(serviceCount?.count || 0) > 0,
   }
+  const planSlug = normalizePlanSlug(planAccess?.plan_slug) || 'yui-elite'
+  const allowedModules = planAccess
+    ? parseAllowedModules(planAccess.allowed_modules_json)
+    : allowedModulesForPlan(planSlug)
+  const onboardingCompleted = planAccess
+    ? planAccess.onboarding_completed === 1
+    : row ? row.status === 'completed' : true
   return {
     status: row?.status || 'in_progress',
     currentStep: row?.current_step || 'empresa',
@@ -448,6 +484,9 @@ async function firstRunSnapshot(database: D1Database, tenantId: string) {
     support: { status: row?.support_status || 'not_requested', availability: row?.support_availability || '' },
     readiness,
     canComplete: Object.values(readiness).every(Boolean),
+    plan_slug: planSlug,
+    allowed_modules: allowedModules,
+    onboarding_status: onboardingCompleted ? 'completed' : 'in_progress',
     completedAt: row?.completed_at_ms || null,
     updatedAt: row?.updated_at_ms || null,
   }
@@ -522,6 +561,7 @@ async function firstRun(request: Request, bindings: Bindings, dependencies: Cust
     complete ? now : null,
     now,
   ).run()
+  if (complete) await setTenantOnboardingCompleted(bindings.DB!, scope.tenantId, true, now)
   if (supportAvailability !== null) {
     await publishSupportRequest(bindings.DB!, scope.tenantId, scope.principalId, supportAvailability, now)
   }

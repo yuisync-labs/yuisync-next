@@ -2,6 +2,7 @@ import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/bet
 import { handleAppSettingsApiRequest } from './appSettingsApi'
 import { handleAssistedOnboardingApiRequest } from './assistedOnboardingApi'
 import { isPlatformAdmin } from './platformAuthorization'
+import { allowedModulesForPlan, normalizePlanSlug, parseAllowedModules } from './tenantPlanAccess'
 
 type AppApiBindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 
@@ -19,12 +20,20 @@ type MembershipRow = {
   tenant_name: string
   tenant_slug: string
   tenant_status: string
+  plan_slug: string | null
+  allowed_modules_json: string | null
+  onboarding_completed: number | null
+  plan_status: string | null
 }
 
 type TenantDirectoryRow = {
   id: string
   name: string
   slug: string
+  plan_slug: string | null
+  allowed_modules_json: string | null
+  onboarding_completed: number | null
+  plan_status: string | null
 }
 
 type DirectoryMembershipRow = {
@@ -99,9 +108,11 @@ async function resolvePrincipal(
 async function memberships(database: D1Database, principalId: string): Promise<MembershipRow[]> {
   const result = await database.prepare(`
     SELECT m.tenant_id, m.role, m.module_permissions_json,
-           t.name AS tenant_name, t.slug AS tenant_slug, t.status AS tenant_status
+           t.name AS tenant_name, t.slug AS tenant_slug, t.status AS tenant_status,
+           access.plan_slug,access.allowed_modules_json,access.onboarding_completed,access.status AS plan_status
     FROM tenant_memberships m
     JOIN tenants t ON t.id = m.tenant_id
+    LEFT JOIN tenant_plan_access access ON access.tenant_id=m.tenant_id
     WHERE m.principal_id = ?1 AND m.status = 'active' AND t.status = 'active'
     ORDER BY t.name, t.id
   `).bind(principalId).all<MembershipRow>()
@@ -145,6 +156,25 @@ function modulesFor(row: MembershipRow): string[] {
   return modules.length ? modules : ['petshop']
 }
 
+function commercialAccessFor(row: {
+  plan_slug: string | null
+  allowed_modules_json: string | null
+  onboarding_completed: number | null
+  plan_status: string | null
+}) {
+  const planSlug = normalizePlanSlug(row.plan_slug) || 'yui-elite'
+  const planStatus = row.plan_status || 'active'
+  const accessEnabled = ['active', 'trialing', 'past_due'].includes(planStatus)
+  return {
+    plan_slug: planSlug,
+    plan_status: planStatus,
+    allowed_modules: accessEnabled && row.allowed_modules_json
+      ? parseAllowedModules(row.allowed_modules_json)
+      : accessEnabled ? allowedModulesForPlan(planSlug) : [],
+    onboarding_status: row.onboarding_completed === 0 ? 'in_progress' : 'completed',
+  }
+}
+
 function hasModuleAccess(row: DirectoryMembershipRow, moduleId: string): boolean {
   if (row.role === 'owner' || row.role === 'admin') return true
   const permissions = modulePermissionsFromJson(row.module_permissions_json)
@@ -170,10 +200,12 @@ async function bootstrap(request: Request, bindings: AppApiBindings, dependencie
   ])
   const managedTenants = platformAdmin
     ? (await bindings.DB!.prepare(`
-      SELECT id,name,slug
-      FROM tenants
-      WHERE status='active'
-      ORDER BY name,id
+      SELECT tenant.id,tenant.name,tenant.slug,
+             access.plan_slug,access.allowed_modules_json,access.onboarding_completed,access.status AS plan_status
+      FROM tenants tenant
+      LEFT JOIN tenant_plan_access access ON access.tenant_id=tenant.id
+      WHERE tenant.status='active'
+      ORDER BY tenant.name,tenant.id
     `).all<TenantDirectoryRow>()).results
     : []
   return json({
@@ -194,10 +226,12 @@ async function bootstrap(request: Request, bindings: AppApiBindings, dependencie
       role: row.role,
       enabled_modules: modulesFor(row),
       module_permissions: modulePermissionsFor(row),
+      ...commercialAccessFor(row),
     })),
     managed_tenants: managedTenants.map((tenant) => ({
       ...tenant,
       enabled_modules: ['petshop'],
+      ...commercialAccessFor(tenant),
     })),
   })
 }

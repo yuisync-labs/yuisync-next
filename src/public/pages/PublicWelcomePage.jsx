@@ -34,6 +34,8 @@ export default function PublicWelcomePage() {
 
   useEffect(() => {
     let active = true
+    let statusTimer = 0
+    let statusAttempts = 0
     async function load() {
       if (!sessionId && !token) {
         if (active) setState({ loading: false, mode: 'invalid', data: null, error: 'Abra o link recebido depois da compra.' })
@@ -41,11 +43,15 @@ export default function PublicWelcomePage() {
       }
       try {
         if (sessionId) {
+          statusAttempts += 1
           const status = await getCustomerOnboardingStatus(sessionId)
           if (status.payment === 'confirmed' && !status.activated) {
             await requestCustomerOnboardingInvitation(sessionId).catch(() => null)
           }
           if (active) setState({ loading: false, mode: 'return', data: status, error: '' })
+          if (active && status.payment !== 'confirmed' && statusAttempts < 20) {
+            statusTimer = window.setTimeout(load, 3000)
+          }
           return
         }
 
@@ -57,7 +63,7 @@ export default function PublicWelcomePage() {
           try {
             await claimCustomerOnboardingInvitation(token)
             await refreshTenants?.()
-            navigate('/petshop/primeiros-passos', { replace: true })
+            navigate('/onboarding', { replace: true })
           } catch (error) {
             if (active) setState((current) => ({ ...current, error: messageFor(error) }))
           } finally {
@@ -69,7 +75,10 @@ export default function PublicWelcomePage() {
       }
     }
     load()
-    return () => { active = false }
+    return () => {
+      active = false
+      if (statusTimer) window.clearTimeout(statusTimer)
+    }
   }, [navigate, refreshTenants, session?.user?.id, sessionId, token])
 
   async function resend() {
@@ -97,7 +106,8 @@ export default function PublicWelcomePage() {
       const result = await activateCustomerOnboarding(token, passwords.password)
       const login = await signIn(result.email, passwords.password)
       if (login?.error) throw login.error
-      navigate('/petshop/primeiros-passos', { replace: true })
+      await refreshTenants?.()
+      navigate('/onboarding', { replace: true })
     } catch (error) {
       if (error?.code === 'ACCOUNT_EXISTS') {
         setState((current) => ({ ...current, data: { ...current.data, accountExists: true }, error: '' }))

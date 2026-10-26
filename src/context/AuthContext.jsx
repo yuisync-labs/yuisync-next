@@ -5,6 +5,11 @@ import { createAppTenant, getAppSettings } from '../lib/api'
 import { useAuth } from '../shared/hooks/useAuth'
 import { normalizeOperationalStaff } from '../../shared/petshopOperations'
 import { modulePermissionForTenant } from './authPermissions'
+import {
+  hasPlanModule as planHasModule,
+  normalizePlanSlug,
+  planDefinition,
+} from '../config/planEntitlements'
 
 export const AuthContext = createContext(null)
 
@@ -207,6 +212,32 @@ export function AuthProvider({ children }) {
     [tenants, activeTenantId],
   )
 
+  const activePlanSlug = useMemo(() => normalizePlanSlug(
+    activeTenant?.plan_slug
+      ?? activeTenant?.planSlug
+      ?? activeTenant?.plan_code
+      ?? activeTenant?.planCode,
+  ), [activeTenant])
+
+  const explicitPlanModules = useMemo(() => {
+    const candidates = [
+      activeTenant?.allowed_modules,
+      activeTenant?.plan_modules,
+      activeTenant?.entitlements?.modules,
+    ]
+    const modules = candidates.find((candidate) => Array.isArray(candidate))
+    return modules ? [...new Set(modules.filter((moduleId) => typeof moduleId === 'string' && moduleId.trim()))] : null
+  }, [activeTenant])
+
+  const activePlanModules = useMemo(() => (
+    explicitPlanModules ?? planDefinition(activePlanSlug)?.modules ?? []
+  ), [activePlanSlug, explicitPlanModules])
+
+  const hasActivePlanEntitlements = Boolean(activePlanSlug || explicitPlanModules)
+  const tenantHasPlanModule = useCallback((moduleId) => (
+    hasActivePlanEntitlements ? planHasModule(activePlanModules, moduleId) : true
+  ), [activePlanModules, hasActivePlanEntitlements])
+
   const loadTenantEnabledModules = useCallback(() => {
     setTenantEnabledModules(modulesForTenant(activeTenant))
   }, [activeTenant])
@@ -287,6 +318,10 @@ export function AuthProvider({ children }) {
     tenants,
     managedTenants,
     activeTenantId,
+    activeTenant,
+    activePlanSlug,
+    activePlanModules,
+    hasPlanModule: tenantHasPlanModule,
     tenantLoading,
     tenantMode: 'edge',
     tenantError,
@@ -295,7 +330,7 @@ export function AuthProvider({ children }) {
     refreshTenants: loadTenantScope,
     tenantEnabledModules,
     refreshTenantModules: loadTenantEnabledModules,
-  }), [auth, effectiveProfile, storeSettings, updateStoreSettings, loadSettings, tenants, managedTenants, activeTenantId, tenantLoading, tenantError, switchTenant, createTenant, loadTenantScope, tenantEnabledModules, loadTenantEnabledModules])
+  }), [auth, effectiveProfile, storeSettings, updateStoreSettings, loadSettings, tenants, managedTenants, activeTenantId, activeTenant, activePlanSlug, activePlanModules, tenantHasPlanModule, tenantLoading, tenantError, switchTenant, createTenant, loadTenantScope, tenantEnabledModules, loadTenantEnabledModules])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
