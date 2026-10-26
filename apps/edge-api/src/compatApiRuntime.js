@@ -196,7 +196,7 @@ function whereClause(list, scope, global = false) {
 }
 function orderClause(list) {
   const parts=[]
-  for (const o of list.slice(0,5)) { const c=String(o.column||''); if(!COLUMN.test(c)) throw new Error('INVALID_ORDER'); parts.push(`${c} ${o.ascending===false?'DESC':'ASC'}`) }
+  for (const o of list.slice(0,5)) { const c=String(o.column||''); if(!COLUMN.test(c)) throw new Error('INVALID_ORDER'); parts.push(`${c} ${o.ascending===false?'DESC':'ASC'}${o.nullsFirst===true?' NULLS FIRST':''}`) }
   return parts.length?` ORDER BY ${parts.join(', ')}`:''
 }
 function page(body) {

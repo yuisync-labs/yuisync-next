@@ -294,6 +294,7 @@ export default function ChatPage() {
   const [showQuality,setShowQuality]=useState(false)
   const [input, setInput]         = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [dateRange, setDateRange] = useState({ from: '', to: '' })
   const [showModal, setShowModal] = useState(false)
   const [sending, setSending]     = useState(false)
   const [resettingHistory, setResettingHistory] = useState(false)
@@ -310,10 +311,10 @@ export default function ChatPage() {
   }
 
   useEffect(() => {
-    loadSessions(statusFilter || undefined)
+    loadSessions(statusFilter || undefined, dateRange)
     loadQuickReplies()
     subscribeSessionsList()
-  }, [statusFilter])
+  }, [statusFilter, dateRange])
 
   useEffect(() => {
     if (restoredSessionRef.current || activeSession || sessions.length === 0) return
@@ -446,6 +447,14 @@ export default function ChatPage() {
               <option value="waiting">⏳ Aguardando</option>
               <option value="closed">✓ Fechadas</option>
             </select>
+            <div className="mt-2 flex items-center gap-1.5">
+              <input type="date" aria-label="Conversas desde" className="inp py-1 text-xs min-w-0" value={dateRange.from} max={dateRange.to || undefined} onChange={e => setDateRange(r => ({ ...r, from: e.target.value }))}/>
+              <span className="text-xs text-muted">até</span>
+              <input type="date" aria-label="Conversas até" className="inp py-1 text-xs min-w-0" value={dateRange.to} min={dateRange.from || undefined} onChange={e => setDateRange(r => ({ ...r, to: e.target.value }))}/>
+              {(dateRange.from || dateRange.to) && (
+                <button type="button" aria-label="Limpar filtro de data" title="Limpar datas" className="btn btn-ghost btn-sm btn-icon" onClick={() => setDateRange({ from: '', to: '' })}><X size={13}/></button>
+              )}
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto">
