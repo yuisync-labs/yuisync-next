@@ -5,7 +5,7 @@ import type {
   LunaToolResult,
 } from './contracts'
 import { commitConfirmedProposal, getProposalOperationStatus } from './commitProposal'
-import { validateScheduleAvailability } from './schedulePolicy'
+import { validateScheduleAvailability, withStoreScheduleDefaults } from './schedulePolicy'
 import { loadBenefitCandidates } from '../subscriptionBenefitCandidates'
 import { matchesToolSchema } from './toolSchema'
 import { isConversationCustomer } from './customerIdentity'
@@ -288,7 +288,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     `).bind(context.tenantId, context.moduleId, selected.id).all<Record<string, unknown>>()
     const settings=await database.prepare(`SELECT data_json FROM module_settings_extensions WHERE tenant_id=?1 AND module_id=?2`).bind(context.tenantId,context.moduleId).first<{data_json:string}>()
     let timezone:string|null=null
-    try{const configured=JSON.parse(settings?.data_json??'{}').petbot_timezone;if(typeof configured==='string'){new Intl.DateTimeFormat('pt-BR',{timeZone:configured}).format();timezone=configured}}catch{/* Missing/invalid configuration is not an invented timezone. */}
+    try{const configured=(await withStoreScheduleDefaults(database,context.tenantId,context.moduleId,JSON.parse(settings?.data_json??'{}'))).petbot_timezone;if(typeof configured==='string'){new Intl.DateTimeFormat('pt-BR',{timeZone:configured}).format();timezone=configured}}catch{/* Missing/invalid configuration is not an invented timezone. */}
     return { ok: true, data: { customer: selected, pets: pets.results, store_context:{timezone,current_time_utc:new Date(lunaNow(context)).toISOString(),source:'module_settings_extensions/worker-clock'} } }
   })
 

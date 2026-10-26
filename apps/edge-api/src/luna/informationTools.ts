@@ -2,7 +2,7 @@ import { lunaNow } from './clock'
 import type { LunaExecutionContext, LunaToolDefinition, LunaToolResult } from './contracts'
 import { isConversationCustomer } from './customerIdentity'
 import { isWithinBusinessHours, normalizeBusinessHours } from '../businessHours'
-import { loadSchedulePolicy } from './schedulePolicy'
+import { loadSchedulePolicy, withStoreScheduleDefaults } from './schedulePolicy'
 
 type RecordValue = Record<string, unknown>
 const schema = (properties: RecordValue, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false })
@@ -18,10 +18,10 @@ export const informationToolDefinitions: readonly LunaToolDefinition[] = [
 export async function loadInformationSettings(db: D1Database, ctx: LunaExecutionContext): Promise<RecordValue> {
   const row = await db.prepare(`SELECT data_json FROM module_settings_extensions WHERE tenant_id=?1 AND module_id=?2 LIMIT 1`)
     .bind(ctx.tenantId, ctx.moduleId).first<{ data_json: string }>()
-  if (!row) return {}
+  if (!row) return withStoreScheduleDefaults(db, ctx.tenantId, ctx.moduleId, {})
   const data: unknown = JSON.parse(row.data_json)
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('STORE_SETTINGS_INVALID')
-  return data as RecordValue
+  return withStoreScheduleDefaults(db, ctx.tenantId, ctx.moduleId, data as RecordValue)
 }
 
 const normalized = (value: unknown) => typeof value === 'string' ? value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : ''

@@ -15,6 +15,18 @@ const integer = (value: unknown, fallback: number, minimum: number, maximum: num
   return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback
 }
 
+// Stores configured through the settings screen only have the store's opening
+// hours and the module timezone; the booking-specific keys are optional overrides.
+export async function withStoreScheduleDefaults(database: D1Database, tenantId: string, moduleId: string, settings: Record<string, unknown>) {
+  const filled = { ...settings }
+  if (!normalizeBusinessHours(filled.petbot_business_hours) && normalizeBusinessHours(filled.store_business_hours)) filled.petbot_business_hours = filled.store_business_hours
+  if (typeof filled.petbot_timezone !== 'string' || !filled.petbot_timezone.trim()) {
+    const row = await database.prepare(`SELECT timezone FROM module_operational_settings WHERE tenant_id=?1 AND module_id=?2 LIMIT 1`).bind(tenantId, moduleId).first<{ timezone: string | null }>()
+    if (row?.timezone) filled.petbot_timezone = row.timezone
+  }
+  return filled
+}
+
 export async function loadSchedulePolicy(database: D1Database, tenantId: string, moduleId: string): Promise<SchedulePolicy> {
   const row = await database.prepare(`
     SELECT data_json FROM module_settings_extensions
@@ -25,6 +37,7 @@ export async function loadSchedulePolicy(database: D1Database, tenantId: string,
     const parsed = JSON.parse(row?.data_json || '{}')
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) settings = parsed as Record<string, unknown>
   } catch { /* malformed settings fall back to conservative defaults */ }
+  settings = await withStoreScheduleDefaults(database, tenantId, moduleId, settings)
   let timezone = typeof settings.petbot_timezone === 'string' ? settings.petbot_timezone : null
   try { if (timezone) new Intl.DateTimeFormat('pt-BR', { timeZone: timezone }) } catch { timezone = null }
   return {

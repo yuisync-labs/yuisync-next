@@ -314,11 +314,16 @@ export function useChat() {
   }, [activeSession?.id, activeSession?.channel, activeTenantId, activeModuleId, loadMessages])
 
   const openSession = useCallback(async (session) => {
+    // Switching chats must never show the previous chat while the new one loads,
+    // nor let the previous chat's realtime events land in it.
+    if (activeSessionIdRef.current !== session.id) setMessages([])
+    msgChannelRef.current?.unsubscribe()
+    msgChannelRef.current = null
     setActiveSession(session)
     activeSessionIdRef.current = session.id
     const loadedMessages = await loadMessages(session.id)
+    if (activeSessionIdRef.current !== session.id) return loadedMessages
 
-    msgChannelRef.current?.unsubscribe()
     msgChannelRef.current = supabase
       .channel(`messages-${session.id}`)
       .on('postgres_changes', {
@@ -328,12 +333,12 @@ export function useChat() {
         filter: `session_id=eq.${session.id}`,
       }, (payload) => {
         if (payload.eventType === 'DELETE') {
-          setMessages((prev) => prev.filter((message) => message.id !== payload.old?.id))
+          if (activeSessionIdRef.current === session.id) setMessages((prev) => prev.filter((message) => message.id !== payload.old?.id))
           return
         }
         if (!payload.new?.id) return
         pushHandoffAlert(payload.new, session)
-        setMessages((prev) => mergeIncomingMessage(prev, payload.new))
+        if (activeSessionIdRef.current === session.id) setMessages((prev) => mergeIncomingMessage(prev, payload.new))
       })
       .subscribe()
 
@@ -396,7 +401,8 @@ export function useChat() {
         || message?.metadata?.client_message_id === optimisticMessage.id
       ))
 
-      if (persistedMessage) {
+      // The customer may have switched chats while the turn ran.
+      if (persistedMessage && activeSessionIdRef.current === sessionId) {
         setMessages((prev) => mergeIncomingMessage(prev, persistedMessage))
       }
 
@@ -407,7 +413,7 @@ export function useChat() {
       return result
     } catch (error) {
       if (error.name === 'AbortError') throw error // polling cancelled; durable turn is not cancelled
-      setMessages((prev) => prev.map((message) => (
+      if (activeSessionIdRef.current === sessionId) setMessages((prev) => prev.map((message) => (
         message.id === optimisticMessage.id
           ? { ...message, metadata: { ...(message.metadata || {}), pending: false, failed: true } }
           : message
