@@ -925,6 +925,51 @@
         "efeitos conferidos no banco, não apenas no texto"
       ],
       "admission": "shared_daily_and_batch_reservation_required"
+    },
+    {
+      "id": "FLOW-01-1",
+      "family": "flow",
+      "name": "Agendamento completo de banho",
+      "input_fragments": [],
+      "turns": [
+        "Oi, quero agendar um banho pra Mel",
+        "Pode ser quarta-feira às 10h, eu levo e busco",
+        "Confirmo"
+      ],
+      "expect": {
+        "appointments": 1,
+        "sales": 0
+      }
+    },
+    {
+      "id": "FLOW-02-1",
+      "family": "flow",
+      "name": "Compra completa para retirada",
+      "input_fragments": [],
+      "turns": [
+        "Oi, vocês têm ração Quatree adulto?",
+        "Quero uma Ração A pra retirar na loja",
+        "Pode fechar"
+      ],
+      "expect": {
+        "sales": 1,
+        "appointments": 0
+      }
+    },
+    {
+      "id": "FLOW-03-1",
+      "family": "flow",
+      "name": "Saudação e preço do banho",
+      "input_fragments": [],
+      "turns": [
+        "Bom dia",
+        "Quanto custa o banho da Mel?"
+      ],
+      "expect": {
+        "sales": 0,
+        "appointments": 0,
+        "reply": "R\\$"
+      }
     }
   ]
 }

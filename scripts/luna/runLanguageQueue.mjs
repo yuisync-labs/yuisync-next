@@ -5,7 +5,7 @@ import {resolve} from 'node:path'
 const request=JSON.parse(await readFile('.github/luna-language-request.json','utf8'))
 const catalogue=JSON.parse(await readFile('docs/luna-think-language-cases.json','utf8'))
 const ids=request.cases,root=resolve('.artifacts/luna-language'),day=new Date().toISOString().slice(0,10)
-if(!Array.isArray(ids)||!ids.length||ids.length>36||new Set(ids).size!==ids.length||ids.some(id=>!catalogue.cases.some(c=>c.id===id)))throw Error('INVALID_LANGUAGE_QUEUE')
+if(!Array.isArray(ids)||!ids.length||ids.length>60||new Set(ids).size!==ids.length||ids.some(id=>!catalogue.cases.some(c=>c.id===id)))throw Error('INVALID_LANGUAGE_QUEUE')
 await mkdir(root,{recursive:true})
 const summary={day,requested:ids,batches:[],stopReason:null};let failed=false
 function run(command,args,env,cwd=process.cwd()){const r=spawnSync(command,args,{cwd,env,stdio:'inherit'});return r.status??1}

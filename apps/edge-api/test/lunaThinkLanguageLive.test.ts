@@ -13,7 +13,7 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
  for(const s of cases)it(s.id+' '+s.name,async test=>{
   const control=await(await liveService.fetch('https://live-model.local/control')).json() as {stop:boolean}
   if(control.stop){test.skip();return}
-  const number=Number(s.id.split('-')[1])*100+Number(s.id.split('-')[2]),h=await createLiveHarness(2000+number)
+  const number=Number(s.id.split('-')[1])*100+Number(s.id.split('-')[2])+(s.id.startsWith('FLOW')?5000:0),h=await createLiveHarness(2000+number)
   const sales=()=>h.saleRows().then(r=>r.results)
   const appointments=()=>h.db.prepare('SELECT id,status FROM appointments WHERE tenant_id=?').bind(h.tenant).all()
   let restore=()=>{}
@@ -33,6 +33,16 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
     expect(await h.db.prepare('SELECT count(*) n FROM payments WHERE tenant_id=?').bind(h.tenant).first()).toEqual({n:0})
     const replies=results.map(r=>r.status==='fulfilled'?r.value.reply:'');expect(replies.some(r=>/indispon|estoque|acabou|esgot|revis|condiç/i.test(r))).toBe(true)
     await h.evidence('passed',{languageCaseId:s.id,results,sales:rows});return
+   }
+   if(s.family==='flow'){
+    // Whole conversations from greeting to commit: every turn must avoid handoff
+    // and the final database effect must match the case.
+    const flow=s as typeof s&{turns:string[];expect:{sales?:number;appointments?:number;reply?:string}}
+    for(const message of flow.turns){const r=await h.turn(message);expect(r.status,'Handoff at "'+message+'": '+r.reply).not.toBe('handoff')}
+    if(flow.expect.sales!==undefined)expect(await sales()).toHaveLength(flow.expect.sales)
+    if(flow.expect.appointments!==undefined)expect((await appointments()).results).toHaveLength(flow.expect.appointments)
+    if(flow.expect.reply)expect(String(h.turns.at(-1)?.result?.result?.reply??'')).toMatch(new RegExp(flow.expect.reply,'i'))
+    await h.evidence('passed',{languageCaseId:s.id,after:{sales:await sales(),appointments:(await appointments()).results}});return
    }
    const challenge=await h.turn(s.input_fragments)
    if(s.family==='transport_retry'){
