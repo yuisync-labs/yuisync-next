@@ -49,6 +49,14 @@ export function applyPreferences(memory:Memory,input:unknown,userText:string,mes
  const changed=reset||[...new Set([...Object.keys(memory.preferences),...Object.keys(preferences)])].some(key=>memory.preferences[key as keyof Preferences]!==preferences[key as keyof Preferences]);
  return {preferences,evidence:sources,lastProductIds:changed?[]:memory.lastProductIds,unrestricted:[...unrestricted],refinement:reset||typeChanged||speciesChanged||subtypeChanged?undefined:memory.refinement};
 }
+// Names match without accents or plural endings: "saches" finds "Sachê".
+const ACCENTS:[string,string][]=[['á','a'],['à','a'],['â','a'],['ã','a'],['é','e'],['ê','e'],['í','i'],['ó','o'],['ô','o'],['õ','o'],['ú','u'],['ü','u'],['ç','c']].flatMap(([from,to])=>[[from,to],[from.toUpperCase(),to]] as [string,string][]);
+const foldedName=ACCENTS.reduce((sql,[from,to])=>`REPLACE(${sql},'${from}','${to}')`,'LOWER(p.name)');
+export function nameTerms(keyword:string){
+ const w=keyword.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();
+ if(w.length<=3||!w.endsWith('s'))return w?[w]:[];
+ return [w,w.endsWith('oes')||w.endsWith('aes')?w.slice(0,-3)+'ao':w.endsWith('ais')?w.slice(0,-2)+'l':w.slice(0,-1)];
+}
 const code=(s:string)=>s.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
 export const searchSchema=z.object({offset:z.number().int().min(0).max(30).optional().describe('0 inicialmente; 3,6 etc. somente para pedir mais opções.')}).strict();
 export function buildCatalogQuery(p:Preferences,keywords:readonly string[]=[],includeUnknownSpecies=false,tenantId:string){
@@ -69,8 +77,9 @@ export function buildCatalogQuery(p:Preferences,keywords:readonly string[]=[],in
  if(p.maxPriceCents!=null){conditions.push('p.price_cents<=?');params.push(p.maxPriceCents);}
  addClassificationFilters(p,conditions,params);
  for(const keyword of [...keywords,...(p.nameTerms??[]),...[p.productLine,p.productName].filter((v):v is string=>!!v).flatMap(v=>v.split(/\s+/))]){
-  const alternatives=keyword.toLowerCase()==='light'?['light','ligth']:[keyword];
-  conditions.push('('+alternatives.map(()=>"p.name LIKE ? ESCAPE '\\'").join(' OR ')+')');
+  const terms=nameTerms(keyword);if(!terms.length)continue;
+  const alternatives=terms[0]==='light'?['light','ligth']:terms;
+  conditions.push('('+alternatives.map(()=>`${foldedName} LIKE ? ESCAPE '\\'`).join(' OR ')+')');
   params.push(...alternatives.map(v=>'%'+v.replace(/[\\%_]/g,'\\$&')+'%'));
  }
  return {from:`FROM catalog_product_attributes a JOIN catalog_products p ON p.tenant_id=a.tenant_id AND p.module_id=a.module_id AND p.id=a.product_id ${profileJoin} WHERE ${conditions.join(' AND ')}`,params};

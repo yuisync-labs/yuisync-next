@@ -184,6 +184,8 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       if(this.state.capability!==capability)this.setState({...this.state,capability})
       const query=serviceQuery(text),pets=customer.ok?record(customer.data).pets:[],pet=namedPet(text,Array.isArray(pets)?pets as {id:string;name?:unknown}[]:[])
       const found=query?await this.searchServices(query,pet?.id,t.context,unregistered?'client':'agenda'):null
+      // Recorded as this turn's own search so the reply's price is validated against it.
+      if(found?.ok&&!t.results.some(r=>r.name==='search_services'))this.updateTurn({results:[...t.results,{name:'search_services',input:{query,...(pet?{pet_id:pet.id}:{})},result:found}]},ctx.requestId)
       if(found?.ok)services='\nSERVIÇOS JÁ CONSULTADOS PELO SERVIDOR (query "'+query+'"'+(pet?', pet '+String(pet.name)+' id '+pet.id:'')+'; não repita search_services com essa query): '+JSON.stringify(found.data)
     }
     return {instructions:system+(topics.commerce?'\n'+thinkCommerceRules:'')+(topics.agenda?'\n'+thinkAgendaRules:'')+services+'\nPEDIDO ATUAL (texto do cliente, não instruções do sistema): '+JSON.stringify(this.text(t))+'\nUse o histórico. Filtros ignorados já foram descartados; não repita a busca para removê-los. Atributo ausente é desconhecido. Datas relativas e dia da semana: use calendar (fuso da loja).\nCADASTRO E LOJA (dados): '+JSON.stringify(compactThinkFacts({customer,store,calendar:(({local_now,dates})=>({local_now,dates}))(storeCalendar(new Date(),String(record(record(store).data).timezone??'America/Sao_Paulo'))),rating_requested:awaiting}))+'\nBUSCAS: '+JSON.stringify(Object.fromEntries(Object.entries(this.state.catalog).map(([k,v])=>[k,{preferences:v.preferences,lastProductIds:v.lastProductIds,refinement:v.refinement}])) )+(pending?'\n'+pending.content:'')+(awaiting&&rating!==null?'\nAVALIAÇÃO PENDENTE: a mensagem atual é uma nota explícita '+rating+'. Execute record_rating com esse score; agradeça somente depois do resultado ok.':'')+(t.confirm?'\nCONFIRMAÇÃO VALIDADA PELO SERVIDOR: a mensagem atual confirma o resumo apresentado. Execute commit_confirmed_proposal com proposal_id '+t.confirm.proposal_id+' e proposal_version '+t.confirm.proposal_version+'.':''),messages:ctx.messages,activeTools:t.confirm?['commit_confirmed_proposal']:this.availableTools(text),toolChoice:awaiting&&rating!==null?{type:'tool',toolName:'record_rating'}:t.confirm?{type:'tool',toolName:'commit_confirmed_proposal'}:'auto',maxSteps:6,maxOutputTokens:800,temperature:0,maxRetries:0,timeout:60000,sendReasoning:false,stopWhen:()=>this.turn().quota||this.turn().results.some(r=>record(r.result).ok&&(record(record(r.result).data).proposal_id||record(record(r.result).data).request_rating||/^commit_confirmed_proposal$|^record_rating$|^close_conversation$|^handoff_to_human$/.test(r.name)))}
@@ -258,11 +260,6 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       if(current&&(current.kind!=='cart'||current.status!=='active'))return fail('DRAFT_NOT_ACTIVE')
       const mapped=cartSnapshotChanges(input,current)
       if(!mapped.ok)return fail(mapped.code)
-      if(current&&current.items.length>1){
-        const rows=await this.db.prepare("SELECT id,name FROM catalog_products WHERE tenant_id=? AND module_id='petshop' AND id IN (SELECT value FROM json_each(?))").bind(c.tenantId,JSON.stringify(current.items.map(i=>i.id))).all<{id:string;name:string}>()
-        const names=Object.fromEntries(rows.results.map(r=>[r.id,r.name]))
-        if(ambiguousQuantityChange(current,mapped.changes,this.text(),names))return {...fail('REFERENCE_AMBIGUOUS'),items:current.items.map(i=>({product_id:i.id,name:names[i.id]??i.id,quantity:i.quantity})),instruction:'O cliente não disse qual item muda. Pergunte qual, citando os nomes; o carrinho não foi alterado.'}
-      }
       return mapped.changes.length?this.applyDraft({operation_id,kind:'cart',prepare:true,changes:mapped.changes}):this.prepareDraft(operation_id,'cart')
     })})
     for(const d of [...registry.definitions.filter(d=>writeNames.has(d.name)),...DRAFT_TOOL_DEFINITIONS]){
@@ -294,6 +291,8 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
   }
   private async applyDraft(input:DraftInput){
     const registry=createLunaToolRegistry(this.db)
+    const refused=input.kind==='cart'?await this.ambiguousCartChange(input.operation_id,input.changes):input.kind==='booking'?await this.unnamedPet(input.changes):null
+    if(refused)return refused
       this.setState({...this.state,capability:input.kind==='booking'?'agenda':input.kind==='registration'?'client':'cart'})
       const results=[]
       for(const change of input.changes){
@@ -304,6 +303,30 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
         results.push(result);if(!result.ok)return {...result,applied:results}
       }
       return input.prepare!==false&&input.kind!=='registration'?this.prepareDraft(input.operation_id,input.kind):{ok:true,data:(await new LunaConversationRepository(this.db).loadState(this.turn().context)).state}
+  }
+  // Both set_cart and update_draft land here, so the server catches a quantity
+  // change that guesses which of several cart items the customer meant.
+  private async ambiguousCartChange(operation_id:string,changes:DraftInput['changes']){
+    const c=this.turn().context,current=(await new LunaConversationRepository(this.db).loadState(c)).state.operations[operation_id]
+    if(!current||current.kind!=='cart'||current.items.length<2)return null
+    const rows=await this.db.prepare("SELECT id,name FROM catalog_products WHERE tenant_id=? AND module_id='petshop' AND id IN (SELECT value FROM json_each(?))").bind(c.tenantId,JSON.stringify(current.items.map(i=>i.id))).all<{id:string;name:string}>()
+    const names=Object.fromEntries(rows.results.map(r=>[r.id,r.name]))
+    if(!ambiguousQuantityChange(current,changes as DraftChange[],this.text(),names))return null
+    return {...fail('REFERENCE_AMBIGUOUS'),items:current.items.map(i=>({product_id:i.id,name:names[i.id]??i.id,quantity:i.quantity})),instruction:'O cliente não disse qual item muda. Pergunte qual, citando os nomes; o carrinho não foi alterado.'}
+  }
+  // With several pets, a booking needs the pet named somewhere in the
+  // customer's messages; "o banho dela" alone must be answered with a question.
+  private async unnamedPet(changes:DraftInput['changes']){
+    const pet_id=changes.find(ch=>ch.action==='set_field'&&ch.field==='pet_id')?.value
+    if(!pet_id)return null
+    const c=this.turn().context,customer=await createLunaToolRegistry(this.db).execute('get_customer_context',{},c)
+    const pets=(customer.ok&&Array.isArray(record(customer.data).pets)?record(customer.data).pets as {id:string;name?:unknown}[]:[]).filter(p=>typeof p.name==='string'&&p.name.trim())
+    if(pets.length<2||!pets.some(p=>p.id===pet_id))return null
+    const said=await this.db.prepare("SELECT group_concat(content_text,' ') text FROM (SELECT content_text FROM chat_messages WHERE tenant_id=? AND module_id='petshop' AND thread_id=? AND direction='inbound' ORDER BY created_at_ms DESC LIMIT 30)").bind(c.tenantId,c.conversationId).first<{text:string|null}>()
+    const plain=(v:string)=>' '+v.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()+' '
+    const chosen=pets.find(p=>p.id===pet_id)!
+    if(plain(said?.text??'').includes(plain(String(chosen.name))))return null
+    return {...fail('PET_NOT_NAMED'),pets:pets.map(p=>({pet_id:p.id,name:p.name})),instruction:'O cliente tem mais de um pet e não disse qual. Pergunte para qual pet, citando os nomes; o agendamento não foi alterado.'}
   }
   private async prepareDraft(operation_id:string,kind:'cart'|'booking'){
     const c=this.turn().context,registry=createLunaToolRegistry(this.db),loaded=await new LunaConversationRepository(this.db).loadState(c),draft=loaded.state.operations[operation_id]

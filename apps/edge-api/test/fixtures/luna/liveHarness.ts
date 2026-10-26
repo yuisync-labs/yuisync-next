@@ -48,7 +48,14 @@ export async function createLiveHarness(id:number){
    await agent.waitForSubmission(newest.submissionId,{timeoutMs:600000})
   })
   const result=await runInDurableObject(stub,async agent=>await(await agent.onRequest(new Request('https://local/turns/'+ids.at(-1)))).json() as Record<string,any>)
-  turns.push({messages:parts,result});await evidence('running')
+  // Diagnostic trace for the report: which tools ran, with what, and why a handoff happened.
+  const trace=await runInDurableObject(stub,async agent=>{
+   const last=Object.values(agent.state.turns as Record<string,{results?:{name:string;input?:unknown;result?:unknown}[]}>).at(-1)
+   const clip=(v:unknown)=>JSON.stringify(v??null).slice(0,300)
+   return (last?.results??[]).map(r=>({tool:r.name,input:clip(r.input),result:clip(r.result)}))
+  })
+  const handoff=await h.db.prepare("SELECT json_extract(context_json,'$.think.handoff_summary.reason') reason FROM chat_threads WHERE tenant_id=? AND id=?").bind(h.tenant,h.ctx.conversationId).first<{reason:string|null}>()
+  turns.push({messages:parts,result,trace,handoffReason:handoff?.reason??null});await evidence('running')
   expect(result.status,JSON.stringify(result)).toBe('complete')
   return result.result as {status:string;reply:string;[key:string]:any}
  }

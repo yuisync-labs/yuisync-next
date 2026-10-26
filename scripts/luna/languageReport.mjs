@@ -21,7 +21,7 @@ const lines=[`## Bateria real da Luna`,'',`**${count('passed')} de ${rows.length
  ...rows.map(r=>`| ${r.id} | ${r.name??r.family} | ${{passed:'✅ passou',failed:'❌ falhou',incomplete:'⚠️ incompleto',not_run:'⏭️ não rodou'}[r.status]} | ${r.neurons.toFixed(0)} |`)]
 for(const r of rows.filter(r=>r.status!=='passed'&&r.turns.length)){
  lines.push('',`<details><summary>${r.id}: ${clip(r.error,160)}</summary>`,'')
- for(const t of r.turns){lines.push(`- **Cliente:** ${clip((t.messages??[]).join(' / '),200)}`,`  **Luna (${t.result?.result?.status??t.result?.status}):** ${clip(t.result?.result?.reply,400)}`)}
+ for(const t of r.turns){lines.push(`- **Cliente:** ${clip((t.messages??[]).join(' / '),200)}`,`  **Luna (${t.result?.result?.status??t.result?.status}):** ${clip(t.result?.result?.reply,400)}`,...(t.handoffReason&&(t.result?.result?.status==="handoff")?[`  _Motivo do handoff:_ ${clip(t.handoffReason,200)}`]:[]),...(t.trace??[]).map(x=>`  - \`${x.tool}\` ${clip(x.input,160)} → ${clip(x.result,200)}`))}
  lines.push('','</details>')
 }
 const md=lines.join('\n').slice(0,60000)
