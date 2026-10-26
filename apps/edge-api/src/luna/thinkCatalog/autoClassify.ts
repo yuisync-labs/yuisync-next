@@ -33,22 +33,28 @@ export function classifyFood(row:Pick<Row,'name'|'category'|'species_target'|'un
 }
 // Classifies food products that have no attributes yet, or whose suggested
 // attributes predate the product's last edit. Cheap no-op once up to date.
+// Checking for stale rows scans the whole catalog, so each isolate checks a
+// tenant at most every few minutes instead of on every search.
+const checkedAt=new Map<string,number>(),RECHECK_MS=10*60_000
+const fresh=(key:string)=>Date.now()-(checkedAt.get(key)??0)<RECHECK_MS
 export async function ensureFoodClassified(db:D1Database,tenantId:string){
+ if(fresh('food:'+tenantId))return 0
  const stale=await db.prepare("SELECT p.id,p.name,p.category,p.species_target,json_extract(p.bot_metadata_json,'$.unit') unit,p.updated_at_ms FROM catalog_products p LEFT JOIN catalog_product_attributes a ON a.tenant_id=p.tenant_id AND a.module_id=p.module_id AND a.product_id=p.id WHERE p.tenant_id=? AND p.module_id='petshop' AND p.status='active' AND p.category IN ('Ração','Petisco') AND (a.product_id IS NULL OR (a.review_state='suggested' AND a.revision<>'auto:'||p.updated_at_ms))").bind(tenantId).all<Row>()
+ checkedAt.set('food:'+tenantId,Date.now())
  if(!stale.results.length)return 0
  const names=await db.prepare("SELECT name FROM catalog_products WHERE tenant_id=? AND module_id='petshop' AND status='active' AND category IN ('Ração','Petisco')").bind(tenantId).all<{name:string}>()
- const brands=brandCandidates(names.results.map(r=>r.name)),now=Date.now(),statements:D1PreparedStatement[]=[]
- for(const row of stale.results){
-  const f=classifyFood(row,brands);if(!f)continue
-  statements.push(
-   db.prepare("DELETE FROM catalog_product_species WHERE tenant_id=? AND module_id='petshop' AND product_id=?").bind(tenantId,row.id),
-   db.prepare("DELETE FROM catalog_product_sizes WHERE tenant_id=? AND module_id='petshop' AND product_id=?").bind(tenantId,row.id),
-   db.prepare("INSERT INTO catalog_product_attributes(tenant_id,module_id,product_id,product_type,brand_code,brand_label,life_stage,sale_form,package_weight_grams,food_form,search_enabled,review_state,evidence_json,revision,created_at_ms) VALUES(?,'petshop',?,?,?,?,?,?,?,?,1,'suggested',?,?,?) ON CONFLICT(tenant_id,module_id,product_id) DO UPDATE SET product_type=excluded.product_type,brand_code=excluded.brand_code,brand_label=excluded.brand_label,life_stage=excluded.life_stage,sale_form=excluded.sale_form,package_weight_grams=excluded.package_weight_grams,food_form=excluded.food_form,evidence_json=excluded.evidence_json,revision=excluded.revision WHERE catalog_product_attributes.review_state='suggested'").bind(tenantId,row.id,f.product_type,f.brand_code,f.brand_label,f.life_stage,f.sale_form,f.package_weight_grams,f.food_form,JSON.stringify({source:'name',name:row.name}),'auto:'+row.updated_at_ms,now),
-   ...f.species.map(s=>db.prepare("INSERT OR IGNORE INTO catalog_product_species(tenant_id,module_id,product_id,species) VALUES(?,'petshop',?,?)").bind(tenantId,row.id,s)),
-   ...f.sizes.map(s=>db.prepare("INSERT OR IGNORE INTO catalog_product_sizes(tenant_id,module_id,product_id,animal_size) VALUES(?,'petshop',?,?)").bind(tenantId,row.id,s)),
-  )
- }
- for(let i=0;i<statements.length;i+=90)await db.batch(statements.slice(i,i+90))
+ const brands=brandCandidates(names.results.map(r=>r.name)),now=Date.now(),rows=[]
+ for(const row of stale.results){const f=classifyFood(row,brands);if(f)rows.push({id:row.id,...f,evidence:JSON.stringify({source:'name',name:row.name}),revision:'auto:'+row.updated_at_ms})}
+ // One statement per table, rows passed as one JSON parameter: D1 counts each
+ // statement of a batch against the per-invocation query limit (50 on Free).
+ const j=JSON.stringify(rows),each="FROM json_each(?2) r"
+ await db.batch([
+  db.prepare(`DELETE FROM catalog_product_species WHERE tenant_id=?1 AND module_id='petshop' AND product_id IN (SELECT r.value->>'id' ${each})`).bind(tenantId,j),
+  db.prepare(`DELETE FROM catalog_product_sizes WHERE tenant_id=?1 AND module_id='petshop' AND product_id IN (SELECT r.value->>'id' ${each})`).bind(tenantId,j),
+  db.prepare(`INSERT INTO catalog_product_attributes(tenant_id,module_id,product_id,product_type,brand_code,brand_label,life_stage,sale_form,package_weight_grams,food_form,search_enabled,review_state,evidence_json,revision,created_at_ms) SELECT ?1,'petshop',r.value->>'id',r.value->>'product_type',r.value->>'brand_code',r.value->>'brand_label',r.value->>'life_stage',r.value->>'sale_form',r.value->>'package_weight_grams',r.value->>'food_form',1,'suggested',r.value->>'evidence',r.value->>'revision',?3 ${each} WHERE true ON CONFLICT(tenant_id,module_id,product_id) DO UPDATE SET product_type=excluded.product_type,brand_code=excluded.brand_code,brand_label=excluded.brand_label,life_stage=excluded.life_stage,sale_form=excluded.sale_form,package_weight_grams=excluded.package_weight_grams,food_form=excluded.food_form,evidence_json=excluded.evidence_json,revision=excluded.revision WHERE catalog_product_attributes.review_state='suggested'`).bind(tenantId,j,now),
+  db.prepare(`INSERT OR IGNORE INTO catalog_product_species(tenant_id,module_id,product_id,species) SELECT ?1,'petshop',r.value->>'id',s.value ${each}, json_each(r.value,'$.species') s`).bind(tenantId,j),
+  db.prepare(`INSERT OR IGNORE INTO catalog_product_sizes(tenant_id,module_id,product_id,animal_size) SELECT ?1,'petshop',r.value->>'id',s.value ${each}, json_each(r.value,'$.sizes') s`).bind(tenantId,j),
+ ])
  return stale.results.length
 }
 
@@ -68,17 +74,17 @@ export function profileFor(row:Pick<Row,'name'|'category'|'species_target'|'unit
  return {product_type,subtype,species,domain:product_type==='garden'?'garden':product_type==='beverage'?'human_beverage':'petshop',net_volume_ml:volume&&volume>0?volume:null,net_weight_grams:weight&&weight>0?weight:null,pack_count:pack&&pack>0?pack:null,requires_professional_guidance:product_type==='medicine'&&subtype!=='supplement'?1:0};
 }
 export async function ensureCatalogProfiled(db:D1Database,tenantId:string){
+ if(fresh('profile:'+tenantId))return 0
  const stale=await db.prepare("SELECT p.id,p.name,p.category,p.species_target,json_extract(p.bot_metadata_json,'$.unit') unit,p.updated_at_ms FROM catalog_products p LEFT JOIN catalog_product_profiles x ON x.tenant_id=p.tenant_id AND x.module_id=p.module_id AND x.product_id=p.id WHERE p.tenant_id=? AND p.module_id='petshop' AND p.status='active' AND p.category IN ('Acessório','Higiene','Brinquedo','Medicamento','Aquarismo','Jardinagem','Bebidas','Outro','Petisco') AND (x.product_id IS NULL OR (x.review_state='partial' AND x.revision<>'auto:'||p.updated_at_ms))").bind(tenantId).all<Row>()
+ checkedAt.set('profile:'+tenantId,Date.now())
  if(!stale.results.length)return 0
- const now=Date.now(),statements:D1PreparedStatement[]=[]
- for(const row of stale.results){
-  const f=profileFor(row);if(!f)continue
-  statements.push(
-   db.prepare("DELETE FROM catalog_product_profile_species WHERE tenant_id=? AND module_id='petshop' AND product_id=?").bind(tenantId,row.id),
-   db.prepare("INSERT INTO catalog_product_profiles(tenant_id,module_id,product_id,entity_kind,domain,product_type,subtype,sale_unit,net_weight_grams,net_volume_ml,pack_count,requires_professional_guidance,review_state,source_name,source_category,attributes_json,evidence_json,revision,created_at_ms) VALUES(?,'petshop',?,'product',?,?,?,?,?,?,?,?,'partial',?,?,'{}',?,?,?) ON CONFLICT(tenant_id,module_id,product_id) DO UPDATE SET domain=excluded.domain,product_type=excluded.product_type,subtype=excluded.subtype,sale_unit=excluded.sale_unit,net_weight_grams=excluded.net_weight_grams,net_volume_ml=excluded.net_volume_ml,pack_count=excluded.pack_count,requires_professional_guidance=excluded.requires_professional_guidance,source_name=excluded.source_name,source_category=excluded.source_category,evidence_json=excluded.evidence_json,revision=excluded.revision WHERE catalog_product_profiles.review_state='partial'").bind(tenantId,row.id,f.domain,f.product_type,f.subtype,row.unit,f.net_weight_grams,f.net_volume_ml,f.pack_count,f.requires_professional_guidance,row.name,row.category,JSON.stringify({source:'name'}),'auto:'+row.updated_at_ms,now),
-   ...f.species.map(s=>db.prepare("INSERT OR IGNORE INTO catalog_product_profile_species(tenant_id,module_id,product_id,species) VALUES(?,'petshop',?,?)").bind(tenantId,row.id,s)),
-  )
- }
- for(let i=0;i<statements.length;i+=90)await db.batch(statements.slice(i,i+90))
+ const now=Date.now(),rows=[]
+ for(const row of stale.results){const f=profileFor(row);if(f)rows.push({id:row.id,...f,unit:row.unit,name:row.name,category:row.category,revision:'auto:'+row.updated_at_ms})}
+ const j=JSON.stringify(rows),each="FROM json_each(?2) r"
+ await db.batch([
+  db.prepare(`DELETE FROM catalog_product_profile_species WHERE tenant_id=?1 AND module_id='petshop' AND product_id IN (SELECT r.value->>'id' ${each})`).bind(tenantId,j),
+  db.prepare(`INSERT INTO catalog_product_profiles(tenant_id,module_id,product_id,entity_kind,domain,product_type,subtype,sale_unit,net_weight_grams,net_volume_ml,pack_count,requires_professional_guidance,review_state,source_name,source_category,attributes_json,evidence_json,revision,created_at_ms) SELECT ?1,'petshop',r.value->>'id','product',r.value->>'domain',r.value->>'product_type',r.value->>'subtype',r.value->>'unit',r.value->>'net_weight_grams',r.value->>'net_volume_ml',r.value->>'pack_count',r.value->>'requires_professional_guidance','partial',r.value->>'name',r.value->>'category','{}','{"source":"name"}',r.value->>'revision',?3 ${each} WHERE true ON CONFLICT(tenant_id,module_id,product_id) DO UPDATE SET domain=excluded.domain,product_type=excluded.product_type,subtype=excluded.subtype,sale_unit=excluded.sale_unit,net_weight_grams=excluded.net_weight_grams,net_volume_ml=excluded.net_volume_ml,pack_count=excluded.pack_count,requires_professional_guidance=excluded.requires_professional_guidance,source_name=excluded.source_name,source_category=excluded.source_category,evidence_json=excluded.evidence_json,revision=excluded.revision WHERE catalog_product_profiles.review_state='partial'`).bind(tenantId,j,now),
+  db.prepare(`INSERT OR IGNORE INTO catalog_product_profile_species(tenant_id,module_id,product_id,species) SELECT ?1,'petshop',r.value->>'id',s.value ${each}, json_each(r.value,'$.species') s`).bind(tenantId,j),
+ ])
  return stale.results.length
 }
