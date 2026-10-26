@@ -30,3 +30,21 @@ export function withdrawalMessage(text: string) {
 export function clinicalRisk(text:string){
   return /\b(?:qual (?:a )?dose|dosagem|quanto (?:devo|posso) (?:dar|administrar)|falta de ar|convuls(?:ao|oes)|sangramento intenso|intoxicad[oa])\b/.test(text.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase())
 }
+
+// Each model call resends the ~5k-token prompt, so the turn ceiling counts the
+// whole step budget (6 calls) instead of handing off after the third call.
+export const THINK_TURN_TOKEN_LIMIT = 32000
+
+const WEEKDAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb']
+// Relative dates are resolved here in the store timezone. The model never
+// derives "amanhã" from a UTC instant, which moved bookings across midnight.
+export function storeCalendar(now: Date, timezone: string) {
+  let zone = timezone
+  try { new Intl.DateTimeFormat('en-CA', { timeZone: zone }) } catch { zone = 'America/Sao_Paulo' }
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now).map(p => [p.type, p.value]))
+  const base = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day))
+  const day = (offset: number) => { const d = new Date(base + offset * 86400000); return { date: d.toISOString().slice(0, 10), weekday: WEEKDAYS[d.getUTCDay()] } }
+  // One compact line: the prompt budget test bounds the first call's size.
+  const dates = Array.from({ length: 8 }, (_, offset) => (offset === 0 ? 'hoje ' : offset === 1 ? 'amanhã ' : '') + day(offset).weekday + ' ' + day(offset).date).join('; ')
+  return { timezone: zone, local_now: day(0).date + ' ' + parts.hour + ':' + parts.minute, dates }
+}

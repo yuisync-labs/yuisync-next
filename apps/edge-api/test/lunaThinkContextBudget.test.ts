@@ -11,8 +11,9 @@ it('measures the actual model prompt and keeps the draft menu outside the initia
   expect(result.result.usage.modelCalls).toBe(2)
   const first=h.modelFootprint[0]
   const chars=first.messages.reduce((n,message)=>n+message.chars,0)+(first.tools??[]).reduce((n,tool)=>n+tool.chars,0)
-  // Character regression bound, not a tokenizer or the 12k per-turn token limit.
-  expect(chars).toBeLessThan(13000)
+  // Character regression bound, not a tokenizer or the per-turn token limit.
+  // Raised from 13000 for the store calendar that replaced the UTC current_time.
+  expect(chars).toBeLessThan(13200)
   expect(h.modelFootprint[0].tools?.some(tool=>tool.name==='update_draft')).toBe(false)
  }finally{h.close()}
 })
