@@ -41,6 +41,8 @@ jobs:
       - name: Prepare disposable authenticated tenants
         run: node scripts/migration/staging-e2e-fixtures.mjs setup
       - name: Read today's account usage
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: node scripts/luna/staging-budget-baseline.mjs
       - name: Give the staging worker the OpenAI key
         env:
