@@ -170,6 +170,15 @@ function handoffAlertFromSession(session = {}) {
   }
 }
 
+// D1 stores chat times as UTC 'YYYY-MM-DD HH:MM:SS'; the picker gives local days.
+const d1Time = (date) => date.toISOString().slice(0, 19).replace('T', ' ')
+export function chatDateBounds({ from = '', to = '' } = {}) {
+  return {
+    from: from ? d1Time(new Date(`${from}T00:00:00`)) : '',
+    to: to ? d1Time(new Date(`${to}T23:59:59.999`)) : '',
+  }
+}
+
 export function useChat() {
   const [sessions, setSessions] = useState([])
   const [messages, setMessages] = useState([])
@@ -180,6 +189,7 @@ export function useChat() {
   const [quickReplies, setQuickReplies] = useState([])
   const [handoffAlerts, setHandoffAlerts] = useState([])
   const channelRef = useRef(null)
+  const dateRangeRef = useRef({ from: '', to: '' })
   const msgChannelRef = useRef(null)
   const activeSessionIdRef = useRef(null)
   const handoffAlertIdsRef = useRef(new Set())
@@ -213,8 +223,11 @@ export function useChat() {
     setHandoffAlerts((prev) => prev.filter((alert) => alert.id !== alertId))
   }, [])
 
-  const loadSessions = useCallback(async (statusFilter = '') => {
+  const loadSessions = useCallback(async (statusFilter = '', dateRange) => {
     if (!activeModuleId) return
+    // Background reloads call without a range and keep the one on screen.
+    if (dateRange !== undefined) dateRangeRef.current = dateRange
+    const bounds = chatDateBounds(dateRangeRef.current)
     setLoading(true)
 
     try {
@@ -223,10 +236,13 @@ export function useChat() {
           .from('chat_sessions')
           .select('id, customer_phone, customer_name, channel, context, status, intent, last_message_at, opened_at, csat_score, clients(name, details)')
           .eq('module_id', activeModuleId)
-          .order('last_message_at', { ascending: false })
+          .order('last_message_at', { ascending: false, nullsFirst: true })
 
         query = applyTenantFilter(query, activeTenantId, includeTenant)
         if (statusFilter) query = query.eq('status', statusFilter)
+        // A chat matches when it was open at some point in the range.
+        if (bounds.to) query = query.lte('opened_at', bounds.to)
+        if (bounds.from) query = query.or(`last_message_at.gte.${bounds.from},opened_at.gte.${bounds.from}`)
         return query
       })
 
@@ -244,6 +260,10 @@ export function useChat() {
         }
       })
 
+      // A new thread has no last_message_at yet. NULLS FIRST keeps it inside the
+      // 200-row page; this sort then places it by opened_at among recent chats.
+      const activity=session=>Date.parse(String(session.last_message_at||session.opened_at||session.created_at||'').replace(/^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)$/,'$1T$2Z'))||Date.now()
+      mapped.sort((a,b)=>activity(b)-activity(a))
       setSessions(mapped)
       setActiveSession(previous=>{
         const current=previous&&activeSessionIdRef.current===previous.id?mapped.find(session=>session.id===previous.id):null

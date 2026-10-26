@@ -4,7 +4,7 @@ import {wrapLanguageModel,type LanguageModel,type LanguageModelMiddleware} from 
 type BudgetEnv={LUNA_AI_DAILY_LIMIT?:string;LUNA_AI_BASELINE_DATE?:string;LUNA_AI_BASELINE_NEURONS?:string;LUNA_AI_BUDGET?:DurableObjectNamespace}
 type Ticket={bound:number;actual?:number}
 type Day={used:number;reserved:number;tickets:Record<string,Ticket>}
-const neurons=(input:number,output:number)=>input*0.0055+output*0.0364
+import {thinkNeurons as neurons} from './thinkPolicy'
 export class LunaAiBudget extends DurableObject<BudgetEnv>{
  async fetch(request:Request){
   const path=new URL(request.url).pathname,now=new Date().toISOString().slice(0,10),limit=Number(this.env.LUNA_AI_DAILY_LIMIT??9000)
@@ -36,6 +36,14 @@ export class LunaAiBudget extends DurableObject<BudgetEnv>{
    return Response.json({code:'NOT_FOUND'},{status:404})
   })
  }
+}
+// Neurons still free today, or null where no daily budget is bound (production).
+export async function dailyAiRemaining(env:BudgetEnv):Promise<number|null>{
+ if(!env.LUNA_AI_BUDGET)return null
+ const response=await env.LUNA_AI_BUDGET.get(env.LUNA_AI_BUDGET.idFromName('workers-ai-account')).fetch('https://budget/status')
+ if(!response.ok)return 0
+ const s=await response.json() as {used:number;reserved:number;limit:number}
+ return Math.max(0,s.limit-s.used-s.reserved)
 }
 export function withDailyAiBudget(model:Exclude<LanguageModel,string>,env:BudgetEnv):LanguageModel{
  if(!env.LUNA_AI_BUDGET)throw Error('AI_DAILY_BUDGET_NOT_CONFIGURED')

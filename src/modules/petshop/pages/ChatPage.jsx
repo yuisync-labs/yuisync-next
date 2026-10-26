@@ -90,6 +90,8 @@ function MessageBubble({ msg, activeModule, isFirstInGroup }) {
             ) : null}
           </div>
 
+          {msg.metadata?.failed && <span className="text-[11px] font-semibold text-red-400 mt-1 px-1.5">Não enviada</span>}
+
           {/* Footer info (time/tokens) - Show only time for users, time+tokens for bot */}
           <div className={`flex items-center gap-1.5 mt-1 px-1.5 opacity-0 group-hover:opacity-40 transition-opacity`}>
             <span className="text-[9px] font-bold tracking-tighter">
@@ -139,7 +141,7 @@ function SessionCard({ session, active, onClick, statusConfig }) {
 
 // ── New Session Modal ─────────────────────────────────────────────────────────
 function NewSessionModal({ onClose, onCreate }) {
-  const [form, setForm] = useState({ customer_name:'', customer_phone:'', channel:'whatsapp' })
+  const [form, setForm] = useState({ customer_name:'', customer_phone:'', channel:'interno' })
   const [saving, setSaving] = useState(false)
   const [creationError, setCreationError] = useState('')
 
@@ -189,10 +191,10 @@ function NewSessionModal({ onClose, onCreate }) {
             <div>
               <label className="inp-label">Canal de Origem</label>
               <select className="inp" value={form.channel} onChange={e => set('channel', e.target.value)}>
+                <option value="interno">Canal Interno (a Luna responde aqui)</option>
                 <option value="whatsapp">WhatsApp Business</option>
                 <option value="instagram">Instagram Direct</option>
                 <option value="website">Web Chat</option>
-                <option value="interno">Canal Interno</option>
               </select>
             </div>
           </div>
@@ -294,11 +296,13 @@ export default function ChatPage() {
   const [showQuality,setShowQuality]=useState(false)
   const [input, setInput]         = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [dateRange, setDateRange] = useState({ from: '', to: '' })
   const [showModal, setShowModal] = useState(false)
   const [sending, setSending]     = useState(false)
+  const [sendError, setSendError] = useState('')
   const [resettingHistory, setResettingHistory] = useState(false)
   const [mobileView, setMobileView] = useState('list') // 'list' | 'chat' (mobile only)
-  const bottomRef = useRef(null)
+  const messagesRef = useRef(null)
   const restoredSessionRef = useRef(false)
   const isGlobalAdmin = auth?.profile?.role === 'admin'
   const activeChatStorageKey = `@yuisync-active-chat:${auth?.activeTenantId || 'tenant'}:${activeModule.id}`
@@ -310,10 +314,10 @@ export default function ChatPage() {
   }
 
   useEffect(() => {
-    loadSessions(statusFilter || undefined)
+    loadSessions(statusFilter || undefined, dateRange)
     loadQuickReplies()
     subscribeSessionsList()
-  }, [statusFilter])
+  }, [statusFilter, dateRange])
 
   useEffect(() => {
     if (restoredSessionRef.current || activeSession || sessions.length === 0) return
@@ -323,9 +327,13 @@ export default function ChatPage() {
     if (savedSession) void handleOpenSession(savedSession)
   }, [activeChatStorageKey, activeSession, sessions])
 
+  useEffect(() => setSendError(''), [activeSession?.id])
+
   // Auto-scroll
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    // Scroll only the messages pane; scrollIntoView also moved the page and the chat list.
+    const pane = messagesRef.current
+    pane?.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' })
   }, [messages, botTyping])
 
   const handleOpenHandoffAlert = async (alert) => {
@@ -343,12 +351,19 @@ export default function ChatPage() {
     const text = input.trim()
     setInput('')
     setSending(true)
+    setSendError('')
     try {
       if (activeSession.status === 'human') {
         await sendHumanMessage(activeSession.id, text, auth?.profile?.id)
       } else {
         await sendClientMessage(activeSession.id, text)
       }
+    } catch (error) {
+      if (error?.name === 'AbortError') return
+      // The Luna only answers internal chats; other channels arrive through their provider.
+      setSendError(error?.code === 'CHAT_NOT_IN_BOT_MODE' && !['internal', 'interno'].includes(activeSession.channel)
+        ? 'A Luna só responde conversas do Canal Interno. Crie uma nova conversa e escolha "Canal Interno".'
+        : error?.message || 'Não foi possível enviar a mensagem.')
     } finally {
       setSending(false)
     }
@@ -444,6 +459,14 @@ export default function ChatPage() {
               <option value="waiting">⏳ Aguardando</option>
               <option value="closed">✓ Fechadas</option>
             </select>
+            <div className="mt-2 flex items-center gap-1.5">
+              <input type="date" aria-label="Conversas desde" className="inp py-1 text-xs min-w-0" value={dateRange.from} max={dateRange.to || undefined} onChange={e => setDateRange(r => ({ ...r, from: e.target.value }))}/>
+              <span className="text-xs text-muted">até</span>
+              <input type="date" aria-label="Conversas até" className="inp py-1 text-xs min-w-0" value={dateRange.to} min={dateRange.from || undefined} onChange={e => setDateRange(r => ({ ...r, to: e.target.value }))}/>
+              {(dateRange.from || dateRange.to) && (
+                <button type="button" aria-label="Limpar filtro de data" title="Limpar datas" className="btn btn-ghost btn-sm btn-icon" onClick={() => setDateRange({ from: '', to: '' })}><X size={13}/></button>
+              )}
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto">
@@ -552,7 +575,7 @@ export default function ChatPage() {
                   <p className="text-muted">{activeSession.context.think.handoff_summary.request}</p>
                 </div>
               )}
-              <div className="flex-1 overflow-y-auto px-5 py-4">
+              <div ref={messagesRef} className="flex-1 overflow-y-auto px-5 py-4">
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full gap-3">
                     <Bot size={32} className="text-muted/30"/>
@@ -587,7 +610,6 @@ export default function ChatPage() {
                         </div>
                       </div>
                     )}
-                    <div ref={bottomRef}/>
                   </>
                 )}
               </div>
@@ -617,6 +639,8 @@ export default function ChatPage() {
                       ))}
                     </div>
                   )}
+
+                  {sendError && <p role="alert" className="px-4 py-2 text-xs font-semibold text-red-400 border-b border-[var(--border2)]">{sendError}</p>}
 
                   {/* Mode indicator */}
                   <div className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold border-b border-[var(--border2)] ${

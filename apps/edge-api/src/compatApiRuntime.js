@@ -196,7 +196,7 @@ function whereClause(list, scope, global = false) {
 }
 function orderClause(list) {
   const parts=[]
-  for (const o of list.slice(0,5)) { const c=String(o.column||''); if(!COLUMN.test(c)) throw new Error('INVALID_ORDER'); parts.push(`${c} ${o.ascending===false?'DESC':'ASC'}`) }
+  for (const o of list.slice(0,5)) { const c=String(o.column||''); if(!COLUMN.test(c)) throw new Error('INVALID_ORDER'); parts.push(`${c} ${o.ascending===false?'DESC':'ASC'}${o.nullsFirst===true?' NULLS FIRST':''}`) }
   return parts.length?` ORDER BY ${parts.join(', ')}`:''
 }
 function page(body) {
@@ -226,6 +226,8 @@ function normalize(table, row) {
   if (table==='support_messages') return {...r,created_at:iso(r.created_at_ms)}
   if (table==='tenant_platform_subscriptions') return {...r,data:jsonValue(r.data_json,{}),started_at:iso(r.started_at_ms),expires_at:iso(r.expires_at_ms),updated_at:iso(r.updated_at_ms)}
   if (table==='tenant_ai_usage_monthly') return {...r,updated_at:iso(r.updated_at_ms)}
+  // The chat views expose SQLite UTC text without a zone; browsers read it as local time and misorder messages.
+  if (table==='chat_sessions'||table==='chat_messages') for (const key of ['sent_at','created_at','last_message_at','opened_at','closed_at']) if (typeof r[key]==='string'&&/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(r[key])) r[key]=r[key].replace(' ','T')+'.000Z'
   return r
 }
 

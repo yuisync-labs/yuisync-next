@@ -23,8 +23,8 @@ describe('referência ambígua no carrinho',()=>{
 })
 
 describe('Think: orçamento do turno, preço alterado e referência ambígua',()=>{
- it('conclui um agendamento em quatro passos com prompt de 4.500 tokens',async()=>{
-  const h=await createThinkHarness(911,'-budget',undefined,{profileModel:false,inputTokens:4500})
+ it('conclui um agendamento em quatro passos com prompt de 9.000 tokens',async()=>{
+  const h=await createThinkHarness(911,'-budget',undefined,{profileModel:false,inputTokens:9000})
   const turn=await h.run('Banho da Mel amanhã às 14h, eu levo.',[
    c('open_tools',{capability:'agenda'}),
    c('search_services',{query:'banho',pet_id:'mel'}),

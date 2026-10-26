@@ -129,6 +129,11 @@ body.product-ui-active.yuisync-dark .theme-petshop-modal {
   isolation: isolate;
 }
 
+/* The chat fills the viewport so its list and messages scroll on their own. */
+.product-ui-scope[data-product-page="chat"] {
+  height: 100%;
+}
+
 :is(.product-ui-scope, body.product-ui-active) {
   font-family: var(--ui-font-sans);
 }
