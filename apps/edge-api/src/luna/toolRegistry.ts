@@ -217,7 +217,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
       const id = event.action === 'replace_item' ? event.replacementId : event.itemId
       const table = event.kind === 'cart' ? 'catalog_products' : event.kind === 'booking' ? 'services' : null
       if (!table || !id) return { ok: false, code: 'OPERATION_ITEM_INVALID', retryable: false }
-      if (!await database.prepare(`SELECT id FROM ${table} WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`).bind(context.tenantId, context.moduleId, id).first()) return { ok: false, code: 'CATALOG_ITEM_NOT_FOUND', retryable: false }
+      if (!await database.prepare(`SELECT id FROM ${table} WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`).bind(context.tenantId, context.moduleId, id).first()) return { ok: false, code: 'CATALOG_ITEM_NOT_FOUND', retryable: false, ...(event.kind === 'booking' ? { instruction: 'Esse id não é de um serviço. Chame search_services de novo e use o campo id do serviço escolhido.' } : {}) }
     }
     if ((event.field === 'pet_id' && event.value)||event.petId) {
       if(event.petId&&event.kind!=='cart')return {ok:false,code:'OPERATION_ITEM_INVALID',retryable:false}

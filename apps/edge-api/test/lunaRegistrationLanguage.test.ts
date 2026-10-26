@@ -21,3 +21,11 @@ describe('registration only carries names the customer said', () => {
     expect(issue({ customer_name: 'Ana', pet_name: 'Bob', breed: 'médio' }, 'sou a Ana, quero banho pro Bob, ele é médio')).toBe('BREED_IS_SIZE')
   })
 })
+
+describe('registration weight', () => {
+  it('keeps only a weight the customer said', () => {
+    expect(issue({ customer_name: 'Carolina', pet_name: 'Broly', weight_kg: 15 }, 'Broly, é um husky. não sei o peso exato mas ele tem um porte medio. Sim. Carolina')).toBe('WEIGHT_NOT_SAID')
+    expect(issue({ customer_name: 'Ana', pet_name: 'Thor', weight_kg: 8 }, 'Sou a Ana, meu pet é o Thor, ele tem 8kh')).toBeNull()
+    expect(issue({ customer_name: 'Ana', pet_name: 'Thor', weight_kg: 10.5 }, 'Sou a Ana, o Thor tem 10,5 kg')).toBeNull()
+  })
+})

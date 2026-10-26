@@ -190,7 +190,8 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       const capability=unregistered?'signup':'agenda'
       if(this.state.capability!==capability)this.setState({...this.state,capability})
       const query=serviceQuery(text)??serviceQuery(recent?.text??''),pets=customer.ok?record(customer.data).pets:[],pet=namedPet(text,Array.isArray(pets)?pets as {id:string;name?:unknown}[]:[])
-      const found=query?await this.searchServices(query,pet?.id,t.context,capability):null
+      const said=(recent?.text??'')+'\n'+text,species=pet?undefined:/\b(gat[oa]s?|gatinh[oa]s?|felin[oa]s?)\b/i.test(said)?'cat':/\b(cachorr[oa]s?|c[aã]o|c[aã]es|cadel[ao]s?|dog)\b/i.test(said)?'dog':undefined
+      const found=query?await this.searchServices(query,pet?.id,t.context,capability,species):null
       // Recorded as this turn's own search so the reply's price is validated against it.
       if(found?.ok&&!t.results.some(r=>r.name==='search_services'))this.updateTurn({results:[...t.results,{name:'search_services',input:{query,...(pet?{pet_id:pet.id}:{})},result:found}]},ctx.requestId)
       if(unregistered)services+='\nCLIENTE SEM CADASTRO: responda primeiro o que ele perguntou (preço, serviço, busca, horário). Para marcar, ele precisa de cadastro: use prepare_customer_registration só com o nome dele e o nome do pet ditos por ele, mais espécie e raça/peso se ditos (raça e porte não são nome). Pergunte o que faltar numa mensagem só.'
@@ -232,13 +233,13 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     }
   }
 
-  private async searchServices(query:string,pet_id?:string,c=this.turn().context,capability='agenda'){
+  private async searchServices(query:string,pet_id?:string,c=this.turn().context,capability='agenda',species?:string){
     this.setState({...this.state,capability})
     const registry=createLunaToolRegistry(this.db)
     let pet:{client_id:string;species:string;weight_kg:number|null}|null=null
     if(pet_id){pet=await this.db.prepare("SELECT client_id,species,weight_kg FROM pets WHERE tenant_id=? AND module_id='petshop' AND id=? AND status='active'").bind(c.tenantId,pet_id).first();const customer=await registry.execute('get_customer_context',{},c);if(!pet||!customer.ok||record(record(customer.data).customer).id!==pet.client_id)return fail('CUSTOMER_SCOPE_DENIED')}
-    const rows=await this.db.prepare("SELECT id,code,name,default_price_cents,default_duration_min,min_weight_grams,max_weight_grams,species_target FROM services WHERE tenant_id=? AND module_id='petshop' AND status='active' AND (name LIKE ? ESCAPE '\\' OR code LIKE ? ESCAPE '\\') AND (? IS NULL OR species_target IS NULL OR species_target IN ('all','other') OR species_target=?) AND (? IS NULL OR ((min_weight_grams IS NULL OR min_weight_grams<=?) AND (max_weight_grams IS NULL OR max_weight_grams>=?))) ORDER BY sort_order,name,id LIMIT 8").bind(c.tenantId,'%'+query.replace(/[\\%_]/g,'\\$&')+'%','%'+query.replace(/[\\%_]/g,'\\$&')+'%',pet?.species??null,pet?.species??null,pet?.weight_kg??null,pet?.weight_kg==null?null:Math.round(pet.weight_kg*1000),pet?.weight_kg==null?null:Math.round(pet.weight_kg*1000)).all()
-    return {ok:true,data:{services:rows.results,pet_id:pet_id??null,source:'services',instruction:'Preço e duração não confirmam vaga; campo ausente não comprova adequação. Sem data informada pelo cliente, responda o preço e pergunte a data. Não consulte vagas para uma data que o cliente não pediu.'}}
+    const rows=await this.db.prepare("SELECT id,code,name,default_price_cents,default_duration_min,min_weight_grams,max_weight_grams,species_target FROM services WHERE tenant_id=? AND module_id='petshop' AND status='active' AND (name LIKE ? ESCAPE '\\' OR code LIKE ? ESCAPE '\\') AND (? IS NULL OR species_target IS NULL OR species_target IN ('all','other') OR species_target=?) AND (? IS NULL OR ((min_weight_grams IS NULL OR min_weight_grams<=?) AND (max_weight_grams IS NULL OR max_weight_grams>=?))) ORDER BY sort_order,name,id LIMIT 16").bind(c.tenantId,'%'+query.replace(/[\\%_]/g,'\\$&')+'%','%'+query.replace(/[\\%_]/g,'\\$&')+'%',pet?.species??species??null,pet?.species??species??null,pet?.weight_kg??null,pet?.weight_kg==null?null:Math.round(pet.weight_kg*1000),pet?.weight_kg==null?null:Math.round(pet.weight_kg*1000)).all()
+    return {ok:true,data:{services:rows.results,pet_id:pet_id??null,...(species&&!pet?{species}:{}),source:'services',instruction:'Preço e duração não confirmam vaga; campo ausente não comprova adequação. Sem data informada pelo cliente, responda o preço e pergunte a data. Não consulte vagas para uma data que o cliente não pediu.'}}
   }
 
   getTools(){const registry=createLunaToolRegistry(this.db);const tools:ToolSet={}

@@ -38,8 +38,8 @@ assert.equal((await api('/api/chat/quality','GET',null,{cookie:''})).status,401)
 assert.equal((await api('/api/chat/quality','GET',null,{'x-tenant-id':fixture.isolationTenantId})).status,403)
 const otherCookie=await login(process.env.TENANT_B_EMAIL,process.env.TENANT_B_PASSWORD)
 assert.equal((await api('/api/chat/respond','POST',{sessionId:thread,clientMessageId:'blocked',message:'Olá'},{cookie:otherCookie,'x-tenant-id':fixture.isolationTenantId})).status,403)
-// Staging answers at once (LUNA_INBOX_DEBOUNCE_MS=0); the 10s grouping is only
-// certified when the deployed debounce is on.
+// Staging groups messages like production (LUNA_INBOX_DEBOUNCE_MS=10000); with
+// 0 the grouping step is skipped.
 const debounceMs=Number(process.env.LUNA_INBOX_DEBOUNCE_MS??10000)
 let prepared
 if(debounceMs>0){

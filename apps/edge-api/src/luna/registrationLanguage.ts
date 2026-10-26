@@ -20,6 +20,9 @@ export function registrationIssue(args: Record<string, unknown>, said: string, n
   if (at < 0) return { code: 'PET_NAME_NOT_SAID', instruction: 'O cliente ainda não disse o nome do pet. Pergunte como o pet se chama.' }
   if (breed && plain(breed) === plain(pet) || looksLikeBreed(pet) && ![...text.matchAll(new RegExp(plain(pet).trim(), 'g'))].some(m => NAMING.test(text.slice(0, m.index))))
     return { code: 'PET_NAME_IS_BREED', instruction: `"${pet}" descreve raça, porte ou espécie, não é o nome do pet. Pergunte como o pet se chama.` }
+  const weight = args.weight_kg == null ? null : Number(args.weight_kg)
+  if (weight != null && !said.match(new RegExp(`(^|[^0-9.])${String(weight).replace('.', '[.,]')}([^0-9]|$)`)))
+    return { code: 'WEIGHT_NOT_SAID', instruction: 'O cliente não disse esse peso. Use weight_kg null; uma faixa não é o peso do pet.' }
   if (breed && plain(breed).trim().split(' ').every(w => SIZE_WORDS.has(w)))
     return { code: 'BREED_IS_SIZE', instruction: `"${breed}" é porte, não raça. Use breed null ou a raça que o cliente disse.` }
   return null
