@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import {ensureFoodClassified} from './autoClassify';
 import {classificationFields,profileJoin,profileColumns,foodSaleForm,addClassificationFilters,chooseRefinement,type Refinement} from './classification';
 export const preferencesSchema=z.object({
  ...classificationFields,
@@ -87,7 +88,7 @@ export function buildCatalogQuery(p:Preferences,keywords:readonly string[]=[],in
 export type Product={id:string;name:string;price_cents:number;brand_label:string|null;sale_form:string|null;package_weight_grams:number|null;life_stage:string|null;review_state:string;subtype?:string|null;net_volume_ml?:number|null;capacity_ml?:number|null;size_label?:string|null;size_number?:number|null;pack_count?:number|null;food_form?:string|null;requires_professional_guidance?:number|null;attributes_json?:string|null;species_confirmation_required?:boolean;billing_unit?:'unknown';stock_confirmed?:false};
 const columns=`p.id,p.name,p.price_cents,COALESCE(x.brand_label,a.brand_label) brand_label,${foodSaleForm} sale_form,COALESCE(x.net_weight_grams,a.package_weight_grams) package_weight_grams,COALESCE(x.life_stage,a.life_stage) life_stage,COALESCE(x.review_state,a.review_state) review_state,${profileColumns}`;
 export async function searchProducts(db:D1Database,preferences:Preferences,input:unknown,unrestricted:readonly (keyof Preferences)[]=[],tenantId:string){
- const {offset=0}=searchSchema.parse(input);let query=buildCatalogQuery(preferences,[],false,tenantId);
+ const {offset=0}=searchSchema.parse(input);await ensureFoodClassified(db,tenantId);let query=buildCatalogQuery(preferences,[],false,tenantId);
  let count=await db.prepare(`SELECT COUNT(*) AS total ${query.from}`).bind(...query.params).first<{total:number}>();if(!count)throw new Error('CATALOG_QUERY_FAILED');
  let speciesConfirmationRequired=false;
  // A named product with missing classification is a candidate, never a suitability claim.

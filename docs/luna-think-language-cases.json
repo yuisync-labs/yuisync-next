@@ -56,7 +56,10 @@
     "LANG-03-3",
     "LANG-10-3",
     "LANG-11-3",
-    "LANG-12-3"
+    "LANG-12-3",
+    "FLOW-05-1",
+    "FLOW-05-2",
+    "FLOW-05-3"
   ],
   "cases": [
     {
@@ -1017,6 +1020,55 @@
         "sales": 0,
         "appointments": 0,
         "reply": "cadastr|nome|esp[eé]cie|confirm|resumo"
+      },
+      "unregistered": true
+    },
+    {
+      "id": "FLOW-05-1",
+      "family": "flow",
+      "name": "Cliente sem cadastro pergunta preço do banho de um Yorkshire e busca em casa",
+      "input_fragments": [],
+      "turns": [
+        "Bom dia. Quanto custa pra dar banho num Yorkshire? Vocês buscam em casa?"
+      ],
+      "expect": {
+        "sales": 0,
+        "appointments": 0,
+        "reply": "R\\$"
+      },
+      "unregistered": true
+    },
+    {
+      "id": "FLOW-05-2",
+      "family": "flow",
+      "name": "Cliente sem cadastro descreve raça e porte sem dizer o nome do pet",
+      "input_fragments": [],
+      "turns": [
+        "boa tarde",
+        "queria tosar o meu cachorro",
+        "huskciberiano, medio, ainda é filhote"
+      ],
+      "expect": {
+        "sales": 0,
+        "appointments": 0,
+        "reply": "nome|chama"
+      },
+      "unregistered": true
+    },
+    {
+      "id": "FLOW-05-3",
+      "family": "flow",
+      "name": "Cadastro confirmado continua o banho pedido antes",
+      "input_fragments": [],
+      "turns": [
+        "ola bom dia, gostaria de agendar um banho",
+        "Meu nome é Ana, meu pet é o Thor um shihtzu",
+        "Sim"
+      ],
+      "expect": {
+        "sales": 0,
+        "appointments": 0,
+        "reply": "registrado[\\s\\S]*(dia|hor[aá]rio|quando|data)"
       },
       "unregistered": true
     }

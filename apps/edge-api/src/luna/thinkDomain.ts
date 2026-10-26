@@ -70,7 +70,8 @@ export async function customerHistory(db:D1Database,c:LunaExecutionContext) {
 export async function closeThinkConversation(db:D1Database,c:LunaExecutionContext,outcome:'completed'|'withdrawn',text:string) {
   if(outcome==='withdrawn'&&!withdrawalMessage(text))return fail('WITHDRAWAL_NOT_EXPLICIT')
   if(outcome==='completed'){
-    const done=await db.prepare("SELECT id FROM luna_proposals WHERE tenant_id=? AND module_id='petshop' AND conversation_id=? AND status='completed' LIMIT 1").bind(c.tenantId,c.conversationId).first()
+    // A registration alone is a step towards a booking or order, not a finished service.
+    const done=await db.prepare("SELECT id FROM luna_proposals WHERE tenant_id=? AND module_id='petshop' AND conversation_id=? AND status='completed' AND operation_kind NOT IN ('customer_registration','pet_registration') LIMIT 1").bind(c.tenantId,c.conversationId).first()
     if(!done)return fail('OPERATION_NOT_COMPLETED')
     const {state}=await new LunaConversationRepository(db).loadState(c)
     const pending=await db.prepare("SELECT id FROM luna_proposals WHERE tenant_id=? AND module_id='petshop' AND conversation_id=? AND status IN ('awaiting_confirmation','executing') LIMIT 1").bind(c.tenantId,c.conversationId).first()

@@ -1,10 +1,10 @@
 {
   "run": false,
   "cases": [
-    "FLOW-04-1",
-    "FLOW-04-2",
-    "FLOW-04-3",
-    "FLOW-01-1"
+    "FLOW-05-1",
+    "FLOW-05-2",
+    "FLOW-05-3",
+    "FLOW-04-3"
   ],
   "reason": "kai_tests_manually",
   "model": "openai:gpt-4.1-mini"
