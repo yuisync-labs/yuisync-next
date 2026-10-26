@@ -90,15 +90,15 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
     // is not evidence of service coverage; absent coverage fails closed.
     const areas = settings.delivery_coverage
     if (!Array.isArray(areas) || areas.length > 100) return { ok: false, code: 'DELIVERY_COVERAGE_UNAVAILABLE', retryable: false }
-    const matches = areas.filter(raw => {
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false
-      const area = raw as RecordValue
-      return area.active === true && normalized(area.city) === normalized(args.city) && normalized(area.neighborhood) === normalized(args.neighborhood)
-    }) as RecordValue[]
+    // An area whose neighborhood is "*" covers every neighborhood of its city;
+    // a neighborhood listed by name takes precedence over it.
+    const inCity = areas.filter(raw => raw && typeof raw === 'object' && !Array.isArray(raw) && (raw as RecordValue).active === true && normalized((raw as RecordValue).city) === normalized(args.city)) as RecordValue[]
+    const named = inCity.filter(area => normalized(area.neighborhood) === normalized(args.neighborhood) && normalized(area.neighborhood) !== '*')
+    const matches = named.length ? named : normalized(args.neighborhood) ? inCity.filter(area => normalized(area.neighborhood) === '*') : []
     if (matches.length !== 1) return { ok: false, code: matches.length ? 'DELIVERY_COVERAGE_AMBIGUOUS' : 'DELIVERY_OUTSIDE_COVERAGE', retryable: false }
     const area = matches[0]
     if (!Number.isSafeInteger(area.fee_cents) || Number(area.fee_cents) < 0) return { ok: false, code: 'DELIVERY_FEE_UNAVAILABLE', retryable: false }
-    return { ok: true, data: { city: area.city, neighborhood: area.neighborhood, fee_cents: area.fee_cents, coverage_snapshot_json: JSON.stringify(areas), observed_at_ms: lunaNow(ctx), source: 'module_settings_extensions.delivery_coverage' } }
+    return { ok: true, data: { city: area.city, neighborhood: named.length ? area.neighborhood : String(args.neighborhood).trim(), fee_cents: area.fee_cents, coverage_snapshot_json: JSON.stringify(areas), observed_at_ms: lunaNow(ctx), source: 'module_settings_extensions.delivery_coverage' } }
   }
   return { ok: false, code: 'TOOL_NOT_ALLOWED', retryable: false }
 }

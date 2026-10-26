@@ -7,7 +7,7 @@ import { executeInformationTool } from '../src/luna/informationTools'
 const db = (env as EdgeEnv & { DB: D1Database }).DB
 const ctx = { tenantId: 'luna-information-fixture', moduleId: 'petshop' as const, conversationId: 'information-thread', customerAddress: '5532999990092', phoneNumberId: 'fixture', sourceMessageId: 'information-inbound', traceId: 'information-trace', executionMode: 'fixture' as const }
 const hours = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [String(i + 1), i < 5 ? [{ open: '08:00', close: '18:00' }] : []]))
-const settings = { petbot_timezone: 'America/Sao_Paulo', store_business_hours: hours, petbot_business_hours: hours, petbot_booking_capacity: 1, petbot_slot_interval_min: 30, delivery_coverage: [{ city: 'Cidade Teste', neighborhood: 'Centro', active: true, fee_cents: 1500 }] }
+const settings = { petbot_timezone: 'America/Sao_Paulo', store_business_hours: hours, petbot_business_hours: hours, petbot_booking_capacity: 1, petbot_slot_interval_min: 30, delivery_coverage: [{ city: 'Cidade Teste', neighborhood: 'Centro', active: true, fee_cents: 1500 }, { city: 'Muriaé', neighborhood: '*', active: true, fee_cents: 1000 }] }
 beforeAll(async () => {
   const now = Date.now()
   await db.batch([
@@ -37,6 +37,9 @@ describe('Luna native information tools', () => {
     const registry = createLunaToolRegistry(db)
     expect(await registry.execute('get_delivery_quote', { city: 'cidade teste', neighborhood: 'CENTRO' }, ctx)).toMatchObject({ ok: true, data: { fee_cents: 1500 } })
     expect(await registry.execute('get_delivery_quote', { city: 'Outra', neighborhood: 'Centro' }, ctx)).toMatchObject({ ok: false, code: 'DELIVERY_OUTSIDE_COVERAGE' })
+    // "*" covers every neighborhood of its city, but not other cities or listed-only cities.
+    expect(await registry.execute('get_delivery_quote', { city: 'muriae', neighborhood: 'Barra' }, ctx)).toMatchObject({ ok: true, data: { fee_cents: 1000, neighborhood: 'Barra' } })
+    expect(await registry.execute('get_delivery_quote', { city: 'Cidade Teste', neighborhood: 'Outro' }, ctx)).toMatchObject({ ok: false, code: 'DELIVERY_OUTSIDE_COVERAGE' })
     expect(await registry.execute('get_delivery_quote', { city: 'Cidade Teste', neighborhood: 'Centro', fee_cents: 0 }, ctx)).toMatchObject({ ok: false, code: 'TOOL_ARGUMENTS_INVALID' })
   })
   it('consulta MotoDog do catálogo, peso do pet e identidade do telefone', async () => {
