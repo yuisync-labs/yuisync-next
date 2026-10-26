@@ -1,4 +1,4 @@
-import {withDailyAiBudget} from './aiBudget'
+import {dailyAiRemaining,withDailyAiBudget} from './aiBudget'
 import { Think, action, type TurnContext, type TurnConfig, type ToolCallContext, type ChatResponseResult, type ToolCallResultContext } from '@cloudflare/think'
 import { tool, jsonSchema, generateText, type UIMessage, type ToolSet, type LanguageModel } from 'ai'
 import { createCompactFunction } from 'agents/sessions'
@@ -14,7 +14,7 @@ import { hashCanonicalJson, canonicalJson } from './canonicalJson'
 import type { InternalChatJob } from './internalChatTurn'
 import type { LunaExecutionContext, LunaToolResult } from './contracts'
 import { catalogInput, normalizeSearchKey, thinkCatalogSearch, validateThinkJob, customerHistory, closeThinkConversation, recordThinkRating, explicitRestockConsent, fail } from './thinkDomain'
-import { THINK_MODEL, THINK_TURN_TOKEN_LIMIT, thinkInstructions, thinkSkills, batchDue, ratingFromMessage, clinicalRisk, storeCalendar } from './thinkPolicy'
+import { THINK_MODEL, THINK_TURN_NEURON_LIMIT, thinkNeurons, thinkInstructions, thinkSkills, batchDue, ratingFromMessage, clinicalRisk, storeCalendar } from './thinkPolicy'
 import { getProduct, type Memory } from './thinkCatalog/catalog'
 import { validateThinkReply, zonedIsoTime } from './thinkPresentation'
 import { findConfirmationTarget } from './commitProposal'
@@ -22,7 +22,7 @@ import { findConfirmationTarget } from './commitProposal'
 type DraftInput={operation_id:string;kind:'cart'|'booking'|'registration';prepare?:boolean;changes:DraftChange[]}
 type Inbox = {id:string;job:InternalChatJob;at:number}
 type Batch = {id:string;entries:Inbox[]}
-type Turn = {batch:Batch;context:LunaExecutionContext;results:{name:string;input:unknown;result:unknown}[];events:string[];calls:number;modelCalls:number;inputTokens:number;outputTokens:number;quota:boolean;rating?:number;confirm?:{proposal_id:string;proposal_version:number}}
+type Turn = {batch:Batch;context:LunaExecutionContext;results:{name:string;input:unknown;result:unknown}[];events:string[];calls:number;modelCalls:number;inputTokens:number;outputTokens:number;quota:boolean;neuronLimit?:number;dailyLow?:boolean;rating?:number;confirm?:{proposal_id:string;proposal_version:number}}
 type State = {scope?:InternalChatJob;pending:Inbox[];flushing?:Batch;turns:Record<string,Turn>;catalog:Record<string,Memory>;capability?:string}
 export type ThinkBindings = EdgeEnv & {LUNA_RUNTIME?:string;LUNA_THINK_TENANT_IDS?:string}
 const record = (v:unknown):Record<string,unknown> => v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{}
@@ -164,7 +164,9 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const old=this.state.turns[ctx.requestId]??Object.values(this.state.turns).find(turn=>turn.batch.id===batch.id)
     // The server, not the model, decides that the latest messages confirm the single presented summary.
     const confirm=old?old.confirm:awaiting&&rating!==null||clinicalRisk(batch.entries.map(e=>e.job.message).join('\n'))?null:await findConfirmationTarget(db,c)
-    const t:Turn=old??{batch,context:c,results:[],events:[],calls:0,modelCalls:0,inputTokens:0,outputTokens:0,quota:false,...(awaiting&&rating!==null?{rating}:{}),...(confirm?{confirm}:{})}
+    // The turn ceiling shrinks to what is left of the daily neuron budget.
+    const remaining=old||this.env.APP_ENV!=='staging'?null:await dailyAiRemaining(this.env),neuronLimit=Math.min(THINK_TURN_NEURON_LIMIT,remaining??Infinity)
+    const t:Turn=old??{batch,context:c,results:[],events:[],calls:0,modelCalls:0,inputTokens:0,outputTokens:0,quota:false,neuronLimit,dailyLow:neuronLimit<THINK_TURN_NEURON_LIMIT,...(awaiting&&rating!==null?{rating}:{}),...(confirm?{confirm}:{})}
     this.setState({...this.state,turns:{...this.state.turns,[ctx.requestId]:t}})
     const registry=createLunaToolRegistry(db),customer=await registry.execute('get_customer_context',{},c),store=await registry.execute('get_store_information',{},c)
     if(!customer.ok&&customer.code==='CUSTOMER_AMBIGUOUS')await registry.execute('handoff_to_human',{reason:'Identidade do cliente ambígua.'},c)
@@ -189,7 +191,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
   }
   beforeStep(){const t=this.turn();if(t.quota||t.modelCalls>=6)throw Error('THINK_TURN_BUDGET_EXHAUSTED');this.updateTurn({modelCalls:t.modelCalls+1});const prepared=t.results.some(r=>/^prepare_|^present_proposal$/.test(r.name)&&record(r.result).ok);if(prepared||t.results.some(r=>r.name==='record_rating'&&record(r.result).ok))return {activeTools:[],toolChoice:'none' as const,model:this.getModel()};if(t.rating!==undefined)return {activeTools:['record_rating'],toolChoice:{type:'tool' as const,toolName:'record_rating'},model:this.getModel()};if(t.confirm&&!t.results.some(r=>r.name==='commit_confirmed_proposal'))return {activeTools:['commit_confirmed_proposal'],toolChoice:{type:'tool' as const,toolName:'commit_confirmed_proposal'},model:this.getModel()};return {activeTools:this.availableTools(),toolChoice:'auto' as const,model:this.getModel()}}
   async beforeToolCall(ctx:ToolCallContext){await validateThinkJob(this.db,this.turn().batch.entries.at(-1)!.job,true);const t=this.turn();if(!this.businessNames().has(ctx.toolName))return {action:'block' as const,reason:'Capacidade fora do atendimento.'};if(t.calls>=10||t.quota)return {action:'block' as const,reason:'Limite do turno atingido.'};if(ctx.toolName==='set_context'&&record(ctx.input).label!=='memoria')return {action:'block' as const,reason:'Somente memória pessoal é gravável.'};this.updateTurn({calls:t.calls+1})}
-  onStepFinish(ctx:Parameters<Think['onStepFinish']>[0]){const t=this.turn();const usage=ctx.usage;const input=t.inputTokens+(usage.inputTokens??0),output=t.outputTokens+(usage.outputTokens??0);this.updateTurn({inputTokens:input,outputTokens:output,quota:input+output>=THINK_TURN_TOKEN_LIMIT})}
+  onStepFinish(ctx:Parameters<Think['onStepFinish']>[0]){const t=this.turn();const usage=ctx.usage;const input=t.inputTokens+(usage.inputTokens??0),output=t.outputTokens+(usage.outputTokens??0);this.updateTurn({inputTokens:input,outputTokens:output,quota:thinkNeurons(input,output)>=(t.neuronLimit??THINK_TURN_NEURON_LIMIT)})}
   async afterToolCall(ctx:ToolCallResultContext){
     console.log(JSON.stringify({event:'think_tool',tool:ctx.toolName,success:ctx.success,duration_ms:ctx.durationMs}))
     const confirm=ctx.toolName==='commit_confirmed_proposal'?this.turn().confirm:undefined
@@ -321,7 +323,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
 
   onChatError(error:unknown,ctx?:Parameters<Think['onChatError']>[1]){
     console.log(JSON.stringify({event:'think_error',stage:ctx?.stage,classification:ctx?.classification}))
-    const code=/4006|10,000 neurons/.test(String(error))?'THINK_AI_QUOTA_EXHAUSTED':/THINK_TURN_BUDGET_EXHAUSTED/.test(String(error))?'THINK_TURN_BUDGET_EXHAUSTED':'THINK_EXECUTION_FAILED'
+    const code=/4006|10,000 neurons/.test(String(error))?'THINK_AI_QUOTA_EXHAUSTED':/DAILY_AI_BUDGET_EXHAUSTED/.test(String(error))?'THINK_DAILY_AI_BUDGET_EXHAUSTED':/THINK_TURN_BUDGET_EXHAUSTED/.test(String(error))?'THINK_TURN_BUDGET_EXHAUSTED':'THINK_EXECUTION_FAILED'
     if(ctx?.requestId)this.ctx.waitUntil(this.failResponse(ctx.requestId,code))
     return new Error(code)
   }
@@ -331,7 +333,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
   private async failResponse(requestId:string,code:string){
     if(await this.ctx.storage.get('think-result:'+requestId))return
     const t=this.state.turns[requestId];if(!t)return
-    const c=t.context,reply='O resultado precisa de conferência. Deixei o atendimento na fila da loja; não vou repetir a operação.'
+    const c=t.context,reply=/DAILY_AI_BUDGET|AI_QUOTA/.test(code)?'Atingi o limite diário de uso da assistente. Deixei o atendimento na fila da loja para uma pessoa continuar.':'O resultado precisa de conferência. Deixei o atendimento na fila da loja; não vou repetir a operação.'
     await createLunaToolRegistry(this.db).execute('handoff_to_human',{reason:code},c)
     await this.writeHandoff(t,code)
     const now=Date.now()
@@ -373,7 +375,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     // result already produced by this last step can still be delivered.
     const unfinishedAtQuota=t.quota&&!rows.length&&!committed&&!rating&&!finalText
     if(unfinishedAtQuota||!validation.ok||clinicalRisk(this.text(t))){await createLunaToolRegistry(db).execute('handoff_to_human',{reason:clinicalRisk(this.text(t))?'Solicitação clínica exige atendimento humano.':t.quota?'Limite de consumo do turno.':validation.reason??'Resposta comercial sem evidência.'},c);handoff=true;reply='Não consegui concluir esse atendimento com segurança. Deixei o contexto na fila da loja para uma pessoa continuar.'}
-    if(handoff)await this.writeHandoff(t,clinicalRisk(this.text(t))?'Solicitação clínica exige atendimento humano.':t.quota?'Orçamento de consumo atingido.':validation.reason??String(record(t.results.find(r=>r.name==='handoff_to_human')?.input).reason??'Atendimento humano solicitado.'))
+    if(handoff)await this.writeHandoff(t,clinicalRisk(this.text(t))?'Solicitação clínica exige atendimento humano.':t.quota?(t.dailyLow?'Limite diário de IA da Cloudflare quase no fim.':'Orçamento de consumo atingido.'):validation.reason??String(record(t.results.find(r=>r.name==='handoff_to_human')?.input).reason??'Atendimento humano solicitado.'))
     if(!reply.trim())reply='Pode me dizer como posso ajudar?'
     await this.addMessages([{...response.message,parts:[...response.message.parts.filter(p=>p.type!=='text'),{type:'text',text:reply}]}],{mode:'upsert'})
     const now=Date.now(),external='think-response:'+t.batch.id
@@ -395,7 +397,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
   private async writeHandoff(t:Turn,reason:string){
     let operations:unknown[]=[]
     try{operations=Object.values((await new LunaConversationRepository(this.db).loadState(t.context)).state.operations).filter(d=>d.status==='active').map(d=>({kind:d.kind,item_count:d.items.length,status:d.status}))}catch{}
-    await this.db.prepare("UPDATE chat_threads SET context_json=json_set(context_json,'$.think.handoff_summary',json(?)) WHERE tenant_id=? AND module_id='petshop' AND id=?").bind(JSON.stringify({reason:reason.slice(0,300),request:this.text(t).slice(0,500),pending_operations:operations}),t.context.tenantId,t.context.conversationId).run()
+    await this.db.prepare("UPDATE chat_threads SET context_json=json_set(context_json,'$.think.handoff_summary',json(?)) WHERE tenant_id=? AND module_id='petshop' AND id=?").bind(JSON.stringify({reason:reason.slice(0,300),request:this.text(t).slice(0,500),pending_operations:operations,usage:{model_calls:t.modelCalls,input_tokens:t.inputTokens,output_tokens:t.outputTokens,tools:t.results.map(r=>r.name).slice(0,12)}}),t.context.tenantId,t.context.conversationId).run()
   }
   private metrics(id:string,t:Turn,status:string,code:string|null){
     this.sql`CREATE TABLE IF NOT EXISTS luna_think_metrics(id TEXT PRIMARY KEY,status TEXT NOT NULL,model_calls INTEGER NOT NULL,tool_calls INTEGER NOT NULL,input_tokens INTEGER NOT NULL,output_tokens INTEGER NOT NULL,latency_ms INTEGER NOT NULL,error_code TEXT,created_at_ms INTEGER NOT NULL)`

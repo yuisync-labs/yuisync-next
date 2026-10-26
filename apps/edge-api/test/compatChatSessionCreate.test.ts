@@ -55,6 +55,8 @@ describe('D1 chat creation compatibility', () => {
     const config = { read: 'compat_chat_sessions', write: 'chat_threads' }
     const order = (nullsFirst: boolean) => selectRows(db, 'chat_sessions', config, { orders: [{ column: 'last_message_at', ascending: false, nullsFirst }], limit: 1 }, scope)
     expect((await order(true)).rows[0].id).toBe(ids.fresh)
+    // Browsers read zone-less SQLite text as local time; reads must carry UTC.
+    expect((await order(true)).rows[0].opened_at).toBe(new Date(Math.floor(now / 1000) * 1000).toISOString())
     expect((await order(false)).rows[0].id).toBe(ids.old)
     const since = (ms: number) => selectRows(db, 'chat_sessions', config, { filters: [{ op: 'or', expression: `last_message_at.gte.${new Date(ms).toISOString().slice(0, 19).replace('T', ' ')},opened_at.gte.${new Date(ms).toISOString().slice(0, 19).replace('T', ' ')}` }] }, scope)
     expect((await since(now - 3_600_000)).rows).toHaveLength(2)

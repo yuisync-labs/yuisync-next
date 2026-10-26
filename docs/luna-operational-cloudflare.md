@@ -72,8 +72,13 @@ permissão administrativa para a revisão.
 
 - Até 6 chamadas de modelo e 10 ferramentas por turno.
 - Saída limitada a 800 tokens por chamada de atendimento.
-- Teto de 32.000 tokens por turno (entrada e saída somadas). Cada chamada reenvia o prompt
-  de cerca de 5.000 tokens, então o teto cobre os 6 passos sem encaminhar no terceiro.
+- Teto de 360 neurons por turno (4% do teto diário de 9.000, dentro dos 10.000 gratuitos da
+  Cloudflare), cerca de 64.000 tokens de entrada. Cada chamada reenvia o prompt e os schemas das
+  ferramentas abertas (5.000 a 10.000 tokens com dados reais), então o teto cobre os 6 passos.
+  Com o antigo teto de 32.000 tokens, um agendamento simples no piloto QuatroPatas era encaminhado.
+  No staging o teto do turno cai para o que resta do orçamento diário; esgotado, a Luna encaminha
+  e avisa que atingiu o limite diário.
+  O encaminhamento grava `usage` (chamadas, tokens e ferramentas) em `handoff_summary`.
 - Compactação da sessão a partir de 4.000 tokens, preservando contexto recente;
   a chamada de resumo também passa pelo orçamento diário.
 - Em staging, um Durable Object compartilha reservas e contabilização de uso

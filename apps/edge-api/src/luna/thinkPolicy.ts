@@ -31,9 +31,14 @@ export function clinicalRisk(text:string){
   return /\b(?:qual (?:a )?dose|dosagem|quanto (?:devo|posso) (?:dar|administrar)|falta de ar|convuls(?:ao|oes)|sangramento intenso|intoxicad[oa])\b/.test(text.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase())
 }
 
-// Each model call resends the ~5k-token prompt, so the turn ceiling counts the
-// whole step budget (6 calls) instead of handing off after the third call.
-export const THINK_TURN_TOKEN_LIMIT = 32000
+// Workers AI price of THINK_MODEL in neurons per input/output token.
+export const thinkNeurons = (input: number, output: number) => input * 0.0055 + output * 0.0364
+// The free plan gives 10,000 neurons a day and the runtime stops at 9,000, so one
+// turn may spend at most 4% (~25 worst-case turns a day). 360 neurons is ~64k
+// input tokens: each call resends the prompt and opened tool schemas (5-10k
+// tokens with real store data), and the old 32k-token cap handed off a plain
+// bath booking on the QuatroPatas staging pilot.
+export const THINK_TURN_NEURON_LIMIT = 360
 
 const WEEKDAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb']
 // Relative dates are resolved here in the store timezone. The model never
