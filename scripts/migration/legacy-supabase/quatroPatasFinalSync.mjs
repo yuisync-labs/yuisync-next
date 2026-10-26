@@ -286,7 +286,10 @@ async function verifyReconciliations(reconciliations) {
     const appointment = await d1Select(`SELECT id,status,subtotal_cents,subscription_id,subscription_benefit_used,subscription_benefit_status,subscription_discount_cents FROM appointments WHERE tenant_id=${sqlLiteral(TENANT_ID)} AND module_id=${sqlLiteral(MODULE_ID)} AND id=${sqlLiteral(override.appointment_id)}`)
     const allocations = await d1Select(`SELECT state FROM subscription_benefit_allocations WHERE tenant_id=${sqlLiteral(TENANT_ID)} AND module_id=${sqlLiteral(MODULE_ID)} AND appointment_id=${sqlLiteral(override.appointment_id)} AND benefit_key=${sqlLiteral(override.benefit_key)} AND state IN ('reserved','consumed')`)
     const row = appointment[0]
-    if (!row || row.status !== 'completed' || Number(row.subtotal_cents) !== 13000 || row.subscription_id != null || Number(row.subscription_benefit_used) !== 0 || Number(row.subscription_discount_cents) !== 0 || allocations.length !== 0) {
+    const billingMatches = override.preserve_historical_billing
+      ? row?.subscription_id === override.subscription_id && Number(row?.subscription_benefit_used) === 1 && Number(row?.subscription_discount_cents) === 2000
+      : row?.subscription_id == null && Number(row?.subscription_benefit_used) === 0 && Number(row?.subscription_discount_cents) === 0
+    if (!row || row.status !== 'completed' || Number(row.subtotal_cents) !== 13000 || !billingMatches || allocations.length !== 0) {
       throw new Error('RECONCILIATION_VERIFY_FAILED')
     }
   }
