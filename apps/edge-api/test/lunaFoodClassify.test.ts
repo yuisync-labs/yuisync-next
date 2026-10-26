@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { brandCandidates, classifyFood } from '../src/luna/thinkCatalog/autoClassify'
+import { brandCandidates, classifyFood, profileFor } from '../src/luna/thinkCatalog/autoClassify'
 
 const names = ['QUATREE SUPREME CAES ADULTOS RACA PEQUENA 15 KG', 'GRANEL QUATREE GOURMET CAES FILHOTES', 'QUATREE SUPREME GATOS CASTRADO SÊNIOR +7 10,1 KG', 'BIFINHOS SABOR CARNE SNACKS QUATREE CARNE -', 'BIONATURAL RAC PEQ CORDEIRO 15 KG', 'BIONATURAL JUNIOR RAÇAS PEQUENAS FRANGO 15 KG', 'BIONATURAL MED/GRANDE FRANGO 20 KG', 'PREMIER RAÇAS ESPECIFICAS SHIH TZU SALMÃO']
 const brands = brandCandidates(names)
@@ -19,5 +19,17 @@ describe('food classification from the product name', () => {
     expect(food('QUATREE SUPREME GATOS ADULTOS 1KG', { species_target: 'all' })?.species).toEqual(['cat'])
     expect(food(names[7], { species_target: 'dog' })?.species).toEqual(['dog'])
     expect(food('COLEIRA AZUL', { category: 'Acessório' })).toBeNull()
+  })
+})
+
+describe('non-food profile from category and name', () => {
+  const profile = (name: string, category: string, species_target: string | null = null) => profileFor({ name, category, species_target, unit: 'UN' })
+  it('finds the subtype, species and package facts', () => {
+    expect(profile('AREIA GRANULADO GATISSIMO S/PERFUME 4 KG', 'Higiene')).toMatchObject({ product_type: 'hygiene', subtype: 'litter', net_weight_grams: 4000 })
+    expect(profile('AFASTA DOG SPRAY PROCANINE 500 ML', 'Higiene')).toMatchObject({ species: ['dog'], net_volume_ml: 500 })
+    expect(profile('ARRANHADOR MINI POSTE CAT', 'Acessório')).toMatchObject({ subtype: 'scratcher', species: ['cat'] })
+    expect(profile('ACESSORIOS PARA GATO C/11 UNID JAMBO', 'Brinquedo')).toMatchObject({ subtype: 'toy_unspecified', pack_count: 11 })
+    expect(profile('ANTITOXICO DUPRAT ORAL 20ML', 'Medicamento')).toMatchObject({ subtype: 'medicine_unspecified', requires_professional_guidance: 1 })
+    expect(profile('RACAO X', 'Serviço')).toBeNull()
   })
 })

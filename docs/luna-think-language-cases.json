@@ -59,7 +59,11 @@
     "LANG-12-3",
     "FLOW-05-1",
     "FLOW-05-2",
-    "FLOW-05-3"
+    "FLOW-05-3",
+    "FLOW-06-1",
+    "FLOW-06-2",
+    "FLOW-06-3",
+    "FLOW-06-4"
   ],
   "cases": [
     {
@@ -1071,6 +1075,62 @@
         "reply": "registrado[\\s\\S]*(dia|hor[aá]rio|quando|data)"
       },
       "unregistered": true
+    },
+    {
+      "id": "FLOW-06-1",
+      "family": "flow",
+      "name": "Cliente sem cadastro compra ração e se cadastra ao fechar",
+      "input_fragments": [],
+      "turns": [
+        "Oi, quero uma Ração A pra retirar",
+        "Sim, pode ser essa",
+        "Sou a Bia, a cachorra se chama Mel"
+      ],
+      "expect": {
+        "sales": 0,
+        "reply": "confirm|resumo|cadastro"
+      },
+      "unregistered": true
+    },
+    {
+      "id": "FLOW-06-2",
+      "family": "flow",
+      "name": "Pergunta por tipo de produto não alimentar",
+      "input_fragments": [],
+      "turns": [
+        "vocês tem areia de gato?"
+      ],
+      "expect": {
+        "sales": 0,
+        "reply": "areia|R\\$"
+      }
+    },
+    {
+      "id": "FLOW-06-3",
+      "family": "flow",
+      "name": "Cliente cadastrado pede banho para um pet novo",
+      "input_fragments": [],
+      "turns": [
+        "quero agendar um banho pro meu outro cachorro, o Bob, ele é um poodle"
+      ],
+      "expect": {
+        "appointments": 0,
+        "reply": "Bob"
+      }
+    },
+    {
+      "id": "FLOW-06-4",
+      "family": "flow",
+      "name": "Cliente não sabe o peso e informa raça e idade",
+      "input_fragments": [],
+      "turns": [
+        "queria tosar a Mel",
+        "não sei o peso dela, é uma husky filhote"
+      ],
+      "expect": {
+        "appointments": 0,
+        "reply": "kg|porte|faixa"
+      }
     }
   ]
 }

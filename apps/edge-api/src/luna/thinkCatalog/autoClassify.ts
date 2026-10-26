@@ -51,3 +51,34 @@ export async function ensureFoodClassified(db:D1Database,tenantId:string){
  for(let i=0;i<statements.length;i+=90)await db.batch(statements.slice(i,i+90))
  return stale.results.length
 }
+
+// Non-food products get a partial profile (type, subtype, species, size of the
+// package) from category and name, so "areia de gato" or "coleira" can be found.
+const CATEGORY_TYPES:Record<string,string>={'Acessório':'accessory','Higiene':'hygiene','Brinquedo':'toy','Medicamento':'medicine','Aquarismo':'aquarium','Jardinagem':'garden','Bebidas':'beverage','Outro':'other','Petisco':'treat'};
+const SUBTYPES:[RegExp,string][]=[[/ (AREIA|GRANULADO|SILICA) /,'litter'],[/ TAPETE /,'pad'],[/ (CAMA|CAMINHA|COLCHONETE) /,'bed'],[/ (COLAR ELIZABETANO|ELIZABETANO) /,'protective_collar'],[/ (COLEIRA|COLEIRAS) /,'collar'],[/ PEITORA(L|IS) /,'harness'],[/ (GUIA|GUIAS) /,'leash'],[/ (SHAMPOO|XAMPU) /,'shampoo'],[/ CONDICIONADOR /,'conditioner'],[/ SABONETE /,'soap'],[/ (PERFUME|COLONIA|DEO COLONIA) /,'perfume'],[/ (ESCOVA|PENTE|RASQUEADEIRA|ALICATE|CORTADOR) /,'grooming_tool'],[/ (COMEDOURO|COMEDOUROS) /,'feeder'],[/ (BEBEDOURO|BEBEDOUROS|FONTE) /,'waterer'],[/ (ARRANHADOR|ARRANHADORES) /,'scratcher'],[/ (BOLA|BOLINHA|BOLAS) /,'ball'],[/ (PELUCIA) /,'plush'],[/ (CORDA|CORDAS) /,'rope'],[/ (MORDEDOR|MORDEDORES) /,'chew_toy'],[/ (TRANSPORTE|TRANSPORTADORA) /,'carrier'],[/ (ROUPA|CAMISETA|VESTIDO|CAPA|MOLETOM) /,'clothing'],[/ FRALDA /,'diaper'],[/ FOCINHEIRA /,'muzzle'],[/ (SACO|SACOS|SAQUINHO|SAQUINHOS|SACOLA) /,'waste_bag'],[/ EDUCADOR /,'toilet_training'],[/ VACINA /,'vaccine'],[/ (SUPLEMENTO|VITAMINA|SUPLEMENTOS) /,'supplement'],[/ (INSETICIDA|DEDETIZ) /,'environmental_insecticide'],[/ CATNIP /,'catnip_enrichment'],[/ (BIFINHO|BIFINHOS|TIRAS|STRIP) /,'strip'],[/ (BISCOITO|BISCOITOS|COOKIE) /,'biscuit'],[/ (OSSO|OSSOS|ORELHA|CASCO|CHIFRE) /,'natural_chew'],[/ (SACHE|PATE) /,'wet_food'],[/ (FERTILIZANTE|ADUBO) /,'fertilizer'],[/ VASO /,'planter'],[/ (AGUA MINERAL|AGUA) /,'water'],[/ (REFRIGERANTE|REFRI) /,'soft_drink'],[/ ENERGETICO /,'energy_drink']];
+const UNSPECIFIED:Record<string,string>={accessory:'accessory_unspecified',medicine:'medicine_unspecified',toy:'toy_unspecified',treat:'treat_unspecified'};
+export function profileFor(row:Pick<Row,'name'|'category'|'species_target'|'unit'>){
+ const product_type=CATEGORY_TYPES[row.category];if(!product_type)return null;
+ const w=words(row.name),subtype=SUBTYPES.find(([re])=>re.test(w))?.[1]??UNSPECIFIED[product_type]??null;
+ const food=classifyFood({...row,category:row.category==='Petisco'?'Petisco':'Ração'},new Set());
+ const species=food?.species.length?food.species:[];
+ const volume=[...w.matchAll(/ (\d+(?:,\d+)?) ?(ML|L|LT|LITRO|LITROS) /g)].map(m=>Number(m[1].replace(',','.'))*(m[2]==='ML'?1:1000)).at(-1)??null;
+ const weight=[...w.matchAll(/ (\d+(?:,\d+)?) ?(KG|G|GR) /g)].map(m=>Math.round(Number(m[1].replace(',','.'))*(m[2]==='KG'?1000:1))).at(-1)??null;
+ const pack=[...w.matchAll(/ (?:C ?\/? ?)?(\d+) ?(UN|UNID|UNIDADES|UNDS) /g)].map(m=>Number(m[1])).at(-1)??null;
+ return {product_type,subtype,species,domain:product_type==='garden'?'garden':product_type==='beverage'?'human_beverage':'petshop',net_volume_ml:volume&&volume>0?volume:null,net_weight_grams:weight&&weight>0?weight:null,pack_count:pack&&pack>0?pack:null,requires_professional_guidance:product_type==='medicine'&&subtype!=='supplement'?1:0};
+}
+export async function ensureCatalogProfiled(db:D1Database,tenantId:string){
+ const stale=await db.prepare("SELECT p.id,p.name,p.category,p.species_target,json_extract(p.bot_metadata_json,'$.unit') unit,p.updated_at_ms FROM catalog_products p LEFT JOIN catalog_product_profiles x ON x.tenant_id=p.tenant_id AND x.module_id=p.module_id AND x.product_id=p.id WHERE p.tenant_id=? AND p.module_id='petshop' AND p.status='active' AND p.category IN ('Acessório','Higiene','Brinquedo','Medicamento','Aquarismo','Jardinagem','Bebidas','Outro','Petisco') AND (x.product_id IS NULL OR (x.review_state='partial' AND x.revision<>'auto:'||p.updated_at_ms))").bind(tenantId).all<Row>()
+ if(!stale.results.length)return 0
+ const now=Date.now(),statements:D1PreparedStatement[]=[]
+ for(const row of stale.results){
+  const f=profileFor(row);if(!f)continue
+  statements.push(
+   db.prepare("DELETE FROM catalog_product_profile_species WHERE tenant_id=? AND module_id='petshop' AND product_id=?").bind(tenantId,row.id),
+   db.prepare("INSERT INTO catalog_product_profiles(tenant_id,module_id,product_id,entity_kind,domain,product_type,subtype,sale_unit,net_weight_grams,net_volume_ml,pack_count,requires_professional_guidance,review_state,source_name,source_category,attributes_json,evidence_json,revision,created_at_ms) VALUES(?,'petshop',?,'product',?,?,?,?,?,?,?,?,'partial',?,?,'{}',?,?,?) ON CONFLICT(tenant_id,module_id,product_id) DO UPDATE SET domain=excluded.domain,product_type=excluded.product_type,subtype=excluded.subtype,sale_unit=excluded.sale_unit,net_weight_grams=excluded.net_weight_grams,net_volume_ml=excluded.net_volume_ml,pack_count=excluded.pack_count,requires_professional_guidance=excluded.requires_professional_guidance,source_name=excluded.source_name,source_category=excluded.source_category,evidence_json=excluded.evidence_json,revision=excluded.revision WHERE catalog_product_profiles.review_state='partial'").bind(tenantId,row.id,f.domain,f.product_type,f.subtype,row.unit,f.net_weight_grams,f.net_volume_ml,f.pack_count,f.requires_professional_guidance,row.name,row.category,JSON.stringify({source:'name'}),'auto:'+row.updated_at_ms,now),
+   ...f.species.map(s=>db.prepare("INSERT OR IGNORE INTO catalog_product_profile_species(tenant_id,module_id,product_id,species) VALUES(?,'petshop',?,?)").bind(tenantId,row.id,s)),
+  )
+ }
+ for(let i=0;i<statements.length;i+=90)await db.batch(statements.slice(i,i+90))
+ return stale.results.length
+}

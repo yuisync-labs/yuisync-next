@@ -6,6 +6,7 @@ import { membershipAllows, type OperationMembership } from '../operationAuthoriz
 import type { InternalChatJob } from './internalChatTurn'
 import type { LunaExecutionContext, LunaToolResult } from './contracts'
 import { preferencesSchema, applyPreferences, searchProducts, type Memory } from './thinkCatalog/catalog'
+import { ensureCatalogProfiled } from './thinkCatalog/autoClassify'
 import { resolveCatalogCategory, resolveVolumeDimension, searchOtherProducts } from './thinkCatalog/other-catalog'
 import { supportedClassificationChanges, validateCatalogChanges, authorizedCatalogRemoval } from './thinkCatalog/validation'
 import { ratingFromMessage, withdrawalMessage } from './thinkPolicy'
@@ -45,6 +46,7 @@ export async function thinkCatalogSearch(db:D1Database,c:LunaExecutionContext,be
   for(const key of Object.keys(checked.discarded))delete changes[key]
   Object.assign(changes,checked.changes)
   validateCatalogChanges(before.preferences,changes,text,before.refinement?.field)
+  await ensureCatalogProfiled(db,c.tenantId)
   await resolveCatalogCategory(db,changes,c.tenantId)
   await resolveVolumeDimension(db,changes,before.preferences,before.refinement?.field,c.tenantId)
   const removal=authorizedCatalogRemoval(before.preferences,input.remove,text)
