@@ -298,7 +298,7 @@ export default function ChatPage() {
   const [sending, setSending]     = useState(false)
   const [resettingHistory, setResettingHistory] = useState(false)
   const [mobileView, setMobileView] = useState('list') // 'list' | 'chat' (mobile only)
-  const bottomRef = useRef(null)
+  const messagesRef = useRef(null)
   const restoredSessionRef = useRef(false)
   const isGlobalAdmin = auth?.profile?.role === 'admin'
   const activeChatStorageKey = `@yuisync-active-chat:${auth?.activeTenantId || 'tenant'}:${activeModule.id}`
@@ -325,7 +325,9 @@ export default function ChatPage() {
 
   // Auto-scroll
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    // Scroll only the messages pane; scrollIntoView also moved the page and the chat list.
+    const pane = messagesRef.current
+    pane?.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' })
   }, [messages, botTyping])
 
   const handleOpenHandoffAlert = async (alert) => {
@@ -552,7 +554,7 @@ export default function ChatPage() {
                   <p className="text-muted">{activeSession.context.think.handoff_summary.request}</p>
                 </div>
               )}
-              <div className="flex-1 overflow-y-auto px-5 py-4">
+              <div ref={messagesRef} className="flex-1 overflow-y-auto px-5 py-4">
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full gap-3">
                     <Bot size={32} className="text-muted/30"/>
@@ -587,7 +589,6 @@ export default function ChatPage() {
                         </div>
                       </div>
                     )}
-                    <div ref={bottomRef}/>
                   </>
                 )}
               </div>

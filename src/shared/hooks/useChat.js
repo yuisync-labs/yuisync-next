@@ -244,6 +244,10 @@ export function useChat() {
         }
       })
 
+      // A new thread has no last_message_at yet and the database sorts NULLs last,
+      // which hid freshly created chats below the imported history.
+      const activity=session=>Date.parse(session.last_message_at||session.opened_at||session.created_at||'')||Date.now()
+      mapped.sort((a,b)=>activity(b)-activity(a))
       setSessions(mapped)
       setActiveSession(previous=>{
         const current=previous&&activeSessionIdRef.current===previous.id?mapped.find(session=>session.id===previous.id):null
