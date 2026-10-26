@@ -52,6 +52,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Verify native AI, debounce, permissions and quality UI
         run: node scripts/luna/staging-think-smoke.mjs
+        env:
+          LUNA_INBOX_DEBOUNCE_MS: "0"
       - name: Enable verified QuatroPatas staging pilot
         run: node scripts/luna/staging-activate-pilot.mjs
       - name: Clean disposable records

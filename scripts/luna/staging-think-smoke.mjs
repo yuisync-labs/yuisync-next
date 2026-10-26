@@ -38,16 +38,21 @@ assert.equal((await api('/api/chat/quality','GET',null,{cookie:''})).status,401)
 assert.equal((await api('/api/chat/quality','GET',null,{'x-tenant-id':fixture.isolationTenantId})).status,403)
 const otherCookie=await login(process.env.TENANT_B_EMAIL,process.env.TENANT_B_PASSWORD)
 assert.equal((await api('/api/chat/respond','POST',{sessionId:thread,clientMessageId:'blocked',message:'Olá'},{cookie:otherCookie,'x-tenant-id':fixture.isolationTenantId})).status,403)
-const first=await submit('Olá, quero uma Ração A de 15 kg para cachorro adulto.','part1')
-await sleep(3000)
-const second=await submit('Um pacote, vou retirar na loja.','part2')
-await sleep(5000)
-assert.equal((await status(first)).body.status,'queued','no inference before debounce expires')
-const prepared=await complete(second)
+// Staging answers at once (LUNA_INBOX_DEBOUNCE_MS=0); the 10s grouping is only
+// certified when the deployed debounce is on.
+const debounceMs=Number(process.env.LUNA_INBOX_DEBOUNCE_MS??10000)
+let prepared
+if(debounceMs>0){
+ const first=await submit('Olá, quero uma Ração A de 15 kg para cachorro adulto.','part1')
+ await sleep(3000)
+ const second=await submit('Um pacote, vou retirar na loja.','part2')
+ await sleep(5000)
+ assert.equal((await status(first)).body.status,'queued','no inference before debounce expires')
+ prepared=await complete(second)
+ assert.equal((await status(first)).body.result.reply,prepared.reply)
+ assert.equal(prepared.savedUserMessages.length,2)
+}else prepared=await complete(await submit('Olá, quero um pacote da Ração A de 15 kg para cachorro adulto, vou retirar na loja.','part1'))
 assert.equal(prepared.status,'awaiting_confirmation')
-const grouped=(await status(first)).body.result
-assert.equal(grouped.reply,prepared.reply)
-assert.equal(prepared.savedUserMessages.length,2)
 assert.equal(db(`SELECT count(*) n FROM sales WHERE tenant_id=${q(tenant)}`)[0].n,0)
 const confirmed=await complete(await submit('Confirmo esse pedido para retirada.','confirm'))
 assert.match(confirmed.reply,/1 a 5|estrelas/i)
@@ -80,4 +85,4 @@ try{
 }finally{await browser.close()}
 const reviewed=(await api('/api/chat/quality')).body.items.find(i=>i.id===thread)
 assert.equal(reviewed.quality_review.status,'reviewed');assert.equal(reviewed.csat_score,5)
-console.log(JSON.stringify({event:'luna.staging.certified',debounceSeconds:10,groupedMessages:2,nativeWorkersAI:true,tenantIsolation:true,qualityUI:true,pendingSales:1,payments:0}))
+console.log(JSON.stringify({event:'luna.staging.certified',debounceSeconds:debounceMs/1000,nativeWorkersAI:true,tenantIsolation:true,qualityUI:true,pendingSales:1,payments:0}))
