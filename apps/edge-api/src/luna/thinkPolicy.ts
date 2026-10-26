@@ -43,7 +43,8 @@ export function thinkSkills() {
   ]})]
 }
 
-export function batchDue(first: number, last: number) { return last + 10000 }
+// Fragmented customer messages are grouped for 10s; staging and the live battery set 0.
+export function batchDue(first: number, last: number, debounceMs = 10000) { return last + debounceMs }
 export function ratingFromMessage(text: string): number | null {
   const m = /^\s*([1-5])(?:\s*(?:estrelas?|⭐{1,5}))?[.! ]*$/i.exec(text)
   return m ? Number(m[1]) : null

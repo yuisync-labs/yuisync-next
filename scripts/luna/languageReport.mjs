@@ -15,8 +15,9 @@ const rows=request.cases.map(id=>{
  return {id,family:s?.family,name:s?.name,status:!e?'not_run':e.status==='passed'?'passed':e.status==='failed'?'failed':'incomplete',error:e?.error,turns:e?.turns??[],
   neurons:usage.reduce((n,u)=>n+(u.promptTokens??0)*0.0055+(u.completionTokens??0)*0.0364,0),calls:usage.reduce((n,u)=>n+(u.modelCalls??0),0)}
 })
+const stop=existsSync(join(root,'stop.json'))?JSON.parse(await readFile(join(root,'stop.json'),'utf8')):null
 const count=s=>rows.filter(r=>r.status===s).length,neurons=rows.reduce((n,r)=>n+r.neurons,0)
-const lines=[`## Bateria real da Luna`,'',`**${count('passed')} de ${rows.length} passaram** · ${count('failed')} falharam · ${count('incomplete')+count('not_run')} sem resultado · ${neurons.toFixed(0)} neurons em ${rows.reduce((n,r)=>n+r.calls,0)} chamadas ao modelo`,'','| Caso | Assunto | Resultado | Neurons |','| --- | --- | --- | --- |',
+const lines=[`## Bateria real da Luna`,'',`**${count('passed')} de ${rows.length} passaram** · ${count('failed')} falharam · ${count('incomplete')+count('not_run')} sem resultado · ${neurons.toFixed(0)} neurons em ${rows.reduce((n,r)=>n+r.calls,0)} chamadas ao modelo`,...(stop?['',`Parou porque o Workers AI recusou: **${stop.code}** (neurons gratuitos do dia acabaram).`]:[]),'','| Caso | Assunto | Resultado | Neurons |','| --- | --- | --- | --- |',
  ...rows.map(r=>`| ${r.id} | ${r.name??r.family} | ${{passed:'✅ passou',failed:'❌ falhou',incomplete:'⚠️ incompleto',not_run:'⏭️ não rodou'}[r.status]} | ${r.neurons.toFixed(0)} |`)]
 for(const r of rows.filter(r=>r.status!=='passed'&&r.turns.length)){
  lines.push('',`<details><summary>${r.id}: ${clip(r.error,160)}</summary>`,'')

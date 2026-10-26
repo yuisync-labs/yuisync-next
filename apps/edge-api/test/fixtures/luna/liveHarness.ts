@@ -41,7 +41,8 @@ export async function createLiveHarness(id:number){
    }))
    submissions.push({body:job,turnId:ids.at(-1)!})
   }
-  await new Promise(resolve=>setTimeout(resolve,10500))
+  // The battery groups fragments for 1.5s (LUNA_INBOX_DEBOUNCE_MS), not production's 10s.
+  await new Promise(resolve=>setTimeout(resolve,1600))
   await runInDurableObject(stub,async agent=>{
    await agent.flushInbound();const submissions=await agent.listSubmissions(),newest=submissions.reduce((a,b)=>a.createdAt>b.createdAt?a:b)
    await agent.waitForSubmission(newest.submissionId,{timeoutMs:600000})

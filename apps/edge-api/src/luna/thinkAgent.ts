@@ -24,7 +24,7 @@ type Inbox = {id:string;job:InternalChatJob;at:number}
 type Batch = {id:string;entries:Inbox[]}
 type Turn = {batch:Batch;context:LunaExecutionContext;results:{name:string;input:unknown;result:unknown}[];events:string[];calls:number;modelCalls:number;inputTokens:number;outputTokens:number;quota:boolean;neuronLimit?:number;dailyLow?:boolean;rating?:number;confirm?:{proposal_id:string;proposal_version:number}}
 type State = {scope?:InternalChatJob;pending:Inbox[];flushing?:Batch;turns:Record<string,Turn>;catalog:Record<string,Memory>;capability?:string}
-export type ThinkBindings = EdgeEnv & {LUNA_RUNTIME?:string;LUNA_THINK_TENANT_IDS?:string}
+export type ThinkBindings = EdgeEnv & {LUNA_RUNTIME?:string;LUNA_THINK_TENANT_IDS?:string;LUNA_INBOX_DEBOUNCE_MS?:string}
 const record = (v:unknown):Record<string,unknown> => v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{}
 const content = (m:UIMessage|undefined)=>m?.parts.filter(p=>p.type==='text').map(p=>p.text).join('\n')??''
 const emptyMemory = ():Memory=>({preferences:{},evidence:{},lastProductIds:[]})
@@ -39,6 +39,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
   includeMcpTools=false
   private commands:Promise<unknown>=Promise.resolve()
   private inboxWork:Promise<unknown>=Promise.resolve()
+  private debounceMs(){const ms=Number(this.env.LUNA_INBOX_DEBOUNCE_MS??10000);return Number.isFinite(ms)&&ms>=0?ms:10000}
   private get db(){const db=this.env.DB;if(!db)throw Error('DATABASE_NOT_CONFIGURED');return db}
   getModel():LanguageModel{const binding=this.env.AI;if(!binding)throw Error('AI_NOT_CONFIGURED');const model=createWorkersAI({binding})(THINK_MODEL,{chat_template_kwargs:{enable_thinking:false}});return this.env.APP_ENV==='staging'?withDailyAiBudget(model,this.env):model}
   getSkills(){return thinkSkills()}
@@ -92,7 +93,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       if(old){if(canonicalJson(old.inbox.job)!==canonicalJson(job))throw Error('LUNA_JOB_PAYLOAD_CONFLICT');this.duplicateAdmission();return Response.json({accepted:true,turn_id:id,status:'queued'},{status:202})}
       const inbox:Inbox={id,job,at:Date.now()}
       // Persist the wake before admission. A crash cannot strand an accepted inbox.
-      await this.wakeInbox(batchDue(inbox.at,inbox.at))
+      await this.wakeInbox(batchDue(inbox.at,inbox.at,this.debounceMs()))
       const mutation=await this.ctx.blockConcurrencyWhile(async()=>{
         const current=await this.ctx.storage.get<{inbox:Inbox}>('think-job:'+id)
         if(current){if(canonicalJson(current.inbox.job)!==canonicalJson(job))return {error:'LUNA_JOB_PAYLOAD_CONFLICT'};this.duplicateAdmission();return {}}
@@ -102,7 +103,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
         return {}
       })
       if(mutation.error)throw Error(mutation.error)
-      await this.wakeInbox(batchDue(inbox.at,inbox.at))
+      await this.wakeInbox(batchDue(inbox.at,inbox.at,this.debounceMs()))
       return Response.json({accepted:true,turn_id:id,status:'queued'},{status:202,headers:{'cache-control':'no-store'}})
     }catch(e){return Response.json({code:e instanceof Error?e.message:'INVALID_JSON'},{status:409})}
   }
@@ -115,7 +116,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     let batch=this.state.flushing
     if(!batch){
       const entries=this.state.pending;if(!entries.length)return
-      const due=batchDue(entries[0].at,entries.at(-1)!.at)
+      const due=batchDue(entries[0].at,entries.at(-1)!.at,this.debounceMs())
       if(due>Date.now()){await this.wakeInbox(due);return}
       batch={id:await hashCanonicalJson(entries.map(e=>e.id)),entries}
       // Keep the detached batch until native admission is durable. Recovery can resubmit its stable key.
@@ -125,7 +126,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const accepted=await this.submitMessages(batch.entries.map(e=>({id:e.job.context.sourceMessageId,role:'user' as const,metadata:{thinkBatch:batch!.id},parts:[{type:'text' as const,text:e.job.message}]})),{submissionId:batch.id,idempotencyKey:batch.id,metadata:{batch:batch.id}})
     for(const inbox of batch.entries)await this.ctx.storage.put('think-job:'+inbox.id,{inbox,batchId:accepted.submissionId})
     if(this.state.flushing?.id===batch.id)this.setState({...this.state,flushing:undefined})
-    if(this.state.pending.length)await this.wakeInbox(batchDue(this.state.pending[0].at,this.state.pending.at(-1)!.at))
+    if(this.state.pending.length)await this.wakeInbox(batchDue(this.state.pending[0].at,this.state.pending.at(-1)!.at,this.debounceMs()))
   }
   private async wakeInbox(due:number){
     // Lifecycle jobs use milliseconds (Agent.schedule quantizes to seconds).

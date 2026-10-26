@@ -105,7 +105,8 @@
         "LUNA_THINK_TENANT_IDS": "",
         "LUNA_AI_DAILY_LIMIT": "9000",
         "LUNA_AI_BASELINE_DATE": "",
-        "LUNA_AI_BASELINE_NEURONS": "0"
+        "LUNA_AI_BASELINE_NEURONS": "0",
+        "LUNA_INBOX_DEBOUNCE_MS": "0"
       },
       "d1_databases": [
         {

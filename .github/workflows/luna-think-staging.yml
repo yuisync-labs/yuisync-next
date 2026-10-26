@@ -62,8 +62,8 @@ jobs:
       contents: read
       pull-requests: write
     # Real-model conversation battery against the code just deployed. It runs only
-    # when .github/luna-language-request.json sets "run": true, in serial batches
-    # of three cases under the shared daily neuron counter (stops at 9,000).
+    # when .github/luna-language-request.json sets "run": true, one case at a
+    # time, until Workers AI refuses for lack of free daily neurons.
     needs: staging
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -84,17 +84,15 @@ jobs:
       - if: steps.gate.outputs.run == 'true'
         run: npm ci
       - if: steps.gate.outputs.run == 'true'
-        run: node --test test/lunaLanguageBudgetProxy.test.mjs
-      - if: steps.gate.outputs.run == 'true'
         name: Verify persistent cold-start bridge without Workers AI
         working-directory: apps/edge-api
         run: npx vitest run --config vitest.language-fixture.config.ts
       - if: steps.gate.outputs.run == 'true'
-        name: Run the requested cases in serial batches of at most three
-        run: node scripts/luna/runLanguageQueue.mjs
-      - if: always() && steps.gate.outputs.run == 'true'
-        name: Reconcile usage, release idle hold and delete temporary proxy
-        run: node scripts/luna/runLanguageBatch.mjs finish
+        name: Run the requested cases until Workers AI refuses for daily neurons
+        working-directory: apps/edge-api
+        run: |
+          export LANG_CASE_IDS=$(node -p "JSON.parse(require('fs').readFileSync('../../.github/luna-language-request.json','utf8')).cases.join(',')")
+          npx vitest run --config vitest.language-live.config.ts
       - if: always() && steps.gate.outputs.run == 'true'
         name: Report results on the pull request
         env:
