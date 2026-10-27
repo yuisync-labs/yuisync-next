@@ -45,3 +45,11 @@ describe('internal errors stay out of the reply', () => {
     expect(withoutInternalErrors('Tudo certo! Qual horário?')).toBe('Tudo certo! Qual horário?')
   })
 })
+
+describe('a bare day asks for the time', () => {
+  it('only a time, a period or a list request shows slots', async () => {
+    const { timeSaid } = await import('../src/luna/bookingSteps')
+    for (const text of ['na sexta às 10', 'sexta 15h', 'quarta de tarde', 'quais horários tem?', 'amanhã 9:30']) expect(timeSaid(text), text).toBe(true)
+    for (const text of ['na sexta', 'amanhã', 'eu quero pra sexta feira agora', 'dia 30']) expect(timeSaid(text), text).toBe(false)
+  })
+})

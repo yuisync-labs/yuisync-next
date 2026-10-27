@@ -17,7 +17,7 @@ import type { LunaExecutionContext, LunaToolResult } from './contracts'
 import { catalogInput, normalizeSearchKey, thinkCatalogSearch, validateThinkJob, customerHistory, closeThinkConversation, recordThinkRating, explicitRestockConsent, fail } from './thinkDomain'
 import { THINK_MODEL, THINK_TURN_NEURON_LIMIT, thinkNeurons, thinkInstructions, thinkCommerceRules, thinkAgendaRules, thinkTopics, serviceQuery, namedPet, thinkSkills, batchDue, ratingFromMessage, clinicalRisk, storeCalendar } from './thinkPolicy'
 import { getProduct, type Memory } from './thinkCatalog/catalog'
-import { nextBookingStep, weightSaid, dateSaid, selfTransportSaid, serviceKinds } from './bookingSteps'
+import { nextBookingStep, weightSaid, dateSaid, selfTransportSaid, serviceKinds, timeSaid } from './bookingSteps'
 import { publishTableInvalidation } from '../realtimeApi'
 import { validateThinkReply, withoutInternalErrors, zonedIsoTime } from './thinkPresentation'
 import { findConfirmationTarget } from './commitProposal'
@@ -266,7 +266,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     // What the store says a service includes, listed once and referenced by index:
     // eight bath sizes share one sentence.
     const includes:string[]=[],services=rows.results.map(({description,...row})=>{const text=String(description??'').trim();if(!text)return row;const i=includes.indexOf(text);return {...row,includes:i<0?includes.push(text)-1:i}})
-    return {ok:true,data:{services,...(includes.length?{includes}:{}),pet_id:pet_id??null,...(species&&!pet?{species}:{}),source:'services',instruction:'includes[n] é o que a loja diz que o serviço inclui: explique com suas palavras ao dar o preço. Preço e duração não confirmam vaga; campo ausente não comprova adequação. Sem data informada pelo cliente, responda o preço e pergunte a data. Não consulte vagas para uma data que o cliente não pediu.'}}
+    return {ok:true,data:{services,...(includes.length?{includes}:{}),pet_id:pet_id??null,...(species&&!pet?{species}:{}),source:'services',instruction:'includes[n] é o que a loja diz que o serviço inclui: explique com suas palavras ao dar o preço. Preço e duração não confirmam vaga; campo ausente não comprova adequação. Sem data informada pelo cliente, responda o preço e pergunte o dia e o horário que ele prefere. Não consulte vagas para uma data que o cliente não pediu.'}}
   }
 
   getTools(){const registry=createLunaToolRegistry(this.db);const tools:ToolSet={}
@@ -274,10 +274,12 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     for(const d of registry.definitions.filter(d=>readNames.has(d.name)))tools[d.name]=tool({description:d.description,inputSchema:jsonSchema<Record<string,unknown>>(d.parameters),execute:args=>registry.execute(d.name,args,this.turn().context)})
     const availability=registry.definitions.find(d=>d.name==='get_available_slots')!
     tools.get_available_slots=tool({description:availability.description+' O resultado já usa o fuso da loja: copie scheduled_at exatamente para o rascunho, sem converter novamente.',inputSchema:jsonSchema<Record<string,unknown>>(availability.parameters),execute:async args=>{
-      if(!dateSaid(await this.saidText()))return {...fail('DATE_NOT_SAID'),instruction:'O cliente ainda não disse o dia. Pergunte qual dia ele prefere antes de consultar vagas.'}
+      if(!dateSaid(await this.saidText()))return {...fail('DATE_NOT_SAID'),instruction:'O cliente ainda não disse o dia. Pergunte o dia e o horário que ele prefere, numa pergunta só, antes de consultar vagas.'}
       const result=await registry.execute('get_available_slots',args,this.turn().context)
       if(!result.ok)return result
       const data=record(result.data),timezone=String(data.timezone)
+      // A bare day gets a question about the time, not the whole agenda.
+      if(!timeSaid(this.text())){const options=data.options as Record<string,unknown>[];return {ok:true,data:{has_slots:options.length>0,local_date:options[0]?.local_date??null,instruction:options.length?'O cliente disse só o dia e esse dia tem vagas. Pergunte que horário ele prefere; não liste horários. Quando ele disser, consulte de novo com esse horário.':'Esse dia não tem vagas. Diga isso e pergunte outro dia e horário.'}}}
       return {...result,data:{...data,slots:(data.slots as string[]).map(slot=>zonedIsoTime(slot,timezone)),options:(data.options as Record<string,unknown>[]).map(option=>({...option,scheduled_at:zonedIsoTime(String(option.scheduled_at),timezone)})),instruction:'Horários já estão no fuso da loja com offset explícito. Fale local_date/local_time e copie scheduled_at exatamente ao salvar o rascunho. Não some nem subtraia horas. Uma consulta não reserva a vaga.'}}
     }})
     tools.search_services=tool({description:'Consulta serviços, preço, duração e faixa de peso reais. Informe pet_id conhecido para limitar ao próprio pet. Query curta: banho, tosa, consulta. Não confirma vaga.',inputSchema:z.object({query:z.string().min(1).max(120),pet_id:z.string().optional()}).strict(),execute:({query,pet_id})=>this.searchServices(query,pet_id)})

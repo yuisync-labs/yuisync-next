@@ -4,9 +4,9 @@
     "FLOW-09-1",
     "FLOW-09-2",
     "FLOW-09-3",
-    "FLOW-07-3",
-    "FLOW-08-4"
+    "FLOW-07-1",
+    "FLOW-07-3"
   ],
-  "reason": "slot_question_and_capacity",
+  "reason": "bare_day_asks_time",
   "model": "openai:gpt-4.1-mini"
 }
