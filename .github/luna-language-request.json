@@ -1,9 +1,7 @@
 {
   "run": true,
   "cases": [
-    "FLOW-07-2",
-    "FLOW-07-3",
-    "FLOW-07-4"
+    "FLOW-07-3"
   ],
   "reason": "motodog_store_confirms",
   "model": "openai:gpt-4.1-mini"

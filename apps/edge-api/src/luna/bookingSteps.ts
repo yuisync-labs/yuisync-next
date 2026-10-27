@@ -28,7 +28,8 @@ export function nextBookingStep(draft: Draft, options: { transportOffered: boole
     ['date', Boolean(f.scheduled_at || f.period)],
     ['slot', Boolean(f.scheduled_at)],
     ['transport', !options.transportOffered || Boolean(f.transport_mode)],
-    ['address', !moto || Boolean(address.street && address.city)],
+    // A city the customer did not say is the store's city.
+    ['address', !moto || Boolean(address.street)],
     ['transport_option', !moto || Boolean(f.transport_option_id)],
   ]
   const step = order.find(([, ok]) => !ok)?.[0] ?? 'summary'

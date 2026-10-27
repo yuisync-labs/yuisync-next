@@ -15,7 +15,7 @@ describe('booking steps follow the store order', () => {
   it('asks the MotoDog address and option only when the customer wants it', () => {
     const base = { pet_id: 'p', scheduled_at: '2026-10-28T09:00:00-03:00', transport_mode: 'pickup_dropoff' }
     expect(step(1, base)).toBe('address')
-    expect(step(1, { ...base, address: JSON.stringify({ street: 'Rua A', number: '10', city: 'Muriaé' }) })).toBe('transport_option')
+    expect(step(1, { ...base, address: JSON.stringify({ street: 'Rua A', number: '10' }) })).toBe('transport_option')
     expect(step(1, { ...base, address: JSON.stringify({ street: 'Rua A', city: 'Muriaé' }), transport_option_id: 't1' })).toBe('summary')
   })
   it('asks the weight after the pet when the price depends on it', () => {
