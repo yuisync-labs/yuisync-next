@@ -2,7 +2,7 @@ import { lunaNow } from './clock'
 import type { LunaExecutionContext, LunaToolDefinition, LunaToolResult } from './contracts'
 import { isConversationCustomer } from './customerIdentity'
 import { isWithinBusinessHours, normalizeBusinessHours } from '../businessHours'
-import { loadSchedulePolicy, withStoreScheduleDefaults } from './schedulePolicy'
+import { bookedLoads, isTosaService, loadSchedulePolicy, slotFits, withStoreScheduleDefaults } from './schedulePolicy'
 
 type RecordValue = Record<string, unknown>
 const schema = (properties: RecordValue, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false })
@@ -57,21 +57,20 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
     try { new Intl.DateTimeFormat('pt-BR', { timeZone: timezone }) } catch { return { ok: false, code: 'SCHEDULE_CONFIGURATION_UNAVAILABLE', retryable: false } }
     const ids = args.service_ids as string[]
     if (new Set(ids).size !== ids.length) return { ok: false, code: 'SERVICE_IDS_DUPLICATED', retryable: false }
-    const rows = await db.prepare(`SELECT id,default_duration_min FROM services WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND id IN (${ids.map((_, i) => `?${i + 3}`).join(',')})`)
-      .bind(ctx.tenantId, ctx.moduleId, ...ids).all<{ id: string; default_duration_min: number }>()
+    const rows = await db.prepare(`SELECT id,name,default_duration_min FROM services WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND id IN (${ids.map((_, i) => `?${i + 3}`).join(',')})`)
+      .bind(ctx.tenantId, ctx.moduleId, ...ids).all<{ id: string; name: string; default_duration_min: number }>()
     if (rows.results.length !== ids.length) return { ok: false, code: 'SERVICE_NOT_FOUND', retryable: false }
     const duration = rows.results.reduce((total, row) => total + row.default_duration_min, 0)
     if (!Number.isSafeInteger(duration) || duration <= 0 || duration > 1440) return { ok: false, code: 'SERVICE_DURATION_UNAVAILABLE', retryable: false }
     const policy = await loadSchedulePolicy(db, ctx.tenantId, ctx.moduleId)
     // One bounded read of the window rather than a query per candidate slot.
-    const appointments = await db.prepare(`SELECT scheduled_at_ms,duration_min FROM appointments WHERE tenant_id=?1 AND module_id=?2 AND status IN ('scheduled','confirmed','in_progress','blocked') AND scheduled_at_ms>=?3-86400000 AND scheduled_at_ms<?4 AND scheduled_at_ms+duration_min*60000>?3 ORDER BY scheduled_at_ms,id LIMIT 501`)
-      .bind(ctx.tenantId, ctx.moduleId, starts, ends).all<{ scheduled_at_ms: number; duration_min: number }>()
-    if (appointments.results.length > 500) return { ok: false, code: 'SCHEDULE_WINDOW_TOO_DENSE', retryable: false }
+    const booked = await bookedLoads(db, ctx.tenantId, ctx.moduleId, starts, ends + duration * 60000)
+    if (booked.length > 500) return { ok: false, code: 'SCHEDULE_WINDOW_TOO_DENSE', retryable: false }
+    const tosa = rows.results.some(row => isTosaService(row.name))
     const slots: string[] = [], observed = lunaNow(ctx), min = observed + policy.leadTimeMinutes * 60000
     for (let time = starts; time + duration * 60000 <= ends && slots.length < 12; time += policy.slotIntervalMinutes * 60000) {
       if (time <= observed || time < min || !isWithinBusinessHours(hours, timezone, time, duration)) continue
-      const overlaps = appointments.results.filter(row => row.scheduled_at_ms < time + duration * 60000 && row.scheduled_at_ms + row.duration_min * 60000 > time).length
-      if (overlaps < policy.capacity) slots.push(new Date(time).toISOString())
+      if (slotFits(booked, time, time + duration * 60000, tosa, policy)) slots.push(new Date(time).toISOString())
     }
     const dateLabel=new Intl.DateTimeFormat('pt-BR',{timeZone:timezone,day:'2-digit',month:'2-digit',year:'numeric'})
     const timeLabel=new Intl.DateTimeFormat('en-GB',{timeZone:timezone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'})

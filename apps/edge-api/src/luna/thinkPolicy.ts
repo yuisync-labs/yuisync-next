@@ -45,9 +45,21 @@ export function thinkSkills() {
 
 // Fragmented customer messages are grouped for 10s; staging and the live battery set 0.
 export function batchDue(first: number, last: number, debounceMs = 10000) { return last + debounceMs }
+// Only read while the thread awaits a rating: "5", "nota 5", "5 estrelas, adorei",
+// "cinco estrelas" or "⭐⭐⭐⭐⭐". Quantities ("5 sachês") and alternatives ("1 ou 5") are not ratings.
+const RATING_WORDS: Record<string, number> = { um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5 }
 export function ratingFromMessage(text: string): number | null {
-  const m = /^\s*([1-5])(?:\s*(?:estrelas?|⭐{1,5}))?[.! ]*$/i.exec(text)
-  return m ? Number(m[1]) : null
+  const t = text.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim()
+  const stars = (text.match(/⭐|🌟|★/g) ?? []).length
+  if (stars >= 1 && stars <= 5 && !/\d/.test(t) && t.replace(/[⭐🌟★\s.!,]|\p{Extended_Pictographic}|\uFE0F/gu, '').length <= 40) return stars
+  const m = /^(?:(?:minha )?nota|dou|daria|vou dar|(?:e|eh))?\s*:?\s*([1-5]|um|uma|dois|duas|tres|quatro|cinco)(\s*(?:estrelas?|\/\s*5|de 5)|\s*⭐{1,5})?(?![\d,.]\d)(.*)$/su.exec(t)
+  if (!m) return null
+  const named = /^(?:(?:minha )?nota|dou|daria|vou dar)/.test(t) || Boolean(m[2])
+  const rest = m[3].trim()
+  if (/\d/.test(rest) || rest.length > 80 || /^ou\b/.test(rest)) return null
+  if (rest && !named && !/^[.!,\s]*$/.test(rest) && !/\b(?:adorei|gostei|amei|otim|excelente|bom|boa|perfeit|top|show|maravilh|obrigad|valeu|parabens|atendimento|ruim|pessim|demor|nota)/.test(rest)) return null
+  if (!/^\d$/.test(m[1]) && !named) return null
+  return Number(m[1]) || RATING_WORDS[m[1]]
 }
 export function withdrawalMessage(text: string) {
   return /\b(desist[oi]|deixa (?:pra|para) la|nao (?:vou querer|quero mais|precisa)|hoje nao|cancel[ae] (?:o pedido|o carrinho))\b/i.test(text.normalize('NFD').replace(/\p{Diacritic}/gu,''))

@@ -46,13 +46,14 @@ const draftEventSchema = objectSchema({
 
 // What the store asks every new customer, as its own ready-made message does.
 const CUSTOMER_REGISTRATION_FIELDS = {
-  tutor_birth_date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Data de nascimento do tutor, AAAA-MM-DD.' },
+  tutor_birth_date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Data de nascimento do tutor convertida para AAAA-MM-DD; ao cliente, peça como dia/mês/ano.' },
   cpf: { type: 'string', pattern: '^\\d{11}$', description: 'CPF do tutor, só os 11 dígitos.' },
   postal_code: { type: 'string', pattern: '^\\d{8}$', description: 'CEP da rua, só os 8 dígitos.' },
   street: { type: ['string','null'], maxLength: 160, description: 'Rua, se o cliente disser.' },
   address_number: { type: 'string', minLength: 1, maxLength: 20, description: 'Número da casa.' },
   address_reference: { type: ['string','null'], maxLength: 160, description: 'Ponto de referência.' },
   neighborhood: { type: ['string','null'], maxLength: 120 },
+  city: { type: ['string','null'], maxLength: 120, description: 'Cidade; o servidor completa rua, bairro e cidade pelo CEP.' },
 } as const
 const DEFINITIONS: readonly LunaToolDefinition[] = [
   {name:'resolve_context_reference',description:'Resolve referência por opções realmente apresentadas. Ordinal usa a ordem aceita; single exige uma opção; other exige duas opções e um item selecionado no rascunho. Não altera rascunho nem autoriza commit.',parameters:objectSchema({kind:{type:'string',enum:['product','service','pet','slot','transport']},selection:{type:'string',enum:['ordinal','single','other']},ordinal:{type:'integer',minimum:1,maximum:40},operation_id:stringProperty('Operação em foco.')},['kind','selection'])},
@@ -398,7 +399,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     const durationMinutes = services.results.reduce((sum, service) => sum + Number(service.default_duration_min || 0), 0)
     const availability = await validateScheduleAvailability({
       database, tenantId: context.tenantId, moduleId: context.moduleId, nowMs: lunaNow(context),
-      scheduledAtMs: scheduledAt, durationMinutes,
+      scheduledAtMs: scheduledAt, durationMinutes, serviceNames: services.results.map(service => service.name),
     })
     if (!availability.ok) return { ok: false, code: availability.code, retryable: false }
     const transport=args.transport?await resolveTransportSnapshot(database,context,petId,scheduledAt,durationMinutes,args.transport):null

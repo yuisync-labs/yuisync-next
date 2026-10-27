@@ -103,6 +103,7 @@ const INITIAL_FORM = {
   petbot_slot_interval_min: '30',
   petbot_booking_lead_time_min: '15',
   petbot_booking_capacity: '2',
+  petbot_tosa_load: '1',
   veterinary_name: DEFAULT_VETERINARY_NAME,
   veterinary_business_hours: DEFAULT_VETERINARY_BUSINESS_HOURS,
   petshop_operational_staff: DEFAULT_PETSHOP_OPERATIONAL_STAFF,
@@ -361,6 +362,7 @@ export default function SettingsPage() {
           petbot_slot_interval_min: data.petbot_slot_interval_min != null ? String(data.petbot_slot_interval_min) : '30',
           petbot_booking_lead_time_min: data.petbot_booking_lead_time_min != null ? String(data.petbot_booking_lead_time_min) : '15',
           petbot_booking_capacity: data.petbot_booking_capacity != null ? String(data.petbot_booking_capacity) : '2',
+          petbot_tosa_load: data.petbot_tosa_load != null ? String(data.petbot_tosa_load) : '1',
           veterinary_name: data.veterinary_name || DEFAULT_VETERINARY_NAME,
           veterinary_business_hours: normalizeBusinessHours(data.veterinary_business_hours, DEFAULT_VETERINARY_BUSINESS_HOURS),
           petshop_operational_staff: normalizeOperationalStaff(data.petshop_operational_staff ?? data.message_templates?.[OPERATIONAL_STAFF_TEMPLATE_KEY]),
@@ -553,6 +555,7 @@ export default function SettingsPage() {
           petbot_slot_interval_min: Math.max(5, Number(form.petbot_slot_interval_min || 30)),
           petbot_booking_lead_time_min: Math.max(0, Number(form.petbot_booking_lead_time_min || 15)),
           petbot_booking_capacity: Math.max(1, Math.min(4, Number(form.petbot_booking_capacity || 2))),
+          petbot_tosa_load: Math.max(1, Math.min(4, Number(form.petbot_tosa_load || 1))),
           veterinary_name: String(form.veterinary_name || DEFAULT_VETERINARY_NAME).trim(),
           veterinary_business_hours: normalizeBusinessHours(form.veterinary_business_hours, DEFAULT_VETERINARY_BUSINESS_HOURS),
           petshop_operational_staff: normalizeOperationalStaff(form.petshop_operational_staff),
@@ -1087,7 +1090,7 @@ export default function SettingsPage() {
                     <p className="text-xs text-muted">Funcionamento define quando a loja está aberta. Agendamentos define os horários de início que a Luna pode oferecer.</p>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="md:col-span-2">
                     <label className="inp-label">Fuso horário</label>
                     <input
@@ -1121,6 +1124,19 @@ export default function SettingsPage() {
                       disabled={!canEdit}
                       value={form.petbot_booking_capacity}
                       onChange={(event) => setForm((prev) => ({ ...prev, petbot_booking_capacity: event.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="inp-label" title="Quantas vagas da capacidade simultânea uma tosa ocupa. Ex.: capacidade 4 e tosa 3 = 4 banhos ou 1 tosa + 1 banho no mesmo horário.">Vagas que uma tosa ocupa</label>
+                    <input
+                      className="inp"
+                      type="number"
+                      min="1"
+                      max="4"
+                      step="1"
+                      disabled={!canEdit}
+                      value={form.petbot_tosa_load}
+                      onChange={(event) => setForm((prev) => ({ ...prev, petbot_tosa_load: event.target.value }))}
                     />
                   </div>
                   <div>

@@ -1335,6 +1335,46 @@
       },
       "family": "flow",
       "input_fragments": []
+    },
+    {
+      "id": "FLOW-09-1",
+      "name": "Pede dia e horário juntos",
+      "turns": [
+        "quero agendar um banho pra Mel"
+      ],
+      "expect": {
+        "reply": "hor[aá]rio",
+        "no_proposal": true
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-09-2",
+      "name": "Só o dia: pergunta o horário em vez de listar a agenda",
+      "turns": [
+        "quero agendar um banho pra Mel",
+        "na sexta"
+      ],
+      "expect": {
+        "reply": "hor[aá]rio|que horas",
+        "not_reply": "\\d{1,2}(?::\\d{2}|h)[\\s\\S]*\\d{1,2}(?::\\d{2}|h)[\\s\\S]*\\d{1,2}(?::\\d{2}|h)[\\s\\S]*\\d{1,2}(?::\\d{2}|h)|problema|erro|tentar novamente",
+        "no_proposal": true
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-09-3",
+      "name": "Dia e horário livres vão direto para o resumo",
+      "turns": [
+        "quero agendar um banho pra Mel na quarta às 10h, eu levo ela"
+      ],
+      "expect": {
+        "not_reply": "\\d{1,2}(?::\\d{2}|h)[\\s\\S]*\\d{1,2}(?::\\d{2}|h)[\\s\\S]*\\d{1,2}(?::\\d{2}|h)[\\s\\S]*\\d{1,2}(?::\\d{2}|h)|problema|erro|tentar novamente"
+      },
+      "family": "flow",
+      "input_fragments": []
     }
   ]
 }

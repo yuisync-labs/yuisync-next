@@ -1,11 +1,12 @@
 {
-  "run": false,
+  "run": true,
   "cases": [
-    "FLOW-08-1",
-    "FLOW-08-2",
-    "FLOW-08-3",
+    "FLOW-09-1",
+    "FLOW-09-2",
+    "FLOW-09-3",
+    "FLOW-07-3",
     "FLOW-08-4"
   ],
-  "reason": "registration_cpf_and_service_kind",
+  "reason": "slot_question_and_capacity",
   "model": "openai:gpt-4.1-mini"
 }

@@ -4,6 +4,7 @@ type ExtensionRow = { data_json: string }
 type SchedulePolicy = Readonly<{
   settingsJSON: string
   capacity: number
+  tosaLoad: number
   leadTimeMinutes: number
   slotIntervalMinutes: number
   businessHours: BusinessHours | null
@@ -43,11 +44,32 @@ export async function loadSchedulePolicy(database: D1Database, tenantId: string,
   return {
     settingsJSON: row?.data_json ?? '{}',
     capacity: integer(settings.petbot_booking_capacity, 1, 1, 50),
+    tosaLoad: integer(settings.petbot_tosa_load, 1, 1, 50),
     leadTimeMinutes: integer(settings.petbot_booking_lead_time_min, 0, 0, 10_080),
     slotIntervalMinutes: integer(settings.petbot_slot_interval_min, 30, 5, 240),
     businessHours: normalizeBusinessHours(settings.petbot_business_hours),
     timezone,
   }
+}
+
+// A tosa takes more of the team than a bath: it fills `tosaLoad` of the
+// simultaneous places ("4 banhos, ou 1 tosa + 1 banho"). Hygienic trims count as baths.
+export const isTosaService = (name: unknown) => { const n = String(name ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase(); return /\btosa\b/.test(n) && !/higien/.test(n) }
+export type BookedLoad = { start: number; end: number; tosa: boolean }
+export async function bookedLoads(database: D1Database, tenantId: string, moduleId: string, startMs: number, endMs: number, ignoreAppointmentId = '') {
+  const rows = await database.prepare(`
+    SELECT a.id,a.scheduled_at_ms,a.duration_min,group_concat(s.service_name,'|') names FROM appointments a
+    LEFT JOIN appointment_services s ON s.tenant_id=a.tenant_id AND s.module_id=a.module_id AND s.appointment_id=a.id
+    WHERE a.tenant_id=?1 AND a.module_id=?2 AND a.status IN ('scheduled','confirmed','in_progress','blocked')
+      AND a.scheduled_at_ms>=?3-86400000 AND a.scheduled_at_ms<?4 AND a.scheduled_at_ms+a.duration_min*60000>?3 AND (?5='' OR a.id<>?5)
+    GROUP BY a.id ORDER BY a.scheduled_at_ms,a.id LIMIT 501
+  `).bind(tenantId, moduleId, startMs, endMs, ignoreAppointmentId).all<{ scheduled_at_ms: number; duration_min: number; names: string | null }>()
+  return rows.results.map(row => ({ start: row.scheduled_at_ms, end: row.scheduled_at_ms + row.duration_min * 60_000, tosa: String(row.names ?? '').split('|').some(isTosaService) }))
+}
+export function slotFits(booked: readonly BookedLoad[], startMs: number, endMs: number, tosa: boolean, policy: Pick<SchedulePolicy, 'capacity' | 'tosaLoad'>) {
+  const load = (t: boolean) => t ? policy.tosaLoad : 1
+  const overlapping = booked.filter(b => b.start < endMs && b.end > startMs)
+  return overlapping.length < policy.capacity && overlapping.reduce((sum, b) => sum + load(b.tosa), 0) + load(tosa) <= policy.capacity
 }
 
 export async function validateScheduleAvailability(input: {
@@ -58,6 +80,8 @@ export async function validateScheduleAvailability(input: {
   durationMinutes: number
   ignoreAppointmentId?: string
   nowMs?: number
+  // Service names of the booking; a reschedule reads them from the appointment.
+  serviceNames?: readonly unknown[]
 }): Promise<{ ok: true; policy: SchedulePolicy } | { ok: false; code: 'SCHEDULE_IN_PAST' | 'BOOKING_LEAD_TIME_REQUIRED' | 'SLOT_UNAVAILABLE' | 'SCHEDULE_CONFIGURATION_UNAVAILABLE' | 'OUTSIDE_BUSINESS_HOURS' | 'SERVICE_DURATION_UNAVAILABLE' }> {
   const now = input.nowMs ?? Date.now()
   if (!Number.isFinite(input.scheduledAtMs) || input.scheduledAtMs <= now) return { ok: false, code: 'SCHEDULE_IN_PAST' }
@@ -67,14 +91,9 @@ export async function validateScheduleAvailability(input: {
   if (!isWithinBusinessHours(policy.businessHours, policy.timezone, input.scheduledAtMs, input.durationMinutes)) return { ok: false, code: 'OUTSIDE_BUSINESS_HOURS' }
   if (input.scheduledAtMs < now + policy.leadTimeMinutes * 60_000) return { ok: false, code: 'BOOKING_LEAD_TIME_REQUIRED' }
   const endsAt = input.scheduledAtMs + Math.max(15, input.durationMinutes) * 60_000
-  const overlap = await input.database.prepare(`
-    SELECT COUNT(*) AS count FROM (SELECT id FROM appointments
-    WHERE tenant_id=?1 AND module_id=?2
-      AND status IN ('scheduled','confirmed','in_progress','blocked')
-      AND scheduled_at_ms >= ?3-86400000 AND scheduled_at_ms < ?4 AND (scheduled_at_ms + duration_min*60000) > ?3
-      AND (?5='' OR id<>?5) LIMIT ?6)
-  `).bind(input.tenantId, input.moduleId, input.scheduledAtMs, endsAt, input.ignoreAppointmentId || '', policy.capacity)
-    .first<{ count: number }>()
-  if (Number(overlap?.count || 0) >= policy.capacity) return { ok: false, code: 'SLOT_UNAVAILABLE' }
+  let names = input.serviceNames
+  if (!names && input.ignoreAppointmentId) names = (await input.database.prepare(`SELECT service_name FROM appointment_services WHERE tenant_id=?1 AND module_id=?2 AND appointment_id=?3`).bind(input.tenantId, input.moduleId, input.ignoreAppointmentId).all<{ service_name: string }>()).results.map(r => r.service_name)
+  const booked = await bookedLoads(input.database, input.tenantId, input.moduleId, input.scheduledAtMs, endsAt, input.ignoreAppointmentId || '')
+  if (!slotFits(booked, input.scheduledAtMs, endsAt, (names ?? []).some(isTosaService), policy)) return { ok: false, code: 'SLOT_UNAVAILABLE' }
   return { ok: true, policy }
 }

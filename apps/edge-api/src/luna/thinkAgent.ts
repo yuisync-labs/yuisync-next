@@ -19,16 +19,17 @@ import { THINK_MODEL, THINK_TURN_NEURON_LIMIT, thinkNeurons, thinkInstructions, 
 import { getProduct, type Memory } from './thinkCatalog/catalog'
 import { nextBookingStep, weightSaid, dateSaid, selfTransportSaid, serviceKinds } from './bookingSteps'
 import { publishTableInvalidation } from '../realtimeApi'
-import { validateThinkReply, zonedIsoTime } from './thinkPresentation'
+import { validateThinkReply, withoutInternalErrors, zonedIsoTime } from './thinkPresentation'
 import { findConfirmationTarget } from './commitProposal'
 import { registrationIssue, registrationStatus } from './registrationLanguage'
+import { withPostalAddress } from './postalCode'
 
 type DraftInput={operation_id:string;kind:'cart'|'booking'|'registration';prepare?:boolean;changes:DraftChange[]}
 type Inbox = {id:string;job:InternalChatJob;at:number}
 type Batch = {id:string;entries:Inbox[]}
 type Turn = {batch:Batch;context:LunaExecutionContext;results:{name:string;input:unknown;result:unknown}[];events:string[];calls:number;modelCalls:number;inputTokens:number;outputTokens:number;quota:boolean;neuronLimit?:number;dailyLow?:boolean;rating?:number;confirm?:{proposal_id:string;proposal_version:number}}
 type State = {scope?:InternalChatJob;pending:Inbox[];flushing?:Batch;turns:Record<string,Turn>;catalog:Record<string,Memory>;capability?:string;unregistered?:boolean}
-export type ThinkBindings = EdgeEnv & {LUNA_RUNTIME?:string;LUNA_THINK_TENANT_IDS?:string;LUNA_INBOX_DEBOUNCE_MS?:string;LUNA_MODEL?:string;OPENAI_API_KEY?:string}
+export type ThinkBindings = EdgeEnv & {LUNA_RUNTIME?:string;LUNA_THINK_TENANT_IDS?:string;LUNA_INBOX_DEBOUNCE_MS?:string;LUNA_MODEL?:string;OPENAI_API_KEY?:string;LUNA_POSTAL_LOOKUP?:string}
 const record = (v:unknown):Record<string,unknown> => v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{}
 const content = (m:UIMessage|undefined)=>m?.parts.filter(p=>p.type==='text').map(p=>p.text).join('\n')??''
 const emptyMemory = ():Memory=>({preferences:{},evidence:{},lastProductIds:[]})
@@ -209,7 +210,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       const found=query?await this.searchServices(query,pet?.id,t.context,capability,species):null
       // Recorded as this turn's own search so the reply's price is validated against it.
       if(found?.ok&&!t.results.some(r=>r.name==='search_services'))this.updateTurn({results:[...t.results,{name:'search_services',input:{query,...(pet?{pet_id:pet.id}:{})},result:found}]},ctx.requestId)
-      if(unregistered)services+='\nCLIENTE SEM CADASTRO: responda primeiro o que ele perguntou (preço, serviço, busca, horário). Para marcar, ele precisa de cadastro: o cadastro pede o que a loja pede: nome do tutor, data de nascimento, CPF, CEP da rua, número da casa e ponto de referência, nome, espécie e raça do pet (peso se dito; raça e porte não são nome). Pergunte tudo o que faltar numa mensagem só, em lista, e use prepare_customer_registration só com dados ditos por ele. Assim que ele tiver dito todos esses dados, chame prepare_customer_registration na mesma resposta; data, horário e peso ficam para depois do cadastro.'+'\n'+registrationStatus(await this.orderedSaid())
+      if(unregistered)services+='\nCLIENTE SEM CADASTRO: responda primeiro o que ele perguntou (preço, serviço, busca, horário). Para marcar, ele precisa de cadastro: o cadastro pede o que a loja pede: nome do tutor, data de nascimento (peça como dia/mês/ano), CPF, CEP da rua, número da casa e ponto de referência, nome, espécie e raça do pet (peso se dito; raça e porte não são nome). Pergunte tudo o que faltar numa mensagem só, em lista, e use prepare_customer_registration só com dados ditos por ele. Assim que ele tiver dito todos esses dados, chame prepare_customer_registration na mesma resposta; data, horário e peso ficam para depois do cadastro.'+'\n'+registrationStatus(await this.orderedSaid())
       if(found?.ok)services+='\nSERVIÇOS JÁ CONSULTADOS PELO SERVIDOR (query "'+query+'"'+(pet?', pet '+String(pet.name)+' id '+pet.id:'')+'; não repita search_services com essa query): '+JSON.stringify(found.data)
       // Weight is asked only when the price really depends on it.
       const rows=found?.ok&&Array.isArray(record(found.data).services)?record(found.data).services as Record<string,unknown>[]:[]
@@ -308,6 +309,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
         if(index>=10)return fail('TOOL_BUDGET_EXCEEDED')
         const ctx={...t.context,actionIndex:index}
         if(d.name==='prepare_customer_registration'||d.name==='prepare_pet_registration'){const issue=registrationIssue(input,await this.inboundText(ctx),d.name==='prepare_customer_registration');if(issue)return {...fail(issue.code),instruction:issue.instruction}}
+        if(d.name==='prepare_customer_registration'&&this.env.LUNA_POSTAL_LOOKUP==='viacep'){const filled=await withPostalAddress(input);if(filled.notFound)return {...fail('POSTAL_CODE_NOT_FOUND'),instruction:'Esse CEP não existe. Peça para o cliente conferir o CEP; os outros dados já estão certos.'};Object.assign(input,filled.input)}
         const result=d.name.startsWith('draft_')?await executeDraftTool(this.db,registry,d.name,input,ctx):await registry.execute(d.name,input,ctx)
         if(d.name==='commit_confirmed_proposal'&&result.ok){
           await this.pauseCommittedDraft(String(input.proposal_id),ctx)
@@ -487,6 +489,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const closed=Boolean(ratingState?.awaiting&&!ratingState.prompt&&(committed||t.results.some(r=>r.name==='close_conversation'&&record(r.result).ok===true)))
     // The store's configured key may be sent; a payment is never declared received.
     const pixSent=t.results.some(r=>r.name==='get_payment_instructions'&&record(r.result).ok===true&&reply.includes(String(record(record(r.result).data).pix_key)))
+    reply=withoutInternalErrors(reply)
     if(/pagamento (?:confirmado|recebido)|pix (?:gerado|confirmado)/i.test(reply)||!pixSent&&/chave pix/i.test(reply))reply='O pedido pode ser registrado, mas o pagamento ainda precisa ser verificado pela loja.'
     if(!committed&&/\b(?:ja (?:reservei|agendei)|agendad[oa]|reservad[oa]|pedido (?:criado|confirmado))\b/i.test(reply.normalize('NFD').replace(/\p{Diacritic}/gu,'')))reply=rows.length?summary:'Ainda preciso da confirmação de uma proposta válida para concluir essa operação.'
     if(rating)reply='Obrigado pela avaliação!'

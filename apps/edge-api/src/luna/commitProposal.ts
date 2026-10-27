@@ -176,7 +176,7 @@ async function commitAppointment(database: D1Database, context: LunaExecutionCon
   const duration = catalog.items.reduce((sum, item) => sum + Number(item.duration_min || 0), 0)
   const availability = await validateScheduleAvailability({
     database, tenantId: context.tenantId, moduleId: context.moduleId, nowMs: lunaNow(context),
-    scheduledAtMs, durationMinutes: duration,
+    scheduledAtMs, durationMinutes: duration, serviceNames: catalog.items.map(item => item.name),
   })
   if (!availability.ok) return { ok: false, code: availability.code, retryable: false }
   const transport=payload.transport?await resolveTransportSnapshot(database,context,petId,scheduledAtMs,duration,payload.transport):null
