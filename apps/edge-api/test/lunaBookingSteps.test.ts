@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextBookingStep, weightSaid } from '../src/luna/bookingSteps'
+import { nextBookingStep, weightSaid, dateSaid, selfTransportSaid } from '../src/luna/bookingSteps'
 
 const step = (items: number, fields: Record<string, string>, transportOffered = true) => nextBookingStep({ items: Array.from({ length: items }, (_, i) => ({ id: 's' + i })), fields }, { transportOffered }).step
 
@@ -29,6 +29,15 @@ describe('booking steps follow the store order', () => {
     expect(weightSaid('10.5', 'tem 10,5 kg')).toBe(true)
     expect(weightSaid('15', 'porte médio, não sei o peso')).toBe(false)
     expect(weightSaid('8', 'tem 18 kg')).toBe(false)
+  })
+  it('needs a day before slots and the customer own words before assuming own transport', () => {
+    expect(dateSaid('quero agendar um banho pra Mel')).toBe(false)
+    expect(dateSaid('Banho pra Mel quarta às 10h')).toBe(true)
+    expect(dateSaid('tem pra amanhã?')).toBe(true)
+    expect(dateSaid('pode ser 30/10?')).toBe(true)
+    expect(selfTransportSaid('Banho pra Mel quarta às 10h')).toBe(false)
+    expect(selfTransportSaid('eu levo e busco')).toBe(true)
+    expect(selfTransportSaid('não precisa buscar, eu trago')).toBe(true)
   })
   it('skips transport when the store has no MotoDog', () => {
     expect(step(1, { pet_id: 'p', scheduled_at: '2026-10-28T09:00:00-03:00' }, false)).toBe('summary')

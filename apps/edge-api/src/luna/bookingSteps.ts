@@ -38,3 +38,9 @@ export function nextBookingStep(draft: Draft, options: { transportOffered: boole
 
 // A weight counts only when the customer wrote that number.
 export const weightSaid = (value: string, said: string) => new RegExp(`(^|[^0-9.])${String(Number(value.replace(',', '.'))).replace('.', '[.,]')}([^0-9]|$)`).test(said)
+
+const plain = (text: string) => text.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+// Slots are looked up only after the customer named a day.
+export const dateSaid = (said: string) => /\b(hoje|amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo|semana que vem|proxima semana|fim de semana|dia \d{1,2})\b|\b\d{1,2}\/\d{1,2}\b/.test(plain(said))
+// "Eu levo" is the customer's own transport; the model may not assume it.
+export const selfTransportSaid = (said: string) => /\b(levo|trago|eu busco|busco eu|vou levar|vou trazer|nao precis\w*|sem (?:motodog|transporte))\b/.test(plain(said))

@@ -17,7 +17,7 @@ import type { LunaExecutionContext, LunaToolResult } from './contracts'
 import { catalogInput, normalizeSearchKey, thinkCatalogSearch, validateThinkJob, customerHistory, closeThinkConversation, recordThinkRating, explicitRestockConsent, fail } from './thinkDomain'
 import { THINK_MODEL, THINK_TURN_NEURON_LIMIT, thinkNeurons, thinkInstructions, thinkCommerceRules, thinkAgendaRules, thinkTopics, serviceQuery, namedPet, thinkSkills, batchDue, ratingFromMessage, clinicalRisk, storeCalendar } from './thinkPolicy'
 import { getProduct, type Memory } from './thinkCatalog/catalog'
-import { nextBookingStep, weightSaid } from './bookingSteps'
+import { nextBookingStep, weightSaid, dateSaid, selfTransportSaid } from './bookingSteps'
 import { publishTableInvalidation } from '../realtimeApi'
 import { validateThinkReply, zonedIsoTime } from './thinkPresentation'
 import { findConfirmationTarget } from './commitProposal'
@@ -271,6 +271,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     for(const d of registry.definitions.filter(d=>readNames.has(d.name)))tools[d.name]=tool({description:d.description,inputSchema:jsonSchema<Record<string,unknown>>(d.parameters),execute:args=>registry.execute(d.name,args,this.turn().context)})
     const availability=registry.definitions.find(d=>d.name==='get_available_slots')!
     tools.get_available_slots=tool({description:availability.description+' O resultado já usa o fuso da loja: copie scheduled_at exatamente para o rascunho, sem converter novamente.',inputSchema:jsonSchema<Record<string,unknown>>(availability.parameters),execute:async args=>{
+      if(!dateSaid(await this.saidText()))return {...fail('DATE_NOT_SAID'),instruction:'O cliente ainda não disse o dia. Pergunte qual dia ele prefere antes de consultar vagas.'}
       const result=await registry.execute('get_available_slots',args,this.turn().context)
       if(!result.ok)return result
       const data=record(result.data),timezone=String(data.timezone)
@@ -332,7 +333,9 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const registry=createLunaToolRegistry(this.db)
     const refused=input.kind==='cart'?await this.ambiguousCartChange(input.operation_id,input.changes):input.kind==='booking'?await this.unnamedPet(input.changes):null
     const weight=input.kind==='booking'?input.changes.find(ch=>ch.action==='set_field'&&ch.field==='weight_kg')?.value:undefined
-    if(weight!==undefined){const c=this.turn().context,said=await this.db.prepare("SELECT group_concat(content_text,' ') text FROM (SELECT content_text FROM chat_messages WHERE tenant_id=? AND module_id='petshop' AND thread_id=? AND direction='inbound' ORDER BY created_at_ms DESC LIMIT 30)").bind(c.tenantId,c.conversationId).first<{text:string|null}>();if(!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(weight)||!weightSaid(weight,(said?.text??'')+' '+this.text(this.turn())))return {...fail('WEIGHT_NOT_SAID'),instruction:'O cliente não disse esse peso. Pergunte o peso aproximado; nunca estime pela raça.'}}
+    if(weight!==undefined&&(!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(weight)||!weightSaid(weight,await this.saidText())))return {...fail('WEIGHT_NOT_SAID'),instruction:'O cliente não disse esse peso. Pergunte o peso aproximado; nunca estime pela raça.'}
+    const mode=input.kind==='booking'?input.changes.find(ch=>ch.action==='set_field'&&ch.field==='transport_mode')?.value:undefined
+    if(mode&&/^(self|none)$/.test(mode)&&!selfTransportSaid(await this.saidText()))return {...fail('TRANSPORT_MODE_NOT_SAID'),instruction:'O cliente não disse que vai trazer o pet. Pergunte se ele traz ou se quer o MotoDog (buscar, levar ou os dois); o rascunho não foi alterado.'}
     if(refused)return refused
       this.setState({...this.state,capability:input.kind==='booking'?'agenda':input.kind==='registration'?'client':'cart'})
       const results=[]
@@ -365,6 +368,11 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
   }
   // With several pets, a booking needs the pet named somewhere in the
   // customer's messages; "o banho dela" alone must be answered with a question.
+  // Everything the customer wrote in this chat, newest 30 messages plus the current batch.
+  private async saidText(){
+    const c=this.turn().context,said=await this.db.prepare("SELECT group_concat(content_text,' ') text FROM (SELECT content_text FROM chat_messages WHERE tenant_id=? AND module_id='petshop' AND thread_id=? AND direction='inbound' ORDER BY created_at_ms DESC LIMIT 30)").bind(c.tenantId,c.conversationId).first<{text:string|null}>()
+    return (said?.text??'')+' '+this.text(this.turn())
+  }
   // A service priced by weight band needs the pet's weight before the summary.
   private async weightNeeded(d:{items:readonly {id:string}[];fields:Readonly<Record<string,string|undefined>>},customer:Awaited<ReturnType<ReturnType<typeof createLunaToolRegistry>['execute']>>){
     if(!d.items.length||!d.fields.pet_id||d.fields.weight_kg)return false
@@ -392,7 +400,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     if(missing.length)return {...fail('DRAFT_INCOMPLETE'),missing_fields:missing}
         const customer=await registry.execute('get_customer_context',{},c);if(!customer.ok)return customer.code==='CUSTOMER_NOT_FOUND'?{...customer,instruction:'O rascunho foi guardado. Falta o cadastro: peça o nome do cliente e o nome e a espécie do pet, use prepare_customer_registration e, depois de confirmado, prepare de novo.'}:customer
     const customerId=record(record(customer.data).customer).id
-    if(kind==='booking'){const s=nextBookingStep(draft,{transportOffered:await transportOffered(this.db,c.tenantId),weightNeeded:await this.weightNeeded(draft,customer)});if(s.step!=='summary')return {...fail('BOOKING_STEP_PENDING'),step:s.step,instruction:s.instruction}}
+    if(kind==='booking'){const s=nextBookingStep(draft,{transportOffered:await transportOffered(this.db,c.tenantId),weightNeeded:await this.weightNeeded(draft,customer)});if(s.step==='transport_option'){let city='';try{city=String(JSON.parse(String(draft.fields.address)).city??'')}catch{};const quote=await registry.execute('get_transport_quote',{pet_id:draft.fields.pet_id,city},c);return {...fail('BOOKING_STEP_PENDING'),step:s.step,instruction:'Escolha em options a opção que bate com o que o cliente pediu (buscar, levar ou os dois) e salve transport_option_id com prepare:true.',options:quote.ok?record(quote.data).options:[]}}if(s.step!=='summary')return {...fail('BOOKING_STEP_PENDING'),step:s.step,instruction:s.instruction}}
     let address:unknown;try{address=draft.fields.address?JSON.parse(draft.fields.address):undefined}catch{return fail('ADDRESS_FIELDS_REQUIRED')}
     const transportRequested=kind==='booking'&&Boolean(draft.fields.transport_mode&&draft.fields.transport_mode!=='none'&&draft.fields.transport_mode!=='self')
     if(transportRequested&&(!draft.fields.transport_option_id||!record(address).city||!record(address).street))return fail('TRANSPORT_FIELDS_REQUIRED')
