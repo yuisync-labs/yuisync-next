@@ -72,6 +72,12 @@ const DEFAULT_MESSAGE_TEMPLATES = {
   dental_brushing: '🦷 **Escovação Dental**\n\n🪥 Utilizando material do cliente (escova e creme dental):\n💰 **R$ 8,00**\n\n🪥 Utilizando material da empresa (escova e creme dental):\n💰 **R$ 10,00**',
 }
 
+// The only stored messages Luna reads; the other templates stay saved but hidden.
+const LUNA_MESSAGE_TEMPLATE_LABELS = {
+  monthly_plan: 'Regras do pacote mensal',
+  payment_proof_request: 'Pedido de comprovante do PIX',
+}
+
 const OPERATIONAL_STAFF_TEMPLATE_KEY = '__petshop_operational_staff'
 
 const INITIAL_FORM = {
@@ -1373,7 +1379,7 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <div className={showGeneralSettings ? 'space-y-4 order-5' : 'hidden'}>
+            <div className="hidden">
               <h3 className="text-xs font-black text-muted uppercase tracking-[0.2em] flex items-center gap-2">
                 <Bot size={14} /> PetBot e automação
               </h3>
@@ -1494,14 +1500,14 @@ export default function SettingsPage() {
                 <summary className="cursor-pointer list-none flex items-center justify-between gap-4">
                   <div>
                     <p className="text-sm font-bold text-text">Editar mensagens automáticas</p>
-                    <p className="text-xs text-muted mt-1">Banho, consulta, MotoDog, confirmações e demais textos aprovados.</p>
+                    <p className="text-xs text-muted mt-1">Textos que a Luna usa: regras do pacote mensal e pedido de comprovante do PIX. Preços vêm sempre do cadastro.</p>
                   </div>
                   <span className="text-xs font-bold text-muted group-open:rotate-180 transition-transform">⌄</span>
                 </summary>
                 <div className="pt-6 mt-5 border-t border-white/5 grid grid-cols-1 md:grid-cols-2 gap-5">
-                  {Object.entries(normalizeTemplates(form.message_templates)).map(([key, value]) => (
+                  {Object.entries(LUNA_MESSAGE_TEMPLATE_LABELS).map(([key, label]) => [key, label, normalizeTemplates(form.message_templates)[key]]).map(([key, label, value]) => (
                     <div key={key} className="space-y-2">
-                      <label className="inp-label">{key.replaceAll('_', ' ')}</label>
+                      <label className="inp-label">{label}</label>
                       <textarea className="inp min-h-[110px] resize-y" disabled={!canEdit} value={value} onChange={(event) => updateTemplate(key, event.target.value)} />
                     </div>
                   ))}
