@@ -1200,14 +1200,14 @@ export default function SettingsPage() {
                   <Stethoscope size={16} />
                   <div>
                     <h4 className="font-bold">Atendimento veterinário</h4>
-                    <p className="text-xs text-muted">Nome exibido e horários independentes da agenda de banho e tosa.</p>
+                    <p className="text-xs text-muted">Nome exibido nos atendimentos.</p>
                   </div>
                 </div>
                 <div>
                   <label className="inp-label">Nome da veterinária</label>
                   <input className="inp" disabled={!canEdit} value={form.veterinary_name} onChange={(event) => setForm((prev) => ({ ...prev, veterinary_name: event.target.value }))} />
                 </div>
-                <div className="space-y-3">
+                <div className="hidden">
                   {PETBOT_WEEKDAYS.map(([weekday, label]) => {
                     const periods = normalizeBusinessHours(form.veterinary_business_hours, DEFAULT_VETERINARY_BUSINESS_HOURS)[weekday] || []
                     const open = periods[0]?.open || '13:00'
@@ -1316,7 +1316,7 @@ export default function SettingsPage() {
               <div className="bg-card border border-white/5 rounded-3xl p-8 shadow-sm space-y-6">
                 <div className="flex items-center gap-2">
                   <Clock size={16} />
-                  <div><h4 className="font-bold">Duração dos serviços</h4><p className="text-xs text-muted">Tempos usados pela Luna para bloquear conflitos reais na agenda.</p></div>
+                  <div><h4 className="font-bold">Duração dos serviços</h4><p className="text-xs text-muted">Tempos usados pela agenda do painel para bloquear conflitos.</p></div>
                 </div>
                 {Object.entries(normalizeServiceDurations(form.petshop_service_durations)).map(([rangeKey, row]) => (
                   <div key={rangeKey} className="rounded-2xl border border-white/5 bg-white/[0.02] p-4 space-y-3">
@@ -1330,7 +1330,7 @@ export default function SettingsPage() {
                 ))}
               </div>
 
-              <div className="bg-card border border-white/5 rounded-3xl p-8 shadow-sm space-y-5">
+              <div className="hidden">
                 <div className="flex items-center gap-2"><Phone size={16}/><div><h4 className="font-bold">Lembrete de chegada pelo WhatsApp</h4><p className="text-xs text-muted">Preparação para template de utilidade aprovado pela Meta. O envio automático permanece desligado até a homologação.</p></div></div>
                 <label className="flex items-center gap-2 text-sm text-muted"><input type="checkbox" disabled={!canEdit} checked={Boolean(form.appointment_reminder_enabled)} onChange={(event) => setForm((prev) => ({ ...prev, appointment_reminder_enabled: event.target.checked }))} />Ativar quando o template estiver aprovado</label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1397,7 +1397,7 @@ export default function SettingsPage() {
                   <p className="text-xs text-muted mt-3">Edite apenas ajustes pontuais. Estoque, agenda e dados da loja continuam vindo do banco.</p>
                 </div>
               </details>
-              <div className="bg-card border border-white/5 rounded-3xl p-8 shadow-sm space-y-4">
+              <div className="hidden">
                 <div>
                   <label className="inp-label">Autonomia do PetBot</label>
                   <select
@@ -1513,7 +1513,7 @@ export default function SettingsPage() {
             {showFiscalSettings && (
               <div className="col-span-1 md:col-span-2 space-y-4">
                 <h3 className="text-xs font-black text-emerald-500 uppercase tracking-[0.2em] flex items-center gap-2">
-                  <FileText size={14} /> Emissao fiscal automatica
+                  <FileText size={14} /> Emissão fiscal
                 </h3>
                 <div className="bg-card border border-emerald-500/20 rounded-3xl p-8 shadow-sm space-y-7">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1584,7 +1584,7 @@ export default function SettingsPage() {
                         placeholder="1"
                       />
                     </div>
-                    <div>
+                    <div className="hidden">
                       <label className="inp-label">Documento padrao na venda</label>
                       <select
                         className="inp"
@@ -1600,7 +1600,7 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <label className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
+                    <label className="hidden">
                       <div>
                         <p className="text-sm font-bold text-text">Emitir automaticamente ao concluir venda</p>
                         <p className="text-xs text-muted">Quando ativo, o PDV ja gera documento fiscal automaticamente.</p>
@@ -1650,7 +1650,7 @@ export default function SettingsPage() {
                         </p>
                       )}
                     </div>
-                    <div>
+                    <div className="hidden">
                       <label className="inp-label">Observacoes fiscais</label>
                       <input
                         className="inp"
@@ -1662,7 +1662,7 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  <div className="space-y-4">
+                  <div className="hidden">
                     <p className="text-xs font-black text-muted uppercase tracking-[0.2em] flex items-center gap-2">
                       <Building2 size={14} /> Dados do emissor
                     </p>
