@@ -33,6 +33,14 @@ jobs:
       - run: npm run test --workspace @yuisync/edge-api -- test/chatQualityApi.test.ts test/lunaAiBudget.test.ts
       - run: npm test -- src/lib/internalChatApi.test.js src/lib/lunaTurnPolling.test.js
       - run: npm run build && npm run deploy:dry-run --workspace @yuisync/edge-api
+      - name: Report the staging D1 queries that read the most
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/luna/d1-insights-report.mjs
+          pr=$(gh api "repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${{ github.ref_name }}&state=open" --jq '.[0].number')
+          if [ -n "$pr" ]; then gh pr comment "$pr" --repo "${{ github.repository }}" --body-file d1-insights.md; fi
       - name: Apply additive staging migrations
         working-directory: apps/edge-api
         run: |
