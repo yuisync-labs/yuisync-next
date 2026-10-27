@@ -45,3 +45,20 @@ const plain = (text: string) => text.normalize('NFD').replace(/\p{Diacritic}/gu,
 export const dateSaid = (said: string) => /\b(hoje|amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo|semana que vem|proxima semana|fim de semana|dia \d{1,2})\b|\b\d{1,2}\/\d{1,2}\b/.test(plain(said))
 // "Eu levo" is the customer's own transport; the model may not assume it.
 export const selfTransportSaid = (said: string) => /\b(levo|trago|eu busco|busco eu|vou levar|vou trazer|nao precis\w*|sem (?:motodog|transporte))\b/.test(plain(said))
+
+// "Tosa" can be máquina, tesoura or total: when the customer named only the
+// common word, Luna asks which kind instead of picking one for them.
+const weightBand = /\b(?:pet\s+)?(?:ate|de)?\s*\d+(?:[.,]\d+)?\s*(?:kg)?\s*(?:a|ate)\s*\d+(?:[.,]\d+)?\s*kg\b|\bpet\s+ate\s+\d+\s*kg\b/g
+// Size and coat pick the price band (from weight and breed), not the kind.
+const sizeWords = /^(e|com|do|da|de|para|pet|porte|pequeno|medio|grande|gigante|mini|pelo|pelagem|pelagens|curto|longo|duplo|todas|as|gato|cachorro|cao|\d+)$/
+export function serviceKinds(rows: readonly { name?: unknown }[], query: string, said: string): string[] {
+  const asked = new Set(plain(query).split(/[^a-z0-9]+/).filter(Boolean)), text = ' ' + plain(said).replace(/[^a-z0-9]+/g, ' ') + ' '
+  const kinds = new Map<string, string[]>()
+  for (const row of rows) {
+    const kind = plain(String(row.name ?? '')).replace(weightBand, ' ').replace(/[^a-z0-9]+/g, ' ').trim()
+    const extra = kind.split(' ').filter(word => word && !asked.has(word) && !sizeWords.test(word))
+    if (extra.length && !kinds.has(kind)) kinds.set(kind, extra)
+  }
+  if (kinds.size < 2 || [...kinds.values()].some(extra => extra.some(word => text.includes(' ' + word + ' ')))) return []
+  return [...kinds.keys()]
+}

@@ -1274,6 +1274,67 @@
       },
       "family": "flow",
       "input_fragments": []
+    },
+    {
+      "id": "FLOW-08-1",
+      "name": "Só 'tosa': pergunta qual tipo antes de escolher",
+      "unregistered": true,
+      "turns": [
+        "queria agendar uma tosa"
+      ],
+      "expect": {
+        "reply": "m[aá]quina[\\s\\S]*tesoura|tesoura[\\s\\S]*m[aá]quina",
+        "no_proposal": true
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-08-2",
+      "name": "CPF inválido no cadastro: avisa e pede só o CPF",
+      "unregistered": true,
+      "turns": [
+        "queria agendar um banho",
+        "Carolina, 25/04/2000, 32945423421, 36880000, 120, perto da praça, Loki, cachorro, husky, 15kg"
+      ],
+      "expect": {
+        "reply": "cpf",
+        "not_reply": "qual (dia|data)|hor[aá]rio",
+        "no_proposal": true
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-08-3",
+      "name": "CPF corrigido ainda inválido: não agradece nem pede tudo de novo",
+      "unregistered": true,
+      "turns": [
+        "queria agendar um banho",
+        "Carolina, 25/04/2000, 32945423421, 36880000, 120, perto da praça, Loki, cachorro, husky, 15kg",
+        "14235678412"
+      ],
+      "expect": {
+        "reply": "cpf",
+        "not_reply": "nome completo|data de nascimento|qual (dia|data)",
+        "no_proposal": true
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-08-4",
+      "name": "Cadastro com CPF válido vai para confirmação",
+      "unregistered": true,
+      "turns": [
+        "oi, quero marcar banho pro meu cachorro",
+        "sou a Carolina, nasci 25/04/2000, cpf 529.982.247-25, cep 36880-000, casa 120, perto da praça. O cachorro é o Loki, husky, 15kg"
+      ],
+      "expect": {
+        "reply": "confirm|cadastr"
+      },
+      "family": "flow",
+      "input_fragments": []
     }
   ]
 }

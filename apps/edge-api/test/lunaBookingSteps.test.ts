@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { nextBookingStep, weightSaid, dateSaid, selfTransportSaid } from '../src/luna/bookingSteps'
+import { nextBookingStep, weightSaid, dateSaid, selfTransportSaid, serviceKinds } from '../src/luna/bookingSteps'
+import { registrationStatus } from '../src/luna/registrationLanguage'
 
 const step = (items: number, fields: Record<string, string>, transportOffered = true) => nextBookingStep({ items: Array.from({ length: items }, (_, i) => ({ id: 's' + i })), fields }, { transportOffered }).step
 
@@ -41,5 +42,31 @@ describe('booking steps follow the store order', () => {
   })
   it('skips transport when the store has no MotoDog', () => {
     expect(step(1, { pet_id: 'p', scheduled_at: '2026-10-28T09:00:00-03:00' }, false)).toBe('summary')
+  })
+})
+
+describe('service kinds', () => {
+  const tosa = ['TOSA MAQUINA 10 KG A 22 KG', 'TOSA TESOURA 10 KG A 22 KG', 'TOSA TOTAL 10 KG A 22 KG', 'TOSA HIGIENICA COM DETALHE PET ATE 22 KG', 'Tosa'].map(name => ({ name }))
+  it('asks which tosa when only "tosa" was said', () => {
+    expect(serviceKinds(tosa, 'tosa', 'queria agendar uma tosa')).toEqual(['tosa maquina', 'tosa tesoura', 'tosa total', 'tosa higienica com detalhe'])
+    expect(serviceKinds(tosa, 'tosa', 'quero tosa na máquina')).toEqual([])
+  })
+  it('does not ask a kind for size or coat bands', () => {
+    const banho = ['BANHO PET PORTE MEDIO 10,1 A 22 KG (PELO CURTO)', 'BANHO PET PORTE GRANDE 22 A 40 KG (PELO DUPLO)', 'BANHO PET PORTE PEQUENO 0 KG A 10 KG (TODAS AS PELAGENS)', 'BANHO GATO (TODAS AS PELAGENS)'].map(name => ({ name }))
+    expect(serviceKinds(banho, 'banho', 'quero um banho')).toEqual([])
+  })
+})
+
+describe('registration status', () => {
+  it('flags the newest CPF when it is invalid and keeps what was already said', () => {
+    const status = registrationStatus('Carolina, 25/04/2000, 32945423421, 34255553, s/n, Loki 14235678412')
+    expect(status).toContain('CPF que o cliente mandou é inválido')
+    expect(status).toContain('Já disse e está válido: data de nascimento, CEP')
+    expect(status).not.toContain('Ainda não disse')
+  })
+  it('accepts a valid CPF and lists what is missing', () => {
+    const status = registrationStatus('Ana, cpf 529.982.247-25')
+    expect(status).not.toContain('inválido')
+    expect(status).toContain('Ainda não disse: data de nascimento, CEP')
   })
 })

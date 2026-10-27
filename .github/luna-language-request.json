@@ -1,8 +1,11 @@
 {
-  "run": false,
+  "run": true,
   "cases": [
-    "FLOW-07-3"
+    "FLOW-08-1",
+    "FLOW-08-2",
+    "FLOW-08-3",
+    "FLOW-08-4"
   ],
-  "reason": "motodog_store_confirms",
+  "reason": "registration_cpf_and_service_kind",
   "model": "openai:gpt-4.1-mini"
 }

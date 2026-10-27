@@ -1,3 +1,5 @@
+import { validCpf } from './registrationCommands'
+
 // A registration may only carry names the customer actually said. Breed, size
 // and species words describe the pet; they are not its name ("um Yorkshire",
 // "huskciberiano, médio"), and a contact label is not the customer's name.
@@ -37,4 +39,22 @@ export function registrationIssue(args: Record<string, unknown>, said: string, n
     if (missing.length) return { code: 'REGISTRATION_DATA_NOT_SAID', instruction: `Para o cadastro a loja precisa, ditos pelo cliente: ${missing.join(', ')}. Peça numa mensagem só, junto com ponto de referência e nome e raça do pet se faltarem. Não invente nem complete dados.` }
   }
   return null
+}
+
+// What a new customer already said for the registration, checked by the server
+// so the model neither thanks for a wrong CPF nor asks for everything again.
+// `said` is the customer's messages, oldest first.
+export function registrationStatus(said: string): string {
+  const cpf = [...said.matchAll(/(?<![\d.])(\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)/g)].at(-1)?.[1].replace(/\D/g, '')
+  const told = [
+    /(?<!\d)\d{1,2}[/.-]\d{1,2}[/.-](?:\d{4}|\d{2})(?!\d)/.test(said) ? 'data de nascimento' : '',
+    cpf && validCpf(cpf) ? 'CPF' : '',
+    /(?<![\d.])\d{5}-?\d{3}(?![\d-])/.test(said) ? 'CEP' : '',
+  ].filter(Boolean)
+  const missing = ['data de nascimento', 'CPF', 'CEP'].filter(item => !told.includes(item) && !(item === 'CPF' && cpf))
+  return 'CADASTRO VERIFICADO PELO SERVIDOR: '
+    + (cpf && !validCpf(cpf) ? 'o último CPF que o cliente mandou é inválido (os dígitos não conferem). Diga isso a ele e peça para conferir o CPF; não agradeça como se estivesse certo nem siga para dia, horário ou resumo antes do cadastro. ' : '')
+    + (told.length ? 'Já disse e está válido: ' + told.join(', ') + '. ' : '')
+    + (missing.length ? 'Ainda não disse: ' + missing.join(', ') + '. ' : '')
+    + 'Peça só o que falta ou está errado, nunca a lista toda de novo. Enquanto o cadastro não for confirmado, não pergunte se ele confirma o agendamento.'
 }
