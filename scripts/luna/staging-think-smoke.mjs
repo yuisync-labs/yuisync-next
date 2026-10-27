@@ -69,11 +69,16 @@ const browser=await chromium.launch({headless:true})
 try{
  const page=await browser.newPage({viewport:{width:1440,height:900}})
  const errors=[];page.on('pageerror',e=>errors.push(e.message))
+ const authResponses=[];page.on('response',async r=>{if(r.url().includes('/api/auth/'))authResponses.push(r.status()+' '+new URL(r.url()).pathname+' '+(await r.text().catch(()=>'')).slice(0,160))})
  await page.goto(base+'/entrar')
  await page.getByLabel('E-mail',{exact:true}).fill(process.env.E2E_EMAIL)
  await page.getByLabel('Senha',{exact:true}).fill(process.env.E2E_PASSWORD)
  await page.locator('form button[type="submit"]').click()
- await page.waitForURL(u=>!u.pathname.startsWith('/entrar'),{timeout:30000})
+ await page.waitForURL(u=>!u.pathname.startsWith('/entrar'),{timeout:30000}).catch(async error=>{
+  // The login form keeps its own message; print it with the auth calls the page made.
+  console.error(JSON.stringify({login_failed:true,url:page.url(),auth:authResponses,alerts:await page.locator('[role="alert"],.text-red-400,.text-danger').allInnerTexts().catch(()=>[]),errors}))
+  throw error
+ })
  await page.goto(base+'/petshop/chat')
  await page.getByRole('button',{name:'Avaliações',exact:true}).first().click()
  const panel=page.getByRole('region',{name:'Controle de qualidade das avaliações'})
