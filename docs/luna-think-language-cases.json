@@ -1131,6 +1131,149 @@
         "appointments": 0,
         "reply": "kg|porte|faixa"
       }
+    },
+    {
+      "id": "FLOW-07-1",
+      "name": "Agendamento pede o dia antes de consultar vagas",
+      "turns": [
+        "quero agendar um banho pra Mel"
+      ],
+      "setup": {
+        "transport": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "dia|quando|data"
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-07-2",
+      "name": "Com dia e horário, pergunta se traz ou usa o MotoDog antes do resumo",
+      "turns": [
+        "Banho pra Mel quarta às 10h"
+      ],
+      "setup": {
+        "transport": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "traz|busca|lev|MotoDog",
+        "no_proposal": true
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-07-3",
+      "name": "MotoDog buscar e levar com endereço até a confirmação",
+      "turns": [
+        "Oi, quero agendar um banho pra Mel na quarta às 10h",
+        "quero que vocês busquem e levem",
+        "Rua das Flores 120, Centro, perto da padaria",
+        "Confirmo"
+      ],
+      "setup": {
+        "transport": true
+      },
+      "expect": {
+        "appointments": 1
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-07-4",
+      "name": "Resumo do agendamento no formato da loja",
+      "turns": [
+        "Banho pra Mel quarta às 10h, eu levo e busco"
+      ],
+      "expect": {
+        "appointments": 0,
+        "reply": "Segue o resumo do seu agendamento[\\s\\S]*Você confirma"
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-07-5",
+      "name": "Chave PIX configurada é passada depois do pedido",
+      "turns": [
+        "quero uma Ração A pra retirar na loja",
+        "Pode fechar",
+        "vou pagar no pix, qual a chave?"
+      ],
+      "setup": {
+        "pix": true
+      },
+      "expect": {
+        "sales": 1,
+        "reply": "pix-teste@exemplo\\.com"
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-07-6",
+      "name": "Sem chave PIX configurada, não inventa uma",
+      "turns": [
+        "qual a chave pix de vocês?"
+      ],
+      "expect": {
+        "sales": 0,
+        "reply": "loja|atend|confirm|n[aã]o",
+        "not_reply": "@|chave pix (?:é|e):"
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-07-7",
+      "name": "Cliente novo dá todos os dados do cadastro e confirma",
+      "unregistered": true,
+      "turns": [
+        "Oi, quero agendar banho pro Thor, ele é um shihtzu",
+        "Sou a Ana, nasci em 14/05/1990, CPF 529.982.247-25, CEP 36880-000, Rua A número 191, perto do mercado",
+        "Sim"
+      ],
+      "expect": {
+        "appointments": 0,
+        "reply": "registrado"
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-07-8",
+      "name": "CPF inválido é pedido de novo",
+      "unregistered": true,
+      "turns": [
+        "Quero banho pro Thor, shihtzu. Sou a Ana, nasci 14/05/1990, CPF 111.111.111-11, CEP 36880-000, número 191, perto do mercado"
+      ],
+      "expect": {
+        "appointments": 0,
+        "reply": "CPF",
+        "no_proposal": true
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-07-9",
+      "name": "Explica o que o serviço inclui com as próprias palavras",
+      "turns": [
+        "o que inclui o banho?"
+      ],
+      "setup": {
+        "descriptions": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "unha|ouvido"
+      },
+      "family": "flow",
+      "input_fragments": []
     }
   ]
 }

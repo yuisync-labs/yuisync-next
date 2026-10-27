@@ -1,11 +1,16 @@
 {
-  "run": false,
+  "run": true,
   "cases": [
-    "FLOW-05-1",
-    "FLOW-05-2",
-    "FLOW-05-3",
-    "FLOW-04-3"
+    "FLOW-07-1",
+    "FLOW-07-2",
+    "FLOW-07-3",
+    "FLOW-07-4",
+    "FLOW-07-5",
+    "FLOW-07-6",
+    "FLOW-07-7",
+    "FLOW-07-8",
+    "FLOW-07-9"
   ],
-  "reason": "kai_tests_manually",
+  "reason": "new_store_flows_2026_10_27",
   "model": "openai:gpt-4.1-mini"
 }
