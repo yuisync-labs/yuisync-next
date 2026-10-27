@@ -36,6 +36,13 @@ describe('Think: conversa e provas comerciais',()=>{
   expect(validateThinkReply('Opções até R$ 130,00: Ração A por R$ 90,00. Temos estoque.',facts).ok).toBe(true)
   expect(validateThinkReply('A Ração A custa R$ 130,00.',facts).ok).toBe(false)
  })
+ it('cita a chave PIX só como a loja configurou e nunca confirma pagamento',()=>{
+  const pix=[{name:'get_payment_instructions',result:{ok:true,data:{pix_key:'pix-teste@exemplo.com'}}}]
+  expect(validateThinkReply('A chave PIX é pix-teste@exemplo.com. Envie o comprovante, por favor.',pix).ok).toBe(true)
+  expect(validateThinkReply('A chave PIX é loja@outra.com.',pix)).toMatchObject({ok:false,reason:'PAYMENT_NOT_INTEGRATED'})
+  expect(validateThinkReply('A chave PIX é pix-teste@exemplo.com.',[])).toMatchObject({ok:false,reason:'PAYMENT_NOT_INTEGRATED'})
+  expect(validateThinkReply('Pagamento confirmado!',pix)).toMatchObject({ok:false,reason:'PAYMENT_NOT_INTEGRATED'})
+ })
  it('fornece horário com offset da loja preservando exatamente o instante',()=>{
   for(const [utc,local] of [['2026-10-17T17:00:00Z','2026-10-17T14:00:00-03:00'],['2026-10-17T01:00:00Z','2026-10-16T22:00:00-03:00']]){
    expect(zonedIsoTime(utc,'America/Sao_Paulo')).toBe(local)

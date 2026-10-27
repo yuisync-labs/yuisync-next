@@ -49,7 +49,8 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
     return { ok: true, data: { pix_key: key, pix_holder: optionalText(settings.pix_holder_name), proof_request: storeMessage(settings, 'payment_proof_request'), source: 'module_settings_extensions', instruction: 'Envie a chave exatamente como está. Não diga que o pagamento foi recebido; a loja confere o comprovante.' } }
   }
   if (name === 'get_available_slots') {
-    const starts = Date.parse(String(args.starts_at)), ends = Date.parse(String(args.ends_at))
+    // An exact time ("quarta às 10h") arrives as starts_at = ends_at: look at that time and the next few hours.
+    const starts = Date.parse(String(args.starts_at)), until = Date.parse(String(args.ends_at)), ends = until === starts ? starts + 3 * 3600000 : until
     if (![args.starts_at, args.ends_at].every(v => typeof v === 'string' && /(?:Z|[+-]\d\d:\d\d)$/.test(v)) || !Number.isFinite(starts) || !Number.isFinite(ends) || starts >= ends || ends - starts > 86400000) return { ok: false, code: 'SCHEDULE_WINDOW_INVALID', retryable: false, validation_errors: [{field:'starts_at/ends_at',rule:'Use ISO 8601 com offset explícito (ex.: 2026-10-17T14:00:00-03:00), início menor que fim e janela de até 24 horas. Corrija os argumentos; não repita a chamada inválida.'}] }
     const hours = normalizeBusinessHours(settings.petbot_business_hours), timezone = optionalText(settings.petbot_timezone)
     if (!hours || !timezone) return { ok: false, code: 'SCHEDULE_CONFIGURATION_UNAVAILABLE', retryable: false }

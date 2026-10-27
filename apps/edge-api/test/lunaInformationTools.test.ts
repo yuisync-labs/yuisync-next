@@ -66,6 +66,10 @@ describe('Luna native information tools', () => {
     expect(remaining).not.toContain(start.toISOString())
     expect(remaining[0]).toBe(new Date(start.getTime() + 3600000).toISOString())
     expect(await createLunaToolRegistry(db).execute('get_available_slots', { service_ids: ['bath'], starts_at: start.toISOString(), ends_at: new Date(start.getTime() + 48 * 3600000).toISOString() }, ctx)).toMatchObject({ ok: false, code: 'SCHEDULE_WINDOW_INVALID' })
+    // "quarta às 10h": an exact time looks at that time and the hours after it.
+    const exact = await createLunaToolRegistry(db).execute('get_available_slots', { service_ids: ['bath'], starts_at: start.toISOString(), ends_at: start.toISOString() }, ctx) as { ok: boolean; data: { slots: string[] } }
+    expect(exact.ok).toBe(true)
+    expect(exact.data.slots[0]).toBe(new Date(start.getTime() + 3600000).toISOString())
   })
 
   it('bloqueia agendamento fora do expediente e entrega sem endereço estruturado', async () => {

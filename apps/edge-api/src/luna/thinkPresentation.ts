@@ -15,7 +15,9 @@ export function validateThinkReply(reply:string,results:readonly {name:string;re
   results.forEach(r=>visit(r.result))
   for(const m of reply.matchAll(/R\$\s*([\d.]+(?:,\d{1,2})?)|\b(\d+(?:[.,]\d{1,2})?)\s*reais\b/gi)){const raw=m[1]??m[2];const amount=raw.includes(',')?raw.replace(/\./g,'').replace(',','.'):raw;const cents=Math.round(Number(amount)*100);const isBudget=/\b(?:ate|limite de|orcamento de|maximo de)\s*$/.test(normalized(reply.slice(Math.max(0,m.index-30),m.index)));if(!prices.has(cents)&&![...spokenQuantities(customerText)].some(n=>prices.has(cents/n))&&!(isBudget&&budgets.has(cents)))return {ok:false,reason:'UNSUPPORTED_PRICE'}}
   const text=normalized(reply)
-  if(/pagamento (?:confirmado|recebido)|pix (?:gerado|confirmado)|chave pix/.test(text))return {ok:false,reason:'PAYMENT_NOT_INTEGRATED'}
+  // The PIX key may be quoted only as the store configured it; payment is never confirmed here.
+  const pixKey=results.map(r=>r.name==='get_payment_instructions'&&(r.result as {ok?:unknown;data?:{pix_key?:unknown}})?.ok===true?String((r.result as {data:{pix_key?:unknown}}).data.pix_key??''):'').find(Boolean)
+  if(/pagamento (?:confirmado|recebido)|pix (?:gerado|confirmado)/.test(text)||/chave pix/.test(text)&&!(pixKey&&reply.includes(pixKey)))return {ok:false,reason:'PAYMENT_NOT_INTEGRATED'}
   if(/(?:entrega(?:mos)?|chega(?:ra)?|sai para entrega) (?:hoje|amanha)|entrega entre \d/.test(text))return {ok:false,reason:'DELIVERY_WINDOW_UNVERIFIED'}
   if(!hasStock&&/\b(?:em estoque|temos estoque|disponivel em estoque|acabou|esgotad[oa])\b/.test(text))return {ok:false,reason:'STOCK_UNVERIFIED'}
   if(hasStock&&!positiveStock&&!/\bnao\b/.test(text)&&/\b(?:disponivel|temos estoque|em estoque)\b/.test(text))return {ok:false,reason:'STOCK_ZERO'}
