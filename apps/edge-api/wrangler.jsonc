@@ -83,6 +83,8 @@
     },
     "staging": {
       "name": "yuisync-edge-api-staging",
+      // Think emits invoke_agent / chat / execute_tool spans when traces are on.
+      "observability": { "enabled": true, "head_sampling_rate": 1, "traces": { "enabled": true } },
       "vars": {
         "APP_ENV": "staging",
         "SERVICE_NAME": "yuisync-edge-api",

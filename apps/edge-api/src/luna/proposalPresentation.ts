@@ -37,7 +37,9 @@ export function renderProposalSummary(row: PresentableProposal): string {
 }
 
 // Same validated payload and proof, with customer-facing labels and store time.
-export function renderThinkProposalSummary(row:PresentableProposal,timezone:string):string{
+export type SummaryStore={store_name?:string|null;address?:string|null;neighborhood?:string|null;city?:string|null}
+export function renderThinkProposalSummary(row:PresentableProposal,timezone:string,store?:SummaryStore):string{
+  if(row.operation_kind==='appointment_create')return renderBookingSummary(row,timezone,store)
   const labels:Record<string,string>={product_order_create:'seu pedido',appointment_create:'o agendamento',appointment_reschedule:'a mudança de horário',appointment_cancel:'o cancelamento',customer_registration:'o cadastro',pet_registration:'o cadastro do pet'}
   const legacy=renderProposalSummary(row).split('\n')
   const payload=JSON.parse(row.payload_json) as Record<string,unknown>
@@ -57,7 +59,7 @@ export async function loadPresentableProposals(database: D1Database, context: Lu
 }
 
 // Called ONLY after a persisted playground message or provider-accepted WhatsApp send.
-export async function recordProposalPresentation(database: D1Database, context: LunaExecutionContext, ids: readonly string[], messageId: string,think?:{timezone:string}): Promise<void> {
+export async function recordProposalPresentation(database: D1Database, context: LunaExecutionContext, ids: readonly string[], messageId: string,think?:{timezone:string;store?:SummaryStore}): Promise<void> {
   const message = await database.prepare(`SELECT content_text,created_at_ms FROM chat_messages WHERE tenant_id=?1 AND module_id=?2 AND thread_id=?3 AND id=?4 AND direction='outbound' AND actor_type='assistant'`)
     .bind(context.tenantId, context.moduleId, context.conversationId, messageId).first<{ content_text: string;created_at_ms:number }>()
   if (!message) throw new Error('PRESENTATION_MESSAGE_MISSING')
@@ -65,10 +67,31 @@ export async function recordProposalPresentation(database: D1Database, context: 
   await acceptResponseMemory(database,context,messageId,message.content_text,presentedAt)
   const rows = await loadPresentableProposals(database, context, ids)
   for (const row of rows) {
-    if (!message.content_text.includes(think?renderThinkProposalSummary(row,think.timezone):renderProposalSummary(row))) throw new Error('PRESENTATION_SUMMARY_MISSING')
+    if (!message.content_text.includes(think?renderThinkProposalSummary(row,think.timezone,think.store):renderProposalSummary(row))) throw new Error('PRESENTATION_SUMMARY_MISSING')
     await database.prepare(`INSERT INTO luna_proposal_presentations(tenant_id,module_id,conversation_id,proposal_id,proposal_version,fingerprint,outbound_message_id,presented_at_ms)
       VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(tenant_id,module_id,conversation_id,proposal_id) DO UPDATE SET
       proposal_version=excluded.proposal_version,fingerprint=excluded.fingerprint,outbound_message_id=excluded.outbound_message_id,presented_at_ms=excluded.presented_at_ms`)
       .bind(context.tenantId, context.moduleId, context.conversationId, row.id, row.version, row.fingerprint, messageId, presentedAt).run()
   }
+}
+
+// A booking summary in the layout the store already sends its customers:
+// pet, value, place, address, date and time on their own lines.
+function renderBookingSummary(row:PresentableProposal,timezone:string,store?:SummaryStore):string{
+  const payload=JSON.parse(row.payload_json) as Record<string,unknown>,at=Number(payload.scheduled_at_ms)
+  const part=(options:Intl.DateTimeFormatOptions)=>new Intl.DateTimeFormat('pt-BR',{timeZone:timezone,...options}).format(at)
+  const lines=['Segue o resumo do seu agendamento:']
+  if(payload.pet_name)lines.push(`Pet: ${String(payload.pet_name)}`)
+  for(const raw of Array.isArray(payload.items)?payload.items:Array.isArray(payload.services)?payload.services:[]){const item=raw as Record<string,unknown>;lines.push(`Serviço: ${String(item.name??item.code)}${item.pet_name?' — '+String(item.pet_name):''}: ${money(item.subtotal_cents??item.price_cents??item.unit_price_cents??item.default_price_cents)}`)}
+  if(payload.grooming_machine_no!=null)lines.push(`Número da máquina: ${String(payload.grooming_machine_no)}`)
+  if(payload.transport){const t=payload.transport as Record<string,unknown>;lines.push(`Transporte: ${String(t.label)} — ${money(t.fee_cents)}`,`Endereço de busca/entrega: ${String(t.address)}, ${String(t.city)}`);if(t.reference)lines.push(`Referência: ${String(t.reference)}`)}
+  const total=payload.total_cents??payload.subtotal_cents
+  if(total!==undefined)lines.push(`Valor do agendamento: ${money(total)}`)
+  if(store?.store_name)lines.push(`Local: ${store.store_name}${store.city?' - '+store.city:''}`)
+  if(store?.address)lines.push(`Endereço: ${store.address}${store.neighborhood?' - '+store.neighborhood:''}${store.city?', '+store.city:''}`)
+  if(Number.isFinite(at)&&at>0)lines.push(`Data: ${part({dateStyle:'short'})} (${part({weekday:'long'})})`,`Horário: ${part({hour:'2-digit',minute:'2-digit'})}`)
+  if(payload.notes)lines.push(`Observações: ${String(payload.notes)}`)
+  if(Array.isArray(payload.benefit_allocations))for(const raw of payload.benefit_allocations){const allocation=raw as Record<string,unknown>;lines.push(`Benefício de pacote: ${String(allocation.planName)} — ${String(allocation.serviceCode)}. Sujeito à revalidação na confirmação.`)}
+  lines.push('Você confirma este resumo?')
+  return lines.join('\n')
 }
