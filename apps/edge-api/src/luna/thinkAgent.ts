@@ -335,7 +335,12 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const weight=input.kind==='booking'?input.changes.find(ch=>ch.action==='set_field'&&ch.field==='weight_kg')?.value:undefined
     if(weight!==undefined&&(!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(weight)||!weightSaid(weight,await this.saidText())))return {...fail('WEIGHT_NOT_SAID'),instruction:'O cliente não disse esse peso. Pergunte o peso aproximado; nunca estime pela raça.'}
     const mode=input.kind==='booking'?input.changes.find(ch=>ch.action==='set_field'&&ch.field==='transport_mode')?.value:undefined
-    if(mode&&/^(self|none)$/.test(mode)&&!selfTransportSaid(await this.saidText()))return {...fail('TRANSPORT_MODE_NOT_SAID'),instruction:'O cliente não disse que vai trazer o pet. Pergunte se ele traz ou se quer o MotoDog (buscar, levar ou os dois); o rascunho não foi alterado.'}
+    // An assumed "self" is dropped while the rest of the booking is kept; the transport step then asks.
+    if(mode&&/^(self|none)$/.test(mode)&&!selfTransportSaid(await this.saidText())){
+      const kept=input.changes.filter(ch=>!(ch.action==='set_field'&&ch.field==='transport_mode'))
+      if(!kept.length)return {...fail('TRANSPORT_MODE_NOT_SAID'),instruction:'O cliente não disse que vai trazer o pet. Pergunte se ele traz ou se quer o MotoDog (buscar, levar ou os dois).'}
+      input={...input,changes:kept}
+    }
     if(refused)return refused
       this.setState({...this.state,capability:input.kind==='booking'?'agenda':input.kind==='registration'?'client':'cart'})
       const results=[]

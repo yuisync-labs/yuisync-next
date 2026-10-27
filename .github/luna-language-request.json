@@ -1,16 +1,8 @@
 {
-  "run": true,
+  "run": false,
   "cases": [
-    "FLOW-07-1",
-    "FLOW-07-2",
-    "FLOW-07-3",
-    "FLOW-07-4",
-    "FLOW-07-5",
-    "FLOW-07-6",
-    "FLOW-07-7",
-    "FLOW-07-8",
-    "FLOW-07-9"
+    "FLOW-07-3"
   ],
-  "reason": "new_store_flows_2026_10_27",
+  "reason": "waiting_motodog_capacity_decision",
   "model": "openai:gpt-4.1-mini"
 }
