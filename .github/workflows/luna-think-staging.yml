@@ -46,6 +46,8 @@ jobs:
         run: |
           npx wrangler d1 migrations apply DB --env staging --remote
           npx wrangler d1 migrations apply AUTH_DB --env staging --remote
+          # Table statistics let SQLite pick the selective index (phone, client) instead of status.
+          npx wrangler d1 execute DB --env staging --remote --command "PRAGMA optimize=0x10002"
       - name: Prepare disposable authenticated tenants
         run: node scripts/migration/staging-e2e-fixtures.mjs setup
       - name: Read today's account usage
