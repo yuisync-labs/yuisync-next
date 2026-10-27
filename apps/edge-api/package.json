@@ -21,7 +21,7 @@
     "agents": "^0.28.0",
     "ai": "^7.0.137",
     "bcryptjs": "3.0.3",
-    "better-auth": "1.6.25",
+    "better-auth": "1.7.12",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.8",
     "workers-ai-provider": "4.0.0",
