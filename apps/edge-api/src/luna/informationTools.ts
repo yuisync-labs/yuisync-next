@@ -10,6 +10,7 @@ const text = { type: 'string', minLength: 1, maxLength: 160 }
 const zonedTime = { ...text, description: 'Data e hora ISO 8601 com offset obrigatório do fuso da loja, por exemplo 2026-10-17T14:00:00-03:00. Não envie horário sem offset.' }
 export const informationToolDefinitions: readonly LunaToolDefinition[] = [
   { name: 'get_store_information', description: 'Consulta nome, endereço, contato, fuso e expediente configurados. Campo ausente não autoriza uma suposição.', parameters: schema({}) },
+  { name: 'get_payment_instructions', description: 'Chave Pix e titular configurados pela loja e o pedido de comprovante. Use só quando o cliente pedir para pagar por Pix; a loja confirma o pagamento.', parameters: schema({}) },
   { name: 'get_transport_quote', description: 'Consulta opções reais de MotoDog para um pet do cliente identificado e cidade informada. Não reserva transporte nem garante capacidade.', parameters: schema({ pet_id: text, city: text }) },
   { name: 'get_delivery_quote', description: 'Consulta cobertura explicitamente configurada e taxa da entrega por cidade e bairro. Não presume cobertura apenas porque existe uma taxa.', parameters: schema({ city: text, neighborhood: text }) },
   { name: 'get_available_slots', description: 'Lista até 12 opções de horários numa janela de até 24 horas. Use IDs reais de search_services e datas COM offset, como 2026-10-17T14:00:00-03:00. Consulta duração, expediente, capacidade e agenda reais; não reserva.', parameters: schema({ service_ids: { type: 'array', minItems: 1, maxItems: 6, items: text }, starts_at: zonedTime, ends_at: zonedTime }) },
@@ -37,8 +38,15 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
       store_name: optionalText(base.store_name), phone: optionalText(base.store_phone), address: optionalText(base.store_address),
       neighborhood: optionalText(base.store_neighborhood), city: optionalText(base.store_city),
       timezone: optionalText(settings.petbot_timezone), business_hours: normalizeBusinessHours(settings.store_business_hours),
+      packages: await activePackages(db, ctx), packages_terms: storeMessage(settings, 'monthly_plan'),
+      pix_configured: Boolean(optionalText(settings.pix_key)),
       observed_at_ms: lunaNow(ctx), source: 'tenant_module_settings',
     } }
+  }
+  if (name === 'get_payment_instructions') {
+    const key = optionalText(settings.pix_key)
+    if (!key) return { ok: false, code: 'PIX_NOT_CONFIGURED', retryable: false, instruction: 'A loja não configurou Pix. Diga que o atendente envia os dados de pagamento.' } as LunaToolResult
+    return { ok: true, data: { pix_key: key, pix_holder: optionalText(settings.pix_holder_name), proof_request: storeMessage(settings, 'payment_proof_request'), source: 'module_settings_extensions', instruction: 'Envie a chave exatamente como está. Não diga que o pagamento foi recebido; a loja confere o comprovante.' } }
   }
   if (name === 'get_available_slots') {
     const starts = Date.parse(String(args.starts_at)), ends = Date.parse(String(args.ends_at))
@@ -101,4 +109,26 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
     return { ok: true, data: { city: area.city, neighborhood: named.length ? area.neighborhood : String(args.neighborhood).trim(), fee_cents: area.fee_cents, coverage_snapshot_json: JSON.stringify(areas), observed_at_ms: lunaNow(ctx), source: 'module_settings_extensions.delivery_coverage' } }
   }
   return { ok: false, code: 'TOOL_NOT_ALLOWED', retryable: false }
+}
+
+// The store's own wording from Configurações > Mensagens padrão, with the
+// defaults it ships with. Placeholders such as [VALOR] are dropped: prices come
+// from the catalog and the plans.
+const STORE_MESSAGE_DEFAULTS: Record<string, string> = {
+  monthly_plan: 'Pacote mensal: 4 banhos por mês, 1 banho por semana, horário reservado para o pet e pagamento antecipado.',
+  payment_proof_request: 'Assim que realizar o pagamento, por gentileza envie o comprovante para darmos baixa no sistema.',
+}
+function storeMessage(settings: RecordValue, key: string): string | null {
+  const own = (settings.message_templates as RecordValue | undefined)?.[key]
+  const text = typeof own === 'string' && own.trim() ? own : STORE_MESSAGE_DEFAULTS[key]
+  return text ? text.replace(/\*\*|[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]\uFE0F?/gu, '').replace(/^.*\[[A-Z_]+\].*$/gm, '').replace(/\n{2,}/g, '\n').trim() : null
+}
+async function activePackages(db: D1Database, ctx: LunaExecutionContext) {
+  const rows = await db.prepare(`SELECT name,price_cents,billing_cycle,services_json FROM subscription_plans WHERE tenant_id=?1 AND module_id=?2 AND status='active' ORDER BY price_cents,name LIMIT 8`)
+    .bind(ctx.tenantId, ctx.moduleId).all<{ name: string; price_cents: number; billing_cycle: string; services_json: string }>()
+  return rows.results.map(row => {
+    let services: { service_name?: unknown; qty_per_cycle?: unknown }[] = []
+    try { const parsed: unknown = JSON.parse(row.services_json); if (Array.isArray(parsed)) services = parsed } catch { /* a malformed plan lists no services */ }
+    return { name: row.name, price_cents: row.price_cents, billing_cycle: row.billing_cycle, services: services.map(s => ({ name: String(s.service_name ?? ''), per_cycle: Number(s.qty_per_cycle ?? 0) })).filter(s => s.name) }
+  })
 }

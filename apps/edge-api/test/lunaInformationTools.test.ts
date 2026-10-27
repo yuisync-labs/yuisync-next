@@ -77,3 +77,18 @@ describe('Luna native information tools', () => {
     expect(await registry.execute('prepare_product_order', { customer_id: 'customer', items: [{ product_id: 'nonexistent', quantity: 1 }], fulfillment_type: 'delivery' }, ctx)).toMatchObject({ ok: false, code: 'DELIVERY_ADDRESS_REQUIRED' })
   })
 })
+
+describe('store payment and packages', () => {
+  it('sends the Pix key only when the store configured one, and lists active plans', async () => {
+    expect(await executeInformationTool('get_payment_instructions', {}, ctx, db)).toMatchObject({ ok: false, code: 'PIX_NOT_CONFIGURED' })
+    const now = Date.now()
+    await db.batch([
+      db.prepare(`UPDATE module_settings_extensions SET data_json=json_set(data_json,'$.pix_key','loja@pix.test','$.pix_holder_name','Loja Teste') WHERE tenant_id=?1`).bind(ctx.tenantId),
+      db.prepare(`INSERT INTO subscription_plans(tenant_id,module_id,id,name,price_cents,billing_cycle,services_json,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop','plan','Pacote Banho Basico',20000,'monthly',?2,'active',?3,?3)`).bind(ctx.tenantId, JSON.stringify([{ service_name: 'Banho', qty_per_cycle: 4 }]), now),
+    ])
+    expect(await executeInformationTool('get_payment_instructions', {}, ctx, db)).toMatchObject({ ok: true, data: { pix_key: 'loja@pix.test', pix_holder: 'Loja Teste' } })
+    const store = await executeInformationTool('get_store_information', {}, ctx, db)
+    expect(store).toMatchObject({ ok: true, data: { pix_configured: true, packages: [{ name: 'Pacote Banho Basico', price_cents: 20000, services: [{ name: 'Banho', per_cycle: 4 }] }] } })
+    expect(JSON.stringify(store)).toContain('1 banho por semana')
+  })
+})

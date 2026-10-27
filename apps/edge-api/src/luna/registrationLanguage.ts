@@ -25,5 +25,16 @@ export function registrationIssue(args: Record<string, unknown>, said: string, n
     return { code: 'WEIGHT_NOT_SAID', instruction: 'O cliente não disse esse peso. Use weight_kg null; uma faixa não é o peso do pet.' }
   if (breed && plain(breed).trim().split(' ').every(w => SIZE_WORDS.has(w)))
     return { code: 'BREED_IS_SIZE', instruction: `"${breed}" é porte, não raça. Use breed null ou a raça que o cliente disse.` }
+  if (newCustomer) {
+    const digits = said.replace(/\D+/g, ' '), compact = said.replace(/\D+/g, '')
+    const birth = String(args.tutor_birth_date ?? '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    const missing = [
+      !birth || !new RegExp(`(^|\\D)0?${Number(birth[3])}\\D{1,3}0?${Number(birth[2])}\\D{1,3}(${birth[1]}|${birth[1].slice(2)})(\\D|$)`).test(said) ? 'data de nascimento do tutor' : '',
+      !args.cpf || !compact.includes(String(args.cpf)) ? 'CPF do tutor' : '',
+      !args.postal_code || !compact.includes(String(args.postal_code)) ? 'CEP da rua' : '',
+      !args.address_number || !(' ' + digits + ' ').includes(' ' + String(args.address_number).replace(/\D+/g, '') + ' ') && !plain(said).includes(plain(String(args.address_number))) ? 'número da casa' : '',
+    ].filter(Boolean)
+    if (missing.length) return { code: 'REGISTRATION_DATA_NOT_SAID', instruction: `Para o cadastro a loja precisa, ditos pelo cliente: ${missing.join(', ')}. Peça numa mensagem só, junto com ponto de referência e nome e raça do pet se faltarem. Não invente nem complete dados.` }
+  }
   return null
 }

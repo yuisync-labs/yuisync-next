@@ -18,8 +18,8 @@ describe('Luna registration — real Worker/local D1', () => {
       ])
       await new LunaConversationRepository(db).ensureConversation(ctx)
       const registry = createLunaToolRegistry(db)
-      const prepared = await registry.execute('prepare_customer_registration', { customer_name: 'Mariana', pet_name: 'Theo', species: 'dog', breed: 'Poodle', weight_kg: 8 }, ctx)
-      expect(prepared.ok).toBe(true)
+      const prepared = await registry.execute('prepare_customer_registration', { customer_name: 'Mariana', pet_name: 'Theo', species: 'dog', breed: 'Poodle', weight_kg: 8, tutor_birth_date:'1990-05-14',cpf:'52998224725',postal_code:'36880000',address_number:'191',address_reference:'perto da praça' }, ctx)
+      expect(prepared).toMatchObject({ ok: true })
       const data = (prepared as { data: { proposal_id: string; proposal_version: number } }).data
       const reference = { proposal_id: data.proposal_id, proposal_version: data.proposal_version }
       expect(await db.prepare('SELECT id FROM clients WHERE tenant_id=?1').bind(tenant).all()).toMatchObject({ results: [] })
@@ -37,7 +37,7 @@ describe('Luna registration — real Worker/local D1', () => {
       const committed = await registry.execute('commit_confirmed_proposal', reference, confirmed)
       expect(committed).toMatchObject({ ok: true, data: { operation_kind: 'customer_registration', idempotent: false } })
       expect(await registry.execute('commit_confirmed_proposal', reference, confirmed)).toMatchObject({ ok: true, data: { idempotent: true } })
-      expect(await db.prepare('SELECT name,phone FROM clients WHERE tenant_id=?1').bind(tenant).all()).toMatchObject({ results: [{ name: 'Mariana', phone: ctx.customerAddress }] })
+      expect(await db.prepare('SELECT name,phone,document,birth_date,postal_code,address_number,address_reference FROM clients WHERE tenant_id=?1').bind(tenant).all()).toMatchObject({ results: [{ name: 'Mariana', phone: ctx.customerAddress, document: '52998224725', birth_date: '1990-05-14', postal_code: '36880000', address_number: '191', address_reference: 'perto da praça' }] })
       expect(await db.prepare('SELECT name,breed,weight_kg FROM pets WHERE tenant_id=?1').bind(tenant).all()).toMatchObject({ results: [{ name: 'Theo', breed: 'Poodle', weight_kg: 8 }] })
       expect(await registry.execute('prepare_customer_registration', { customer_name: 'Outra pessoa', pet_name: 'Outro', species: 'dog' }, confirmed)).toMatchObject({ ok: false, code: 'CUSTOMER_REGISTRATION_AMBIGUOUS' })
       const customer = await db.prepare('SELECT id FROM clients WHERE tenant_id=?1').bind(tenant).first<{id:string}>()

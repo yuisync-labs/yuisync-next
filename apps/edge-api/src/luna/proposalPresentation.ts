@@ -13,6 +13,12 @@ export function renderProposalSummary(row: PresentableProposal): string {
     lines.push(`Espécie: ${String(payload.species)}`)
     if (payload.breed) lines.push(`Raça: ${String(payload.breed)}`)
     if (payload.weight_kg != null) lines.push(`Peso: ${String(payload.weight_kg)} kg`)
+    if (payload.tutor_birth_date) lines.push(`Nascimento do tutor: ${String(payload.tutor_birth_date).split('-').reverse().join('/')}`)
+    // The summary is stored as a chat message: only the CPF's edges are shown.
+    if (payload.cpf) lines.push(`CPF: ${String(payload.cpf).replace(/^(\d{3})\d{6}(\d{2})$/, '$1.***.***-$2')}`)
+    if (payload.postal_code) lines.push(`CEP: ${String(payload.postal_code).replace(/^(\d{5})(\d{3})$/, '$1-$2')}`)
+    if (payload.address_number) lines.push(`Endereço: ${payload.street ? String(payload.street) + ', ' : ''}nº ${String(payload.address_number)}${payload.neighborhood ? ' - ' + String(payload.neighborhood) : ''}`)
+    if (payload.address_reference) lines.push(`Referência: ${String(payload.address_reference)}`)
   }
   if (payload.scheduled_at_ms) lines.push(`Data/hora: ${new Date(Number(payload.scheduled_at_ms)).toISOString()}`)
   for (const raw of (Array.isArray(payload.items) ? payload.items : Array.isArray(payload.services) ? payload.services : [])) {
