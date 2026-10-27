@@ -483,10 +483,20 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const products=shown.length?(await this.db.prepare("SELECT id,price_cents FROM catalog_products WHERE tenant_id=? AND module_id='petshop' AND id IN (SELECT value FROM json_each(?))").bind(c.tenantId,JSON.stringify(shown)).all()).results:[]
     return [...pending.results.map(r=>({name:'pending_proposal',result:JSON.parse(r.payload_json) as unknown})),{name:'shown_products',result:products as unknown}]
   }
+  // What the store needs to take over without rereading the chat: who the
+  // customer is, what was being prepared and what is still missing.
   private async writeHandoff(t:Turn,reason:string){
-    let operations:unknown[]=[]
-    try{operations=Object.values((await new LunaConversationRepository(this.db).loadState(t.context)).state.operations).filter(d=>d.status==='active').map(d=>({kind:d.kind,item_count:d.items.length,status:d.status}))}catch{}
-    await this.db.prepare("UPDATE chat_threads SET context_json=json_set(context_json,'$.think.handoff_summary',json(?)) WHERE tenant_id=? AND module_id='petshop' AND id=?").bind(JSON.stringify({reason:reason.slice(0,300),request:this.text(t).slice(0,500),pending_operations:operations,usage:{model_calls:t.modelCalls,input_tokens:t.inputTokens,output_tokens:t.outputTokens,tools:t.results.map(r=>r.name).slice(0,12)}}),t.context.tenantId,t.context.conversationId).run()
+    const c=t.context,db=this.db
+    let operations:{kind:string;items:string[];fields:Record<string,string>;missing:string[]}[]=[],customer:unknown=null
+    try{
+      const drafts=Object.values((await new LunaConversationRepository(db).loadState(c)).state.operations).filter(d=>d.status==='active')
+      const ids=[...new Set(drafts.flatMap(d=>d.items.map(i=>i.id)))]
+      const names=ids.length?Object.fromEntries((await db.prepare("SELECT id,name FROM services WHERE tenant_id=?1 AND module_id='petshop' AND id IN (SELECT value FROM json_each(?2)) UNION ALL SELECT id,name FROM catalog_products WHERE tenant_id=?1 AND module_id='petshop' AND id IN (SELECT value FROM json_each(?2))").bind(c.tenantId,JSON.stringify(ids)).all<{id:string;name:string}>()).results.map(r=>[r.id,r.name])):{}
+      operations=drafts.map(d=>({kind:d.kind,items:d.items.map(i=>String(names[i.id]??i.id)+(i.quantity>1?' x'+i.quantity:'')),fields:Object.fromEntries(Object.entries(d.fields).filter(([k])=>!/_id$/.test(k)||k==='pet_id').map(([k,v])=>[k,String(v).slice(0,120)])),missing:d.kind==='booking'?[!d.items.length&&'serviço',!d.fields.pet_id&&'pet',!d.fields.scheduled_at&&'data e horário'].filter((m):m is string=>Boolean(m)):d.kind==='cart'?[!d.items.length&&'produtos',!d.fields.fulfillment_type&&'retirada ou entrega'].filter((m):m is string=>Boolean(m)):[]}))
+    }catch{}
+    try{const found=await createLunaToolRegistry(db).execute('get_customer_context',{},c);if(found.ok){const data=record(found.data),person=record(data.customer);customer={name:person.name??null,pets:(Array.isArray(data.pets)?data.pets:[]).map(p=>[record(p).name,record(p).breed,record(p).weight_kg!=null?record(p).weight_kg+' kg':null].filter(Boolean).join(', ')).slice(0,6)}}}catch{}
+    const recent=(await db.prepare("SELECT direction,substr(content_text,1,200) text FROM (SELECT direction,content_text,created_at_ms FROM chat_messages WHERE tenant_id=? AND module_id='petshop' AND thread_id=? ORDER BY created_at_ms DESC LIMIT 6) ORDER BY created_at_ms").bind(c.tenantId,c.conversationId).all<{direction:string;text:string}>()).results.map(m=>(m.direction==='inbound'?'Cliente: ':'Luna: ')+m.text)
+    await db.prepare("UPDATE chat_threads SET context_json=json_set(context_json,'$.think.handoff_summary',json(?)) WHERE tenant_id=? AND module_id='petshop' AND id=?").bind(JSON.stringify({reason:reason.slice(0,300),request:this.text(t).slice(0,500),customer,pending_operations:operations,recent,usage:{model_calls:t.modelCalls,input_tokens:t.inputTokens,output_tokens:t.outputTokens,tools:t.results.map(r=>r.name).slice(0,12)}}),c.tenantId,c.conversationId).run()
   }
   private metrics(id:string,t:Turn,status:string,code:string|null){
     this.sql`CREATE TABLE IF NOT EXISTS luna_think_metrics(id TEXT PRIMARY KEY,status TEXT NOT NULL,model_calls INTEGER NOT NULL,tool_calls INTEGER NOT NULL,input_tokens INTEGER NOT NULL,output_tokens INTEGER NOT NULL,latency_ms INTEGER NOT NULL,error_code TEXT,created_at_ms INTEGER NOT NULL)`

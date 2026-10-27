@@ -281,6 +281,32 @@ function HandoffAlerts({ alerts, onDismiss, onOpen }) {
   )
 }
 
+const HANDOFF_KINDS = { booking: 'Agendamento', cart: 'Pedido', registration: 'Cadastro' }
+const HANDOFF_FIELDS = { scheduled_at: 'Data', transport_mode: 'Transporte', fulfillment_type: 'Entrega', notes: 'Observações', payment_preference: 'Pagamento' }
+// What Luna hands over: who the customer is, what was in progress, what is missing.
+function HandoffSummary({ summary }) {
+  const customer = summary.customer
+  const operations = Array.isArray(summary.pending_operations) ? summary.pending_operations : []
+  return (
+    <div className="space-y-1">
+      <p className="font-semibold">Resumo para continuar o atendimento</p>
+      <p>{summary.reason}</p>
+      {customer?.name && <p><span className="text-muted">Cliente:</span> {customer.name}{customer.pets?.length ? ` · Pets: ${customer.pets.join('; ')}` : ''}</p>}
+      {operations.map((operation, index) => (
+        <p key={index}>
+          <span className="text-muted">{HANDOFF_KINDS[operation.kind] || operation.kind}:</span>{' '}
+          {[...(operation.items || []), ...Object.entries(operation.fields || {}).filter(([key]) => HANDOFF_FIELDS[key]).map(([key, value]) => `${HANDOFF_FIELDS[key]}: ${value}`)].join(' · ') || 'sem itens'}
+          {operation.missing?.length ? <span className="text-muted"> · Falta: {operation.missing.join(', ')}</span> : null}
+        </p>
+      ))}
+      {!operations.length && summary.request && <p className="text-muted">{summary.request}</p>}
+      {Array.isArray(summary.recent) && summary.recent.length > 0 && (
+        <details className="text-muted"><summary className="cursor-pointer">Últimas mensagens</summary>{summary.recent.map((line, index) => <p key={index}>{line}</p>)}</details>
+      )}
+    </div>
+  )
+}
+
 export default function ChatPage() {
   const {
     sessions, messages, activeSession, botTyping, botTurn, quickReplies,
@@ -570,9 +596,7 @@ export default function ChatPage() {
               {/* Messages */}
               {activeSession.status==='human'&&activeSession.context?.think?.handoff_summary&&(
                 <div className="mx-5 mt-3 p-3 rounded-xl border border-[var(--border2)] text-sm">
-                  <p className="font-semibold">Resumo para continuar o atendimento</p>
-                  <p>{activeSession.context.think.handoff_summary.reason}</p>
-                  <p className="text-muted">{activeSession.context.think.handoff_summary.request}</p>
+                  <HandoffSummary summary={activeSession.context.think.handoff_summary} />
                 </div>
               )}
               <div ref={messagesRef} className="flex-1 overflow-y-auto px-5 py-4">
