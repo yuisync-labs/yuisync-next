@@ -9,7 +9,7 @@ it('MotoDog options in Settings are the transport_options Luna quotes from', asy
     db.prepare(`INSERT INTO tenant_module_settings(tenant_id,module_id,store_name,store_city,created_at_ms,updated_at_ms) VALUES(?1,'petshop','Fixture','Muriaé',?2,?2)`).bind(tenant, now),
     db.prepare(`INSERT INTO transport_options(tenant_id,module_id,id,label,fee_cents,max_weight_grams,pickup_required,dropoff_required,outside_city,status,sort_order) VALUES(?1,'petshop','somente_buscar','Somente buscar',1000,10000,1,0,0,'active',0)`).bind(tenant),
   ])
-  const read = async () => (await selectRows(db, 'settings', {}, {}, scope)).rows[0] as Record<string, unknown>
+  const read = async () => (await selectRows(db, 'settings', { read: 'settings' }, {}, scope)).rows[0] as Record<string, unknown>
   expect((await read()).pet_transport_options).toEqual([{ id: 'somente_buscar', label: 'Somente buscar', fee: '10.00', maxWeightKg: '10', active: true }])
   await mutateSettings(db, { pix_key: 'pix-teste@exemplo.com', pet_transport_options: [{ id: 'somente_buscar', label: 'Só buscar', fee: '12.50', maxWeightKg: '8', active: true }, { id: 'buscar_e_levar_fora_muriae', label: 'Buscar e levar (fora de Muriaé)', fee: '30.00', maxWeightKg: '10', active: false }] }, scope)
   const rows = (await db.prepare(`SELECT id,fee_cents,max_weight_grams,pickup_required,dropoff_required,outside_city,status FROM transport_options WHERE tenant_id=?1 ORDER BY sort_order`).bind(tenant).all()).results
