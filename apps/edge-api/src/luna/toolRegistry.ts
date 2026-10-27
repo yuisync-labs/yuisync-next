@@ -53,7 +53,7 @@ const CUSTOMER_REGISTRATION_FIELDS = {
   address_number: { type: 'string', minLength: 1, maxLength: 20, description: 'Número da casa.' },
   address_reference: { type: ['string','null'], maxLength: 160, description: 'Ponto de referência.' },
   neighborhood: { type: ['string','null'], maxLength: 120 },
-  city: { type: ['string','null'], maxLength: 120, description: 'Cidade; o servidor completa rua, bairro e cidade pelo CEP.' },
+  city: { type: ['string','null'], maxLength: 120, description: 'O servidor completa pelo CEP.' },
 } as const
 const DEFINITIONS: readonly LunaToolDefinition[] = [
   {name:'resolve_context_reference',description:'Resolve referência por opções realmente apresentadas. Ordinal usa a ordem aceita; single exige uma opção; other exige duas opções e um item selecionado no rascunho. Não altera rascunho nem autoriza commit.',parameters:objectSchema({kind:{type:'string',enum:['product','service','pet','slot','transport']},selection:{type:'string',enum:['ordinal','single','other']},ordinal:{type:'integer',minimum:1,maximum:40},operation_id:stringProperty('Operação em foco.')},['kind','selection'])},

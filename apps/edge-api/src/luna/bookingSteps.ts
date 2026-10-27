@@ -8,7 +8,7 @@ const asks: Record<BookingStep, string> = {
   pet: 'Pergunte para qual pet é, se ainda não estiver claro, e salve pet_id.',
   weight: 'O preço depende do peso e o pet não tem peso cadastrado: pergunte o peso aproximado (nunca estime pela raça) e salve weight_kg com o número que o cliente disser.',
   date: 'Pergunte o dia e o horário que ele prefere, numa pergunta só. Não consulte vagas antes de ele dizer o dia.',
-  slot: 'Se ele disse o horário, consulte get_available_slots com starts_at e ends_at iguais a esse horário: se o primeiro de options for esse horário, salve scheduled_at sem listar outros; se não, diga que esse horário não tem vaga e ofereça até 3 opções próximas de options. Se ele disse só o dia, pergunte que horário prefere em vez de listar a agenda; liste horários só se ele pedir.',
+  slot: 'Consulte get_available_slots com starts_at e ends_at iguais ao horário dito. Se o primeiro de options for ele, salve scheduled_at; se não, diga que não tem vaga e ofereça até 3 opções de options. Sem horário dito, pergunte o horário; não liste a agenda.',
   transport: 'Pergunte se ele vai trazer o pet ou se quer o MotoDog (buscar, levar ou os dois). Trazer = transport_mode self.',
   address: 'Peça rua, número, bairro e ponto de referência para o MotoDog e salve address.',
   transport_option: 'Consulte get_transport_quote e salve transport_option_id da opção que bate com o pedido (buscar, levar ou os dois).',

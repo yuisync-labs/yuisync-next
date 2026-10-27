@@ -266,7 +266,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     // What the store says a service includes, listed once and referenced by index:
     // eight bath sizes share one sentence.
     const includes:string[]=[],services=rows.results.map(({description,...row})=>{const text=String(description??'').trim();if(!text)return row;const i=includes.indexOf(text);return {...row,includes:i<0?includes.push(text)-1:i}})
-    return {ok:true,data:{services,...(includes.length?{includes}:{}),pet_id:pet_id??null,...(species&&!pet?{species}:{}),source:'services',instruction:'includes[n] é o que a loja diz que o serviço inclui: explique com suas palavras ao dar o preço. Preço e duração não confirmam vaga; campo ausente não comprova adequação. Sem data informada pelo cliente, responda o preço e pergunte o dia e o horário que ele prefere. Não consulte vagas para uma data que o cliente não pediu.'}}
+    return {ok:true,data:{services,...(includes.length?{includes}:{}),pet_id:pet_id??null,...(species&&!pet?{species}:{}),source:'services',instruction:'includes[n] é o que a loja diz que o serviço inclui: explique com suas palavras ao dar o preço. Preço e duração não confirmam vaga; campo ausente não comprova adequação. Sem data dita, responda o preço e pergunte dia e horário. Não consulte vagas para uma data que o cliente não pediu.'}}
   }
 
   getTools(){const registry=createLunaToolRegistry(this.db);const tools:ToolSet={}
