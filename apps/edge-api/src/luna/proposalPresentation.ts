@@ -8,7 +8,7 @@ export function renderProposalSummary(row: PresentableProposal): string {
   const lines = [`Resumo para confirmação — ${row.operation_kind}`, `Cliente: ${String(payload.customer_name ?? payload.customer_id)}`]
   if (payload.pet_name) lines.push(`Pet: ${String(payload.pet_name)}`)
   if(payload.grooming_machine_no!=null)lines.push(`Número da máquina: ${String(payload.grooming_machine_no)}`)
-  if(payload.transport){const t=payload.transport as Record<string,unknown>;lines.push(`Transporte: ${String(t.label)} — ${money(t.fee_cents)}`,`Endereço: ${String(t.address)}, ${String(t.city)}`);if(t.reference)lines.push(`Referência: ${String(t.reference)}`)}
+  if(payload.transport){const t=payload.transport as Record<string,unknown>;lines.push(`Transporte: ${String(t.label)} — ${money(t.fee_cents)}`,`Endereço: ${String(t.address)}, ${String(t.city)}`);if(t.reference)lines.push(`Referência: ${String(t.reference)}`);if(t.capacity_tracked===false)lines.push('O horário do MotoDog será confirmado pela loja.')}
   if (row.operation_kind.endsWith('_registration')) {
     lines.push(`Espécie: ${String(payload.species)}`)
     if (payload.breed) lines.push(`Raça: ${String(payload.breed)}`)
@@ -90,7 +90,7 @@ function renderBookingSummary(row:PresentableProposal,timezone:string,store?:Sum
   if(payload.pet_name)lines.push(`Pet: ${String(payload.pet_name)}`)
   for(const raw of Array.isArray(payload.items)?payload.items:Array.isArray(payload.services)?payload.services:[]){const item=raw as Record<string,unknown>;lines.push(`Serviço: ${String(item.name??item.code)}${item.pet_name?' — '+String(item.pet_name):''}: ${money(item.subtotal_cents??item.price_cents??item.unit_price_cents??item.default_price_cents)}`)}
   if(payload.grooming_machine_no!=null)lines.push(`Número da máquina: ${String(payload.grooming_machine_no)}`)
-  if(payload.transport){const t=payload.transport as Record<string,unknown>;lines.push(`Transporte: ${String(t.label)} — ${money(t.fee_cents)}`,`Endereço de busca/entrega: ${String(t.address)}, ${String(t.city)}`);if(t.reference)lines.push(`Referência: ${String(t.reference)}`)}
+  if(payload.transport){const t=payload.transport as Record<string,unknown>;lines.push(`Transporte: ${String(t.label)} — ${money(t.fee_cents)}`,`Endereço de busca/entrega: ${String(t.address)}, ${String(t.city)}`);if(t.reference)lines.push(`Referência: ${String(t.reference)}`);if(t.capacity_tracked===false)lines.push('O horário do MotoDog será confirmado pela loja.')}
   const total=payload.total_cents??payload.subtotal_cents
   if(total!==undefined)lines.push(`Valor do agendamento: ${money(total)}`)
   if(store?.store_name)lines.push(`Local: ${store.store_name}${store.city?' - '+store.city:''}`)

@@ -11,7 +11,7 @@ const zonedTime = { ...text, description: 'Data e hora ISO 8601 com offset obrig
 export const informationToolDefinitions: readonly LunaToolDefinition[] = [
   { name: 'get_store_information', description: 'Consulta nome, endereço, contato, fuso e expediente configurados. Campo ausente não autoriza uma suposição.', parameters: schema({}) },
   { name: 'get_payment_instructions', description: 'Chave Pix e titular configurados pela loja e o pedido de comprovante. Use só quando o cliente pedir para pagar por Pix; a loja confirma o pagamento.', parameters: schema({}) },
-  { name: 'get_transport_quote', description: 'Consulta opções reais de MotoDog para um pet do cliente identificado e cidade informada. Não reserva transporte nem garante capacidade.', parameters: schema({ pet_id: text, city: text }) },
+  { name: 'get_transport_quote', description: 'Consulta opções reais de MotoDog para um pet do cliente identificado e cidade informada. Não reserva transporte nem garante capacidade.', parameters: schema({ pet_id: text, city: text, weight_kg: { type: 'number', minimum: 0.01, maximum: 200, description: 'Peso que o cliente disse, só se o pet não tem peso cadastrado.' } }) },
   { name: 'get_delivery_quote', description: 'Consulta cobertura explicitamente configurada e taxa da entrega por cidade e bairro. Não presume cobertura apenas porque existe uma taxa.', parameters: schema({ city: text, neighborhood: text }) },
   { name: 'get_available_slots', description: 'Lista até 12 opções de horários numa janela de até 24 horas. Use IDs reais de search_services e datas COM offset, como 2026-10-17T14:00:00-03:00. Consulta duração, expediente, capacidade e agenda reais; não reserva.', parameters: schema({ service_ids: { type: 'array', minItems: 1, maxItems: 6, items: text }, starts_at: zonedTime, ends_at: zonedTime }) },
 ]
@@ -88,7 +88,8 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
     const outside = normalized(store?.store_city) !== normalized(args.city)
     const options = await db.prepare(`SELECT id,label,fee_cents,max_weight_grams,pickup_required,dropoff_required,outside_city FROM transport_options WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND outside_city=?3 AND (pickup_required=1 OR dropoff_required=1) ORDER BY sort_order,id LIMIT 12`)
       .bind(ctx.tenantId, ctx.moduleId, outside ? 1 : 0).all<{ id: string; label: string; fee_cents: number; max_weight_grams: number | null; pickup_required: number; dropoff_required: number; outside_city: number }>()
-    const weight = pet.weight_kg == null ? null : Math.round(pet.weight_kg * 1000)
+    const said = typeof args.weight_kg === 'number' ? args.weight_kg : null, kg = pet.weight_kg ?? said
+    const weight = kg == null ? null : Math.round(kg * 1000)
     if (options.results.some(option => option.max_weight_grams != null) && (weight == null || !Number.isFinite(weight) || weight <= 0)) {
       return { ok: false, code: 'PET_WEIGHT_REQUIRED', retryable: false, missing_fields: ['weight_kg'] }
     }

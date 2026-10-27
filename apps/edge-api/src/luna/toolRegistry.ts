@@ -110,7 +110,7 @@ const DEFINITIONS: readonly LunaToolDefinition[] = [
       scheduled_at: stringProperty('Data e hora ISO 8601 com fuso horário.'),
       notes: { type: ['string', 'null'] },
       grooming_machine_no: {type:['integer','null'],enum:[4,7,10,null]},
-      transport:objectSchema({option_id:{type:'string',minLength:1,maxLength:80},city:{type:'string',minLength:1,maxLength:160},address:{type:'string',minLength:1,maxLength:500},reference:{type:['string','null'],maxLength:500}},['option_id','city','address']),
+      transport:objectSchema({option_id:{type:'string',minLength:1,maxLength:80},city:{type:'string',minLength:1,maxLength:160},address:{type:'string',minLength:1,maxLength:500},reference:{type:['string','null'],maxLength:500},weight_kg:{type:'number',minimum:0.01,maximum:200}},['option_id','city','address']),
       operation_id: stringProperty('ID do rascunho de agendamento, quando existente.'),
     }, ['customer_id', 'pet_id', 'service_ids', 'scheduled_at', 'notes']),
   },
