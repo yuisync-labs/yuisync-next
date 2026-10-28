@@ -2,10 +2,9 @@
   "run": true,
   "cases": [
     "FLOW-12-4",
-    "FLOW-07-9",
-    "FLOW-09-1",
-    "FLOW-03-1"
+    "FLOW-08-1",
+    "FLOW-01-1"
   ],
-  "reason": "shorter_service_instruction",
+  "reason": "hidden_services_filter",
   "model": "openai:gpt-4.1-mini"
 }

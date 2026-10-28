@@ -311,6 +311,8 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     const result = await database.prepare(`
       SELECT id,code,name,category,group_type,default_price_cents,default_duration_min
       FROM services WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND default_price_cents>0
+        -- Services the store chose not to offer through Luna.
+        AND id NOT IN (SELECT value FROM module_settings_extensions m, json_each(COALESCE(json_extract(m.data_json,'$.luna_hidden_service_ids'),'[]')) WHERE m.tenant_id=services.tenant_id AND m.module_id=services.module_id)
         AND (name LIKE ?3 ESCAPE '\\' OR code LIKE ?3 ESCAPE '\\' OR category LIKE ?3 ESCAPE '\\')
       ORDER BY sort_order,name,id LIMIT 12
     `).bind(context.tenantId, context.moduleId, `%${escapeLike(query)}%`).all<Record<string, unknown>>()
