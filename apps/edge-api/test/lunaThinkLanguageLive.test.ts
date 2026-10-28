@@ -51,7 +51,7 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
     if(flow.expect.sales!==undefined)expect(await sales()).toHaveLength(flow.expect.sales)
     if(flow.expect.appointments!==undefined)expect((await appointments()).results).toHaveLength(flow.expect.appointments)
     if(flow.expect.transport_option)expect(await h.db.prepare('SELECT option_id FROM appointment_transport WHERE tenant_id=?').bind(h.tenant).first()).toEqual({option_id:flow.expect.transport_option})
-    if(flow.expect.pet_weight_kg!==undefined)expect(await h.db.prepare("SELECT weight_kg FROM pets WHERE tenant_id=? AND name='Mel'").bind(h.tenant).first()).toEqual({weight_kg:flow.expect.pet_weight_kg})
+    if(flow.expect.pet_weight_kg!==undefined)expect(await h.db.prepare("SELECT weight_kg FROM pets WHERE tenant_id=? AND lower(name)='mel'").bind(h.tenant).first()).toEqual({weight_kg:flow.expect.pet_weight_kg})
     if(flow.expect.reply)expect(String(h.turns.at(-1)?.result?.result?.reply??'')).toMatch(new RegExp(flow.expect.reply,'i'))
     if(flow.expect.not_reply)expect(String(h.turns.at(-1)?.result?.result?.reply??'')).not.toMatch(new RegExp(flow.expect.not_reply,'i'))
     if(flow.expect.no_proposal)expect((await h.db.prepare("SELECT count(*) n FROM luna_proposals WHERE tenant_id=? AND status='awaiting_confirmation'").bind(h.tenant).first<{n:number}>())?.n).toBe(0)

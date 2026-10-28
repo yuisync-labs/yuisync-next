@@ -1,11 +1,8 @@
 {
   "run": true,
   "cases": [
-    "FLOW-10-1",
-    "FLOW-10-2",
-    "FLOW-10-3",
-    "FLOW-10-4"
+    "FLOW-10-3"
   ],
-  "reason": "byanka_round2_server_fills_address_weight",
+  "reason": "weight_check_fixture_name",
   "model": "openai:gpt-4.1-mini"
 }
