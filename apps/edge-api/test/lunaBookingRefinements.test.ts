@@ -53,3 +53,12 @@ describe('a bare day asks for the time', () => {
     for (const text of ['na sexta', 'amanhã', 'eu quero pra sexta feira agora', 'dia 30']) expect(timeSaid(text), text).toBe(false)
   })
 })
+
+it('phoneVariants finds the stored number from the WhatsApp spelling', async () => {
+  const { phoneVariants } = await import('../src/luna/customerIdentity')
+  expect(phoneVariants('5532999998888')).toEqual(expect.arrayContaining(['32999998888', '3299998888', '5532999998888', '+5532999998888']))
+  expect(phoneVariants('553299998888')).toEqual(expect.arrayContaining(['32999998888', '3299998888']))
+  expect(phoneVariants('32999998888')).toEqual(expect.arrayContaining(['5532999998888', '553299998888']))
+  expect(phoneVariants('3233334444')).not.toContain('32933334444')
+  expect(phoneVariants('abc')).toEqual([])
+})

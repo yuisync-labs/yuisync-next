@@ -8,7 +8,7 @@ import { commitConfirmedProposal, getProposalOperationStatus } from './commitPro
 import { validateScheduleAvailability, withStoreScheduleDefaults } from './schedulePolicy'
 import { loadBenefitCandidates } from '../subscriptionBenefitCandidates'
 import { matchesToolSchema } from './toolSchema'
-import { isConversationCustomer } from './customerIdentity'
+import { isConversationCustomer, phoneVariants } from './customerIdentity'
 import { LunaConversationRepository } from './conversationRepository'
 import type { DraftEvent } from './operationalState'
 import { executeInformationTool, informationToolDefinitions } from './informationTools'
@@ -283,12 +283,11 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
   })
 
   handlers.set('get_customer_context', async (_args, context) => {
-    const phone = context.customerAddress.replace(/^\+/, '')
     const customer = await database.prepare(`
       SELECT id,name,phone,email,address,address_number,address_complement,address_reference,neighborhood,city,postal_code FROM clients
-      WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND (phone=?3 OR phone=?4)
+      WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND phone IN (SELECT value FROM json_each(?3))
       ORDER BY updated_at_ms DESC LIMIT 2
-    `).bind(context.tenantId, context.moduleId, phone, `+${phone}`).all<Record<string, unknown>>()
+    `).bind(context.tenantId, context.moduleId, JSON.stringify(phoneVariants(context.customerAddress))).all<Record<string, unknown>>()
     if (customer.results.length === 0) return { ok: false, code: 'CUSTOMER_NOT_FOUND', retryable: false }
     if (customer.results.length > 1) return { ok: false, code: 'CUSTOMER_AMBIGUOUS', retryable: false }
     const selected = customer.results[0]

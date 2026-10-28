@@ -1,7 +1,7 @@
 import { lunaNow } from './clock'
 import { clientRegistrationStatements } from '../clientRegistrationCommand'
 import type { LunaExecutionContext, LunaToolResult } from './contracts'
-import { isConversationCustomer } from './customerIdentity'
+import { isConversationCustomer, phoneVariants } from './customerIdentity'
 
 type Payload = Record<string, unknown>
 const phone = (ctx: LunaExecutionContext) => ctx.customerAddress.replace(/^\+/, '')
@@ -23,7 +23,7 @@ export async function prepareRegistration(db: D1Database, ctx: LunaExecutionCont
     const duplicate = await db.prepare(`SELECT id FROM pets WHERE tenant_id=?1 AND module_id=?2 AND client_id=?3 AND status='active' AND name=?4 COLLATE NOCASE LIMIT 1`).bind(ctx.tenantId,ctx.moduleId,customerId,petName).first()
     if (duplicate) return { ok: false, code: 'PET_REGISTRATION_AMBIGUOUS', retryable: false }
   } else {
-    const duplicate = await db.prepare(`SELECT id FROM clients WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND (phone=?3 OR phone=?4) LIMIT 1`).bind(ctx.tenantId,ctx.moduleId,phone(ctx),`+${phone(ctx)}`).first()
+    const duplicate = await db.prepare(`SELECT id FROM clients WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND phone IN (SELECT value FROM json_each(?3)) LIMIT 1`).bind(ctx.tenantId,ctx.moduleId,JSON.stringify(phoneVariants(ctx.customerAddress))).first()
     if (duplicate) return { ok: false, code: 'CUSTOMER_REGISTRATION_AMBIGUOUS', retryable: false }
     customerId = crypto.randomUUID()
   }
