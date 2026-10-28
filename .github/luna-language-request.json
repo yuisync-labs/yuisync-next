@@ -1,12 +1,13 @@
 {
-  "run": false,
+  "run": true,
   "cases": [
-    "FLOW-09-1",
-    "FLOW-09-2",
-    "FLOW-09-3",
-    "FLOW-07-1",
-    "FLOW-07-3"
+    "FLOW-10-1",
+    "FLOW-10-2",
+    "FLOW-10-3",
+    "FLOW-10-4",
+    "FLOW-07-3",
+    "FLOW-09-3"
   ],
-  "reason": "bare_day_asks_time",
+  "reason": "byanka_motodog_address_weight_confirmation",
   "model": "openai:gpt-4.1-mini"
 }

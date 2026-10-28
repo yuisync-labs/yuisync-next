@@ -71,7 +71,7 @@ describe('Think operational boundaries on local D1',()=>{
   try{
    await h.run('Quero uma pessoa da loja.',[c('handoff_to_human',{reason:'Cliente pediu atendimento humano.'})])
    const summary=JSON.parse(String((await h.db.prepare("SELECT json_extract(context_json,'$.think.handoff_summary') s FROM chat_threads WHERE tenant_id=?").bind(h.tenant).first<{s:string}>())?.s))
-   expect(summary).toMatchObject({reason:'Cliente pediu atendimento humano.',recent:expect.arrayContaining(['Cliente: Quero uma pessoa da loja.'])})
+   expect(summary).toMatchObject({reason:'Cliente pediu atendente.',recent:expect.arrayContaining(['Cliente: Quero uma pessoa da loja.'])})
    expect(summary.customer?.name).toBeTruthy()
    await h.db.prepare("UPDATE chat_threads SET context_json=json_set(context_json,'$.think.restock_product','racao-a','$.think.restock_consent_message','consent-1') WHERE tenant_id=?").bind(h.tenant).run()
    await runInDurableObject(h.stub,async agent=>{

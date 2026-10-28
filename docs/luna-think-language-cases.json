@@ -1375,6 +1375,84 @@
       },
       "family": "flow",
       "input_fragments": []
+    },
+    {
+      "id": "FLOW-10-1",
+      "name": "MotoDog: cita o endereço do cadastro em vez de pedir",
+      "turns": [
+        "Banho pra Mel quarta às 10h"
+      ],
+      "setup": {
+        "transport": true,
+        "address": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "Flores",
+        "not_reply": "qual (?:é o |o )?(?:seu )?endere[cç]o|informe o endere[cç]o|me (?:passe|informe|diga) o endere[cç]o",
+        "no_proposal": true
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-10-2",
+      "name": "Sim ao MotoDog é buscar e levar no endereço do cadastro; 'sim obrigada' agenda",
+      "turns": [
+        "Banho pra Mel quarta às 10h",
+        "pode buscar por favor",
+        "sim, esse mesmo",
+        "sim obrigada"
+      ],
+      "setup": {
+        "transport": true,
+        "address": true
+      },
+      "expect": {
+        "appointments": 1,
+        "transport_option": "buscar_levar",
+        "not_reply": "ser[aá] confirmado pela loja"
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-10-3",
+      "name": "Peso dito no começo não é perguntado de novo e vai para o cadastro",
+      "turns": [
+        "quero agendar um banho pra Mel, ela tem 8kg",
+        "quarta às 10h, eu levo ela",
+        "Confirmo"
+      ],
+      "setup": {
+        "no_weight": true
+      },
+      "expect": {
+        "appointments": 1,
+        "pet_weight_kg": 8
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-10-4",
+      "name": "Só buscar dito explicitamente fica só buscar",
+      "turns": [
+        "Banho pra Mel quarta às 10h",
+        "quero só que vocês busquem, eu vou buscar depois",
+        "sim, esse mesmo",
+        "Confirmo"
+      ],
+      "setup": {
+        "transport": true,
+        "address": true
+      },
+      "expect": {
+        "appointments": 1,
+        "transport_option": "buscar"
+      },
+      "family": "flow",
+      "input_fragments": []
     }
   ]
 }

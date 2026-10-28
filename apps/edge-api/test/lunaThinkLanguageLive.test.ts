@@ -37,16 +37,21 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
    if(s.family==='flow'){
     // Whole conversations from greeting to commit: every turn must avoid handoff
     // and the final database effect must match the case.
-    const flow=s as typeof s&{turns:string[];unregistered?:boolean;setup?:{transport?:boolean;pix?:boolean;descriptions?:boolean};expect:{sales?:number;appointments?:number;reply?:string;not_reply?:string;no_proposal?:boolean}}
+    const flow=s as typeof s&{turns:string[];unregistered?:boolean;setup?:{transport?:boolean;pix?:boolean;descriptions?:boolean;address?:boolean;no_weight?:boolean};expect:{sales?:number;appointments?:number;reply?:string;not_reply?:string;no_proposal?:boolean;transport_option?:string;pet_weight_kg?:number}}
     // A new customer: the conversation phone matches no client, the chat carries only a name.
     if(flow.unregistered){await h.db.prepare("UPDATE clients SET phone='0000000001' WHERE tenant_id=?").bind(h.tenant).run();await h.db.prepare("UPDATE chat_threads SET customer_name='Joberson' WHERE tenant_id=?").bind(h.tenant).run()}
     // Store data some flows need: MotoDog options, a fictitious PIX key, service descriptions.
     if(flow.setup?.transport){await h.db.prepare("UPDATE tenant_module_settings SET store_city='Cidade Teste' WHERE tenant_id=?").bind(h.tenant).run();for(const [id,label,fee,pick,drop] of [['buscar','Só buscar',1000,1,0],['levar','Só levar',1000,0,1],['buscar_levar','Buscar e levar',2000,1,1]] as const)await h.db.prepare("INSERT OR REPLACE INTO transport_options(tenant_id,module_id,id,label,fee_cents,pickup_required,dropoff_required,outside_city,status,sort_order) VALUES(?,'petshop',?,?,?,?,?,0,'active',1)").bind(h.tenant,id,label,fee,pick,drop).run()}
     if(flow.setup?.pix)await h.db.prepare("UPDATE module_settings_extensions SET data_json=json_set(data_json,'$.pix_key','pix-teste@exemplo.com','$.pix_holder_name','Loja Teste') WHERE tenant_id=?").bind(h.tenant).run()
     if(flow.setup?.descriptions)await h.db.prepare("UPDATE services SET description='Banho com shampoo neutro e condicionador, secagem, corte de unhas e limpeza de ouvidos.' WHERE tenant_id=?").bind(h.tenant).run()
+    // A customer with an address on file, and a pet with no weight registered.
+    if(flow.setup?.address)await h.db.prepare("UPDATE clients SET address='Rua das Flores',address_number='120',neighborhood='Centro',city='Cidade Teste' WHERE tenant_id=?").bind(h.tenant).run()
+    if(flow.setup?.no_weight)await h.db.prepare("UPDATE pets SET weight_kg=NULL WHERE tenant_id=?").bind(h.tenant).run()
     for(const message of flow.turns){const r=await h.turn(message);expect(r.status,'Handoff at "'+message+'": '+r.reply).not.toBe('handoff')}
     if(flow.expect.sales!==undefined)expect(await sales()).toHaveLength(flow.expect.sales)
     if(flow.expect.appointments!==undefined)expect((await appointments()).results).toHaveLength(flow.expect.appointments)
+    if(flow.expect.transport_option)expect(await h.db.prepare('SELECT option_id FROM appointment_transport WHERE tenant_id=?').bind(h.tenant).first()).toEqual({option_id:flow.expect.transport_option})
+    if(flow.expect.pet_weight_kg!==undefined)expect(await h.db.prepare("SELECT weight_kg FROM pets WHERE tenant_id=? AND name='Mel'").bind(h.tenant).first()).toEqual({weight_kg:flow.expect.pet_weight_kg})
     if(flow.expect.reply)expect(String(h.turns.at(-1)?.result?.result?.reply??'')).toMatch(new RegExp(flow.expect.reply,'i'))
     if(flow.expect.not_reply)expect(String(h.turns.at(-1)?.result?.result?.reply??'')).not.toMatch(new RegExp(flow.expect.not_reply,'i'))
     if(flow.expect.no_proposal)expect((await h.db.prepare("SELECT count(*) n FROM luna_proposals WHERE tenant_id=? AND status='awaiting_confirmation'").bind(h.tenant).first<{n:number}>())?.n).toBe(0)

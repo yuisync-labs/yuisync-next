@@ -90,6 +90,11 @@ async function latestConfirmation(database: D1Database, context: LunaExecutionCo
     .bind(context.tenantId, context.moduleId, context.conversationId, presentation.outbound_message_id, proposal.id, presentation.presented_at_ms).first()
   if (other && !scoped) return false
   if (!intervening.results.length) return true
+  // The customer already said yes and Luna only asked again for confirmation:
+  // the repeated yes still confirms this summary.
+  const confirms = (value: string) => naturalConfirmation(value, proposal.operation_kind, payload) || closingConfirmation(value, proposal.operation_kind, payload) || explicitConfirmation(value, proposal.operation_kind, text(payload.fulfillment_type))
+  if (single && intervening.results.length <= 6 && intervening.results.some(m => m.direction === 'inbound')
+    && intervening.results.every(m => m.direction === 'outbound' ? m.actor_type === 'assistant' && /confirm/i.test(m.content_text) && !/\b(?:quer|deseja|gostaria)\b(?![^?]*confirm)/i.test(m.content_text) : m.actor_type === 'customer' && confirms(m.content_text))) return true
   // A bare "sim" may answer whatever was asked in between. A confirmation that
   // names the summary survives only hesitation from the customer and Luna's
   // replies, never a requested change, a human/system message or a long detour.
@@ -204,6 +209,10 @@ async function commitAppointment(database: D1Database, context: LunaExecutionCon
   const body = await response.json() as { data?: { appointment_id?: string; idempotent?: boolean }; code?: string }
   if (!response.ok || !body.data?.appointment_id) return { ok: false, code: body.code || 'APPOINTMENT_COMMIT_FAILED', retryable: response.status >= 500 }
   await markProposal(database, context, proposal.id, 'completed', body.data.appointment_id)
+  // The weight the customer told Luna fills the pet's record when it was empty.
+  const saidWeight = Number(/Peso informado pelo cliente: (\d{1,3}(?:[.,]\d{1,2})?) kg/.exec(text(payload.notes))?.[1]?.replace(',', '.'))
+  if (pet.weight_kg == null && saidWeight > 0) await database.prepare(`UPDATE pets SET weight_kg=?4,updated_at_ms=?5 WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND weight_kg IS NULL`)
+    .bind(context.tenantId, context.moduleId, petId, saidWeight, Date.now()).run()
   return { ok: true, data: { operation_id: body.data.appointment_id, operation_kind: 'appointment_create', idempotent: Boolean(body.data.idempotent) } }
 }
 

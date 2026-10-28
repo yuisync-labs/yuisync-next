@@ -322,7 +322,8 @@ export default function ChatPage() {
   const [showQuality,setShowQuality]=useState(false)
   const [input, setInput]         = useState('')
   const [statusFilter, setStatusFilter] = useState('')
-  const [dateRange, setDateRange] = useState({ from: '', to: '' })
+  // Opens on today's conversations; the clear button shows every day.
+  const [dateRange, setDateRange] = useState(() => { const today = new Date().toLocaleDateString('en-CA'); return { from: today, to: today } })
   const [showModal, setShowModal] = useState(false)
   const [sending, setSending]     = useState(false)
   const [sendError, setSendError] = useState('')

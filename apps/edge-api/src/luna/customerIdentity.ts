@@ -14,12 +14,19 @@ export function phoneVariants(address: string): string[] {
   return [...forms].flatMap(form => [form, '+' + form])
 }
 
+// Imported data often has the same person registered twice under one phone.
+// Same name means one customer; different names stay ambiguous.
+export function samePerson(names: unknown[]): boolean {
+  const keys = new Set(names.map(name => String(name ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()))
+  return keys.size === 1 && !keys.has('')
+}
+
 export async function isConversationCustomer(database: D1Database, context: LunaExecutionContext, customerId: string): Promise<boolean> {
   const phones = phoneVariants(context.customerAddress)
   if (!phones.length || !customerId) return false
   const rows = await database.prepare(`
-    SELECT id FROM clients WHERE tenant_id=?1 AND module_id=?2 AND status='active'
-      AND phone IN (SELECT value FROM json_each(?3)) ORDER BY id LIMIT 2
-  `).bind(context.tenantId, context.moduleId, JSON.stringify(phones)).all<{ id: string }>()
-  return rows.results.length === 1 && rows.results[0].id === customerId
+    SELECT id,name FROM clients WHERE tenant_id=?1 AND module_id=?2 AND status='active'
+      AND phone IN (SELECT value FROM json_each(?3)) ORDER BY id LIMIT 10
+  `).bind(context.tenantId, context.moduleId, JSON.stringify(phones)).all<{ id: string; name: string }>()
+  return rows.results.some(row => row.id === customerId) && (rows.results.length === 1 || samePerson(rows.results.map(row => row.name)))
 }

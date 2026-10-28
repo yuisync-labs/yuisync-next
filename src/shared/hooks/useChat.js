@@ -126,7 +126,7 @@ function playHandoffSound() {
 
 function normalizeHandoffTarget({ guard = {}, state = {}, reason = '' } = {}) {
   const rawTarget = String(guard.handoff_target || guard.handoffTarget || state.handoffTarget || '').toLowerCase()
-  const reasonText = String(reason || '').toLowerCase()
+  const reasonText = String(reason || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
   const intent = String(guard.intent || state.intent || '').toLowerCase()
   if (rawTarget === 'veterinaria' || reasonText.includes('veterinaria') || intent === 'veterinaria') return 'veterinaria'
   return 'atendente'

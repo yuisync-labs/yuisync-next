@@ -8,7 +8,7 @@ import { commitConfirmedProposal, getProposalOperationStatus } from './commitPro
 import { validateScheduleAvailability, withStoreScheduleDefaults } from './schedulePolicy'
 import { loadBenefitCandidates } from '../subscriptionBenefitCandidates'
 import { matchesToolSchema } from './toolSchema'
-import { isConversationCustomer, phoneVariants } from './customerIdentity'
+import { isConversationCustomer, phoneVariants, samePerson } from './customerIdentity'
 import { LunaConversationRepository } from './conversationRepository'
 import type { DraftEvent } from './operationalState'
 import { executeInformationTool, informationToolDefinitions } from './informationTools'
@@ -286,16 +286,17 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     const customer = await database.prepare(`
       SELECT id,name,phone,email,address,address_number,address_complement,address_reference,neighborhood,city,postal_code FROM clients
       WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND phone IN (SELECT value FROM json_each(?3))
-      ORDER BY updated_at_ms DESC LIMIT 2
+      ORDER BY updated_at_ms DESC LIMIT 10
     `).bind(context.tenantId, context.moduleId, JSON.stringify(phoneVariants(context.customerAddress))).all<Record<string, unknown>>()
     if (customer.results.length === 0) return { ok: false, code: 'CUSTOMER_NOT_FOUND', retryable: false }
-    if (customer.results.length > 1) return { ok: false, code: 'CUSTOMER_AMBIGUOUS', retryable: false }
+    if (customer.results.length > 1 && !samePerson(customer.results.map(row => row.name))) return { ok: false, code: 'CUSTOMER_AMBIGUOUS', retryable: false }
+    // A duplicated registration is one customer: the newest record, with the pets of all of them.
     const selected = customer.results[0]
     const pets = await database.prepare(`
       SELECT id,name,species,breed,weight_kg FROM pets
-      WHERE tenant_id=?1 AND module_id=?2 AND client_id=?3 AND status='active'
+      WHERE tenant_id=?1 AND module_id=?2 AND client_id IN (SELECT value FROM json_each(?3)) AND status='active'
       ORDER BY name,id LIMIT 20
-    `).bind(context.tenantId, context.moduleId, selected.id).all<Record<string, unknown>>()
+    `).bind(context.tenantId, context.moduleId, JSON.stringify(customer.results.map(row => row.id))).all<Record<string, unknown>>()
     const settings=await database.prepare(`SELECT data_json FROM module_settings_extensions WHERE tenant_id=?1 AND module_id=?2`).bind(context.tenantId,context.moduleId).first<{data_json:string}>()
     let timezone:string|null=null
     try{const configured=(await withStoreScheduleDefaults(database,context.tenantId,context.moduleId,JSON.parse(settings?.data_json??'{}'))).petbot_timezone;if(typeof configured==='string'){new Intl.DateTimeFormat('pt-BR',{timeZone:configured}).format();timezone=configured}}catch{/* Missing/invalid configuration is not an invented timezone. */}

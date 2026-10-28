@@ -9,9 +9,9 @@ const asks: Record<BookingStep, string> = {
   weight: 'O preço depende do peso e o pet não tem peso cadastrado: pergunte o peso aproximado (nunca estime pela raça) e salve weight_kg com o número que o cliente disser.',
   date: 'Pergunte o dia e o horário que ele prefere, numa pergunta só. Não consulte vagas antes de ele dizer o dia.',
   slot: 'Consulte get_available_slots com starts_at e ends_at iguais ao horário dito. Se o primeiro de options for ele, salve scheduled_at; se não, diga que não tem vaga e ofereça até 3 opções de options. Sem horário dito, pergunte o horário; não liste a agenda.',
-  transport: 'Pergunte se ele vai trazer o pet ou se quer o MotoDog (buscar, levar ou os dois). Trazer = transport_mode self.',
+  transport: 'Pergunte se ele vai trazer o pet ou se quer o MotoDog para buscar e levar. Trazer = transport_mode self. Um sim ao MotoDog é buscar e levar.',
   address: 'Peça rua, número, bairro e ponto de referência para o MotoDog e salve address.',
-  transport_option: 'Consulte get_transport_quote e salve transport_option_id da opção que bate com o pedido (buscar, levar ou os dois).',
+  transport_option: 'Consulte get_transport_quote e salve transport_option_id de buscar e levar. Só use a opção de só buscar ou só levar se o cliente disser só um dos dois.',
   summary: 'Tudo coletado: chame update_draft com prepare:true para mostrar o resumo.',
 }
 const labels: Partial<Record<BookingStep, string>> = { service: 'serviço', pet: 'pet', weight: 'peso', date: 'dia', slot: 'horário', transport: 'transporte', address: 'endereço', transport_option: 'opção de MotoDog' }
@@ -35,6 +35,16 @@ export function nextBookingStep(draft: Draft, options: { transportOffered: boole
   const step = order.find(([, ok]) => !ok)?.[0] ?? 'summary'
   const done = order.filter(([name, ok]) => ok && labels[name] && !(name === 'date' && f.scheduled_at) && !(name === 'weight' && !f.weight_kg) && !(name === 'transport' && !f.transport_mode) && !(/^(address|transport_option)$/.test(name) && !moto)).map(([name]) => labels[name]!)
   return { step, done, instruction: asks[step] }
+}
+
+// "Só buscar", "apenas a volta", "eu levo, vocês buscam": the customer asked for
+// one leg. Anything else ("pode buscar", "sim, MotoDog") means buscar e levar.
+export const oneLegSaid = (said: string) => /\b(?:so|somente|apenas|soh)\s+(?:pra\s+|para\s+|a\s+|o\s+)?(?:buscar|busca|levar|leva|entregar|ida|volta)\b|\bsem (?:a )?(?:volta|ida)\b|\beu (?:mesm[oa] )?(?:vou )?(?:busco|levo|pego|trago|buscar|levar|pegar|trazer)\b|\bso (?:que )?(?:voces? )?(?:busque|busquem|leve|levem)\b|\b(?:busco|levo|pego|trago) eu\b|(?:ida|volta) eu (?:mesm[oa] )?(?:busco|levo|pego|trago)\b/.test(plain(said))
+
+// The newest weight the customer wrote ("ela tem 8kg", "uns 12 quilos").
+export function weightFromSaid(said: string): string | null {
+  const found = [...plain(said).matchAll(/(?:^|[^0-9.,])(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:kg|kgs|quilos?|kilos?)\b/g)]
+  return found.length ? found[found.length - 1][1] : null
 }
 
 // A weight counts only when the customer wrote that number.
