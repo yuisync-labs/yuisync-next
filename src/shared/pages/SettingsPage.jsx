@@ -1517,7 +1517,7 @@ export default function SettingsPage() {
               <details className="bg-card border border-white/5 rounded-3xl p-6 shadow-sm group">
                 <summary className="cursor-pointer list-none flex items-center justify-between gap-4">
                   <div>
-                    <p className="text-sm font-bold text-text">Editar mensagens automáticas</p>
+                    <p className="text-sm font-bold text-text">Editar mensagens e serviços da Luna</p>
                     <p className="text-xs text-muted mt-1">Textos que a Luna usa: regras do pacote mensal e pedido de comprovante do PIX. Preços vêm sempre do cadastro.</p>
                   </div>
                   <span className="text-xs font-bold text-muted group-open:rotate-180 transition-transform">⌄</span>
@@ -1530,36 +1530,33 @@ export default function SettingsPage() {
                     </div>
                   ))}
                 </div>
-              </details>
-              {lunaServices.length > 0 && (
-                <details className="bg-card border border-white/5 rounded-3xl p-6 shadow-sm group">
-                  <summary className="cursor-pointer list-none flex items-center justify-between gap-4">
+                {lunaServices.length > 0 && (
+                  <div className="pt-6 mt-6 border-t border-white/5 space-y-3">
                     <div>
                       <p className="text-sm font-bold text-text">Serviços que a Luna não oferece</p>
                       <p className="text-xs text-muted mt-1">Marque os serviços que a Luna não deve citar nem agendar. Eles continuam disponíveis para a equipe.</p>
                     </div>
-                    <span className="text-xs font-bold text-muted group-open:rotate-180 transition-transform">⌄</span>
-                  </summary>
-                  <div className="pt-6 mt-5 border-t border-white/5 grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {lunaServices.map((service) => (
-                      <label key={service.id} className="flex items-center gap-3 text-sm text-text">
-                        <input
-                          type="checkbox"
-                          disabled={!canEdit}
-                          checked={form.luna_hidden_service_ids.includes(String(service.id))}
-                          onChange={(event) => setForm((current) => ({
-                            ...current,
-                            luna_hidden_service_ids: event.target.checked
-                              ? [...new Set([...current.luna_hidden_service_ids, String(service.id)])]
-                              : current.luna_hidden_service_ids.filter((id) => id !== String(service.id)),
-                          }))}
-                        />
-                        {service.name}
-                      </label>
-                    ))}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {lunaServices.map((service) => (
+                        <label key={service.id} className="flex items-center gap-3 text-sm text-text">
+                          <input
+                            type="checkbox"
+                            disabled={!canEdit}
+                            checked={form.luna_hidden_service_ids.includes(String(service.id))}
+                            onChange={(event) => setForm((current) => ({
+                              ...current,
+                              luna_hidden_service_ids: event.target.checked
+                                ? [...new Set([...current.luna_hidden_service_ids, String(service.id)])]
+                                : current.luna_hidden_service_ids.filter((id) => id !== String(service.id)),
+                            }))}
+                          />
+                          {service.name}
+                        </label>
+                      ))}
+                    </div>
                   </div>
-                </details>
-              )}
+                )}
+              </details>
             </div>
 
 
