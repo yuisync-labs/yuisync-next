@@ -1566,6 +1566,23 @@
       },
       "family": "flow",
       "input_fragments": []
+    },
+    {
+      "id": "FLOW-11-6",
+      "name": "Pet com peso no cadastro: não pergunta o peso de novo",
+      "turns": [
+        "quero agendar um banho pra Mel na quarta às 10h, eu levo ela"
+      ],
+      "setup": {
+        "bands": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "55",
+        "not_reply": "peso"
+      },
+      "family": "flow",
+      "input_fragments": []
     }
   ]
 }
