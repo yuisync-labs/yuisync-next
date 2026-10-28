@@ -1473,6 +1473,99 @@
       },
       "family": "flow",
       "input_fragments": []
+    },
+    {
+      "id": "FLOW-11-1",
+      "name": "Cliente novo pede banho de shih tzu: o peso entra no cadastro, sem preço de porte pela raça",
+      "turns": [
+        "Oi, quero agendar banho pro Thor, ele é um shih tzu"
+      ],
+      "setup": {
+        "bands": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "peso",
+        "not_reply": "R\\$ ?55|porte pequeno"
+      },
+      "family": "flow",
+      "input_fragments": [],
+      "unregistered": true
+    },
+    {
+      "id": "FLOW-11-2",
+      "name": "Cadastro confirmado sem peso: pergunta o peso antes de dar o preço",
+      "turns": [
+        "Oi, quero agendar banho pro Thor, ele é um shih tzu",
+        "Sou Ana, nasci em 14/05/1990, CPF 529.982.247-25, CEP 36880-000, Rua A número 191, perto do mercado. O Thor é cachorro, shih tzu.",
+        "Sim"
+      ],
+      "setup": {
+        "bands": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "peso",
+        "not_reply": "R\\$ ?55|porte pequeno"
+      },
+      "family": "flow",
+      "input_fragments": [],
+      "unregistered": true
+    },
+    {
+      "id": "FLOW-11-3",
+      "name": "Pet cadastrado sem peso: pergunta o peso antes de escolher o banho",
+      "turns": [
+        "quero agendar um banho pra Mel"
+      ],
+      "setup": {
+        "bands": true,
+        "no_weight": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "peso",
+        "not_reply": "R\\$ ?55|porte pequeno",
+        "no_proposal": true
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-11-4",
+      "name": "Pergunta o preço sem peso: mostra as faixas ou pede o peso",
+      "turns": [
+        "quanto fica o banho da Mel?"
+      ],
+      "setup": {
+        "bands": true,
+        "no_weight": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "peso|kg"
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-11-5",
+      "name": "Peso informado escolhe a faixa certa no resumo",
+      "turns": [
+        "quero agendar um banho pra Mel",
+        "ela tem uns 15 kg",
+        "quarta às 10h, eu levo ela"
+      ],
+      "setup": {
+        "bands": true,
+        "no_weight": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "70"
+      },
+      "family": "flow",
+      "input_fragments": []
     }
   ]
 }
