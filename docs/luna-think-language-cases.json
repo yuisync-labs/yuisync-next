@@ -1066,7 +1066,7 @@
       "input_fragments": [],
       "turns": [
         "ola bom dia, gostaria de agendar um banho",
-        "Meu nome é Ana, meu pet é o Thor um shihtzu",
+        "Meu nome é Ana, nasci em 14/05/1990, CPF 529.982.247-25, CEP 36880-000, número 191, perto do mercado. Meu pet é o Thor, um shihtzu",
         "Sim"
       ],
       "expect": {

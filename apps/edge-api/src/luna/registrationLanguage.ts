@@ -44,6 +44,12 @@ export function registrationIssue(args: Record<string, unknown>, said: string, n
 // What a new customer already said for the registration, checked by the server
 // so the model neither thanks for a wrong CPF nor asks for everything again.
 // `said` is the customer's messages, oldest first.
+// The customer has said every tutor field the store requires, with a valid CPF.
+export function registrationComplete(said: string): boolean {
+  const cpf = [...said.matchAll(/(?<![\d.])(\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)/g)].at(-1)?.[1].replace(/\D/g, '')
+  return Boolean(cpf && validCpf(cpf)) && /(?<!\d)\d{1,2}[/.-]\d{1,2}[/.-](?:\d{4}|\d{2})(?!\d)/.test(said) && /(?<![\d.])\d{5}-?\d{3}(?![\d-])/.test(said)
+}
+
 export function registrationStatus(said: string): string {
   const cpf = [...said.matchAll(/(?<![\d.])(\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)/g)].at(-1)?.[1].replace(/\D/g, '')
   const told = [
