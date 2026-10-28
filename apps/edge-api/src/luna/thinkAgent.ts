@@ -353,6 +353,13 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       if(!kept.length)return {...fail('TRANSPORT_MODE_NOT_SAID'),instruction:'O cliente não disse que vai trazer o pet. Pergunte se ele traz ou se quer o MotoDog para buscar e levar.'}
       input={...input,changes:kept}
     }
+    // The address on file restated as text is stored as the record's address.
+    const typed=input.kind==='booking'?input.changes.find(ch=>ch.action==='set_field'&&ch.field==='address'):undefined
+    if(typed?.value&&!/^\s*\{/.test(typed.value)){
+      const onFile=this.addressOnFile(await registry.execute('get_customer_context',{},this.turn().context)),flat=(v:string)=>v.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
+      const numbers=typed.value.match(/\d+/g)??[]
+      if(onFile&&flat(typed.value).includes(flat(onFile.address.street))&&numbers.every(n=>n===onFile.address.number))input={...input,changes:input.changes.map(ch=>ch===typed?{...ch,value:JSON.stringify(onFile.address)}:ch)}
+    }
     // A yes to the MotoDog is buscar e levar unless the customer asked for one leg.
     const option=input.kind==='booking'?input.changes.find(ch=>ch.action==='set_field'&&ch.field==='transport_option_id'):undefined
     if(option?.value&&!oneLegSaid(await this.saidText())){
@@ -449,7 +456,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     if(!changes.length||!record(await this.applyDraft({operation_id:id,kind:'booking',prepare:false,changes})).ok)return draft
     return ((await new LunaConversationRepository(this.db).loadState(this.turn().context)).state.operations[id] as unknown as D|undefined)??draft
   }
-  private async prepareDraft(operation_id:string,kind:'cart'|'booking'){
+  private async prepareDraft(operation_id:string,kind:'cart'|'booking'):Promise<Record<string,unknown>>{
     const c=this.turn().context,registry=createLunaToolRegistry(this.db),loaded=await new LunaConversationRepository(this.db).loadState(c)
     let draft=loaded.state.operations[operation_id]
     if(!draft||draft.kind!==kind||draft.status!=='active')return fail('DRAFT_NOT_ACTIVE')
@@ -460,7 +467,10 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const petOwner=kind==='booking'&&draft.fields.pet_id?(await this.db.prepare("SELECT client_id FROM pets WHERE tenant_id=? AND module_id='petshop' AND id=? AND status='active'").bind(c.tenantId,draft.fields.pet_id).first<{client_id:string}>())?.client_id:undefined
     const customerId=petOwner&&await isConversationCustomer(this.db,c,petOwner)?petOwner:record(record(customer.data).customer).id
     if(kind==='booking')draft=await this.fillKnown(operation_id,draft,customer)
-    if(kind==='booking'){const s=nextBookingStep(draft,{transportOffered:await transportOffered(this.db,c.tenantId),weightNeeded:await this.weightNeeded(draft,customer),addressOnFile:this.addressOnFile(customer)?.text});if(s.step==='transport_option'){let city='';try{city=String(JSON.parse(String(draft.fields.address)).city??'')}catch{};const quote=await registry.execute('get_transport_quote',{pet_id:draft.fields.pet_id,city,...(draft.fields.weight_kg?{weight_kg:Number(draft.fields.weight_kg.replace(',','.'))}:{})},c);return {...fail('BOOKING_STEP_PENDING'),step:s.step,instruction:'Escolha em options a opção de buscar e levar, salvo se o cliente disse só buscar ou só levar, e salve transport_option_id com prepare:true.',options:quote.ok?record(quote.data).options:[]}}if(s.step!=='summary')return {...fail('BOOKING_STEP_PENDING'),step:s.step,instruction:s.instruction}}
+    if(kind==='booking'){const s=nextBookingStep(draft,{transportOffered:await transportOffered(this.db,c.tenantId),weightNeeded:await this.weightNeeded(draft,customer),addressOnFile:this.addressOnFile(customer)?.text});if(s.step==='transport_option'){let city='';try{city=String(JSON.parse(String(draft.fields.address)).city??'')}catch{};const quote=await registry.execute('get_transport_quote',{pet_id:draft.fields.pet_id,city,...(draft.fields.weight_kg?{weight_kg:Number(draft.fields.weight_kg.replace(',','.'))}:{})},c);// No leg named: the server picks buscar e levar instead of asking the model to.
+      const both=quote.ok&&!oneLegSaid(await this.saidText())?(record(quote.data).options as Record<string,unknown>[]|undefined)?.find(o=>Number(o.pickup_required)===1&&Number(o.dropoff_required)===1):undefined
+      if(both&&record(await this.applyDraft({operation_id,kind:'booking',prepare:false,changes:[{action:'set_field',field:'transport_option_id',value:String(both.id)}]})).ok)return this.prepareDraft(operation_id,kind)
+      return {...fail('BOOKING_STEP_PENDING'),step:s.step,instruction:'Escolha em options a opção de buscar e levar, salvo se o cliente disse só buscar ou só levar, e salve transport_option_id com prepare:true.',options:quote.ok?record(quote.data).options:[]}}if(s.step!=='summary')return {...fail('BOOKING_STEP_PENDING'),step:s.step,instruction:s.instruction}}
     let address:unknown;try{address=draft.fields.address?JSON.parse(draft.fields.address):undefined}catch{return fail('ADDRESS_FIELDS_REQUIRED')}
     // A city the customer did not say is the store's city.
     if(address&&typeof address==='object'&&!record(address).city){const store=await this.db.prepare("SELECT store_city FROM tenant_module_settings WHERE tenant_id=? AND module_id='petshop' LIMIT 1").bind(c.tenantId).first<{store_city:string|null}>();if(store?.store_city)address={...record(address),city:store.store_city}}

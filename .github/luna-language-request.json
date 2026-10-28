@@ -2,8 +2,10 @@
   "run": true,
   "cases": [
     "FLOW-10-2",
-    "FLOW-10-5"
+    "FLOW-10-4",
+    "FLOW-10-5",
+    "FLOW-07-3"
   ],
-  "reason": "address_plain_text_then_kept",
+  "reason": "kept_address_and_server_option",
   "model": "openai:gpt-4.1-mini"
 }
