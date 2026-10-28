@@ -84,3 +84,7 @@ it('Byanka refinements: courtesy yes, one-leg MotoDog, said weight, duplicates, 
   expect(handoffReasonLabel('Solicitação clínica exige atendimento humano.')).toMatch(/veterinária/)
   expect(handoffReasonLabel('SOME_NEW_CODE')).not.toMatch(/_/)
 })
+
+it('drops sentences that leak tool fields to the customer', () => {
+  expect(withoutInternalErrors('O valor do campo de transporte deve ser uma string específica. Você quer só a busca?')).toBe('Você quer só a busca?')
+})

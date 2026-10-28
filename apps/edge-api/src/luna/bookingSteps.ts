@@ -16,7 +16,7 @@ const asks: Record<BookingStep, string> = {
 }
 const labels: Partial<Record<BookingStep, string>> = { service: 'serviço', pet: 'pet', weight: 'peso', date: 'dia', slot: 'horário', transport: 'transporte', address: 'endereço', transport_option: 'opção de MotoDog' }
 
-export function nextBookingStep(draft: Draft, options: { transportOffered: boolean; weightNeeded?: boolean }): { step: BookingStep; done: string[]; instruction: string } {
+export function nextBookingStep(draft: Draft, options: { transportOffered: boolean; weightNeeded?: boolean; addressOnFile?: string | null }): { step: BookingStep; done: string[]; instruction: string } {
   const f = draft.fields
   const moto = Boolean(f.transport_mode && !/^(self|none)$/.test(f.transport_mode))
   let address: Record<string, unknown> = {}
@@ -34,7 +34,9 @@ export function nextBookingStep(draft: Draft, options: { transportOffered: boole
   ]
   const step = order.find(([, ok]) => !ok)?.[0] ?? 'summary'
   const done = order.filter(([name, ok]) => ok && labels[name] && !(name === 'date' && f.scheduled_at) && !(name === 'weight' && !f.weight_kg) && !(name === 'transport' && !f.transport_mode) && !(/^(address|transport_option)$/.test(name) && !moto)).map(([name]) => labels[name]!)
-  return { step, done, instruction: asks[step] }
+  // The address on file goes with the MotoDog question; the server fills it when he accepts.
+  const instruction = step === 'transport' && options.addressOnFile ? `${asks.transport} Na mesma pergunta, cite o endereço do cadastro (${options.addressOnFile}) e pergunte se o MotoDog busca e leva nele. Se ele der outro endereço, salve o novo.` : asks[step]
+  return { step, done, instruction }
 }
 
 // "Só buscar", "apenas a volta", "eu levo, vocês buscam": the customer asked for
