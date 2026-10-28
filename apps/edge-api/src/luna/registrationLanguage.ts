@@ -56,5 +56,6 @@ export function registrationStatus(said: string): string {
     + (cpf && !validCpf(cpf) ? 'o último CPF que o cliente mandou é inválido (os dígitos não conferem). Diga isso a ele e peça para conferir o CPF; não agradeça como se estivesse certo nem siga para dia, horário ou resumo antes do cadastro. ' : '')
     + (told.length ? 'Já disse e está válido: ' + told.join(', ') + '. ' : '')
     + (missing.length ? 'Ainda não disse: ' + missing.join(', ') + '. ' : '')
+    + (!missing.length && cpf && validCpf(cpf) ? 'Os dados obrigatórios do tutor estão completos: com o nome do tutor e o nome e a raça do pet ditos, chame prepare_customer_registration nesta resposta. A espécie vem da raça (shih tzu, poodle, husky = cachorro; siamês, persa = gato) e o peso fica null se ele não disse; não peça isso antes de mostrar o cadastro. ' : '')
     + 'Peça só o que falta ou está errado, nunca a lista toda de novo. Enquanto o cadastro não for confirmado, não pergunte se ele confirma o agendamento.'
 }
