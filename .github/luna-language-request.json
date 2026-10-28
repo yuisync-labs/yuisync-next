@@ -1,14 +1,10 @@
 {
   "run": true,
   "cases": [
+    "FLOW-07-7",
     "FLOW-11-1",
     "FLOW-11-2",
-    "FLOW-11-3",
-    "FLOW-11-4",
-    "FLOW-11-5",
-    "FLOW-11-6",
-    "FLOW-10-3",
-    "FLOW-07-7"
+    "FLOW-08-4"
   ],
   "reason": "weight_before_band_price",
   "model": "openai:gpt-4.1-mini"
