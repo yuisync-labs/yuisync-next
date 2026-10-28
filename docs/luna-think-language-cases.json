@@ -1486,7 +1486,7 @@
       "expect": {
         "appointments": 0,
         "reply": "peso",
-        "not_reply": "R\\$ ?55|porte pequeno"
+        "not_reply": "custa R\\$ ?55|R\\$ ?55,00 e dura"
       },
       "family": "flow",
       "input_fragments": [],
@@ -1506,7 +1506,7 @@
       "expect": {
         "appointments": 0,
         "reply": "peso",
-        "not_reply": "R\\$ ?55|porte pequeno"
+        "not_reply": "custa R\\$ ?55|R\\$ ?55,00 e dura"
       },
       "family": "flow",
       "input_fragments": [],
@@ -1525,7 +1525,7 @@
       "expect": {
         "appointments": 0,
         "reply": "peso",
-        "not_reply": "R\\$ ?55|porte pequeno",
+        "not_reply": "custa R\\$ ?55|R\\$ ?55,00 e dura",
         "no_proposal": true
       },
       "family": "flow",
