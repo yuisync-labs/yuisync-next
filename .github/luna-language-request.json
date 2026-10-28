@@ -1,11 +1,9 @@
 {
   "run": true,
   "cases": [
-    "FLOW-10-1",
     "FLOW-10-2",
-    "FLOW-10-4",
     "FLOW-10-5"
   ],
-  "reason": "address_after_motodog_choice",
+  "reason": "address_plain_text_then_kept",
   "model": "openai:gpt-4.1-mini"
 }
