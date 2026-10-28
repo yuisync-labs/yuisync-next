@@ -238,7 +238,9 @@ async function readSettings(db, scope) {
   // MotoDog options live in transport_options, the table Luna and the agenda quote from.
   const transport=(await db.prepare('SELECT id,label,fee_cents,max_weight_grams,status FROM transport_options WHERE tenant_id=?1 AND module_id=?2 ORDER BY sort_order,id').bind(scope.tenantId,scope.moduleId).all()).results
   const options=transport.length?{pet_transport_options:transport.map((o)=>({id:o.id,label:o.label,fee:(Number(o.fee_cents)/100).toFixed(2),maxWeightKg:o.max_weight_grams==null?'':String(Number(o.max_weight_grams)/1000),active:o.status==='active'}))}:{}
-  return [{...obj(jsonValue(ext?.data_json,{})),...options,...core,created_at:iso(core.created_at_ms),updated_at:iso(core.updated_at_ms)}]
+  // Services the store can hide from Luna, listed with the settings that hold the choice.
+  const services=(await db.prepare("SELECT id,name FROM services WHERE tenant_id=?1 AND module_id=?2 AND status='active' ORDER BY name,id LIMIT 300").bind(scope.tenantId,scope.moduleId).all()).results
+  return [{...obj(jsonValue(ext?.data_json,{})),...options,luna_service_options:services.map((s)=>({id:s.id,name:s.name})),...core,created_at:iso(core.created_at_ms),updated_at:iso(core.updated_at_ms)}]
 }
 
 export async function selectRows(db, table, config, body, scope) {
@@ -299,6 +301,7 @@ export async function mutateSettings(db, raw, scope) {
   const current=await db.prepare('SELECT data_json FROM module_settings_extensions WHERE tenant_id=?1 AND module_id=?2').bind(scope.tenantId,scope.moduleId).first()
   const transport=Array.isArray(extra.pet_transport_options)?extra.pet_transport_options:null
   delete extra.pet_transport_options
+  delete extra.luna_service_options
   const merged={...obj(jsonValue(current?.data_json,{})),...extra}, statements=[]
   delete merged.pet_transport_options
   if(transport)transport.forEach((o,i)=>{

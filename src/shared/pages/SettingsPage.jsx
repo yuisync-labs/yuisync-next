@@ -9,7 +9,7 @@ import LunaEvalDashboard from '../components/LunaEvalDashboard'
 import { useAuthCtx } from '../../context/AuthContext'
 import { useModuleCtx } from '../../context/ModuleContext'
 import { MODULES } from '../../config/modules'
-import { applyTenantFilter, buildTenantPayload, isTenantSchemaError, runWithTenantFallback } from '../../lib/tenant'
+import { buildTenantPayload, isTenantSchemaError, runWithTenantFallback } from '../../lib/tenant'
 import { DEFAULT_PETBOT_PROMPT } from '../../../shared/petbotPrompt'
 import {
   DEFAULT_PETSHOP_DELIVERY_STAFF,
@@ -82,6 +82,7 @@ const OPERATIONAL_STAFF_TEMPLATE_KEY = '__petshop_operational_staff'
 
 const INITIAL_FORM = {
   luna_hidden_service_ids: [],
+  luna_service_options: [],
   store_name: '',
   store_address: '',
   store_neighborhood: '',
@@ -288,7 +289,6 @@ export default function SettingsPage() {
   const isTestTenant = Boolean(activeTenantId && activeTenantId === import.meta.env.VITE_TEST_TENANT_ID)
 
   const [form, setForm] = useState(INITIAL_FORM)
-  const [lunaServices, setLunaServices] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savingStaff, setSavingStaff] = useState(false)
@@ -314,19 +314,6 @@ export default function SettingsPage() {
     setPetSettingsTab('geral')
   }, [effectiveModId, activeTenantId])
 
-  // Services the store may hide from Luna's answers.
-  useEffect(() => {
-    if (effectiveModId !== 'petshop') return
-    let cancelled = false
-    runWithTenantFallback(activeTenantId, async (includeTenant) => applyTenantFilter(
-      supabase.from('petshop_services').select('id,name').eq('module_id', effectiveModId).eq('active', true),
-      activeTenantId,
-      includeTenant,
-    )).then((response) => {
-      if (!cancelled && !response.error) setLunaServices([...(response.data || [])].sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR')))
-    })
-    return () => { cancelled = true }
-  }, [effectiveModId, activeTenantId])
 
   useEffect(() => {
     if (!effectiveModId) {
@@ -400,6 +387,7 @@ export default function SettingsPage() {
           pet_transport_options: normalizeTransportOptions(data.pet_transport_options),
           message_templates: normalizeTemplates(data.message_templates),
           luna_hidden_service_ids: Array.isArray(data.luna_hidden_service_ids) ? data.luna_hidden_service_ids.map(String) : [],
+          luna_service_options: Array.isArray(data.luna_service_options) ? data.luna_service_options : [],
         }
       }
 
@@ -561,7 +549,7 @@ export default function SettingsPage() {
 
     try {
       const upsertResponse = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
-        const { petshop_delivery_staff: _deliveryStaff, ...persistableForm } = form
+        const { petshop_delivery_staff: _deliveryStaff, luna_service_options: _lunaServices, ...persistableForm } = form
         const row = buildTenantPayload({
           module_id: effectiveModId,
           ...persistableForm,
@@ -1530,14 +1518,14 @@ export default function SettingsPage() {
                     </div>
                   ))}
                 </div>
-                {lunaServices.length > 0 && (
+                {form.luna_service_options.length > 0 && (
                   <div className="pt-6 mt-6 border-t border-white/5 space-y-3">
                     <div>
                       <p className="text-sm font-bold text-text">Serviços que a Luna não oferece</p>
                       <p className="text-xs text-muted mt-1">Marque os serviços que a Luna não deve citar nem agendar. Eles continuam disponíveis para a equipe.</p>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {lunaServices.map((service) => (
+                      {form.luna_service_options.map((service) => (
                         <label key={service.id} className="flex items-center gap-3 text-sm text-text">
                           <input
                             type="checkbox"
