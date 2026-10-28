@@ -1668,6 +1668,61 @@
       },
       "family": "flow",
       "input_fragments": []
+    },
+    {
+      "id": "FLOW-13-1",
+      "family": "flow",
+      "name": "Cadastro com 'sim, pode cadastrar' e banho em seguida chega ao resumo",
+      "input_fragments": [],
+      "turns": [
+        "oi, queria marcar um banho pro meu cachorro",
+        "Meu nome é Carla Teste, CPF 111.444.777-35, nasci em 10/03/1988, CEP 36880-000, Rua das Acácias número 120, perto da padaria Central. O cachorro é o Bob, shih tzu, pesa uns 7 kg",
+        "sim, pode cadastrar",
+        "próxima quarta às 10h, eu levo ele"
+      ],
+      "expect": {
+        "sales": 0,
+        "appointments": 0,
+        "reply": "confirm",
+        "not_reply": "pet_id|\\bID\\b|atendente|tentei"
+      },
+      "unregistered": true
+    },
+    {
+      "id": "FLOW-13-2",
+      "family": "flow",
+      "name": "Cliente recém-cadastrado confirma o banho",
+      "input_fragments": [],
+      "turns": [
+        "oi, queria marcar um banho pro meu cachorro",
+        "Meu nome é Carla Teste, CPF 111.444.777-35, nasci em 10/03/1988, CEP 36880-000, Rua das Acácias número 120, perto da padaria Central. O cachorro é o Bob, shih tzu, pesa uns 7 kg",
+        "sim, pode cadastrar",
+        "próxima quarta às 10h, eu levo ele",
+        "confirmo"
+      ],
+      "expect": {
+        "sales": 0,
+        "appointments": 1
+      },
+      "unregistered": true
+    },
+    {
+      "id": "FLOW-13-3",
+      "family": "flow",
+      "name": "Cadastro e banho com dia e horário já no pedido",
+      "input_fragments": [],
+      "turns": [
+        "oi, quero banho pro meu cachorro sexta às 14h, eu levo",
+        "Meu nome é Carla Teste, CPF 111.444.777-35, nasci em 10/03/1988, CEP 36880-000, Rua das Acácias número 120, perto da padaria Central. O cachorro é o Bob, shih tzu, pesa uns 7 kg",
+        "pode cadastrar"
+      ],
+      "expect": {
+        "sales": 0,
+        "appointments": 0,
+        "reply": "confirm",
+        "not_reply": "pet_id|\\bID\\b|atendente|tentei"
+      },
+      "unregistered": true
     }
   ]
 }

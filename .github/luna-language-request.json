@@ -1,10 +1,12 @@
 {
-  "run": false,
+  "run": true,
   "cases": [
-    "FLOW-12-4",
-    "FLOW-08-1",
-    "FLOW-01-1"
+    "FLOW-13-1",
+    "FLOW-13-2",
+    "FLOW-13-3",
+    "FLOW-05-3",
+    "FLOW-11-1"
   ],
-  "reason": "hidden_services_filter",
+  "reason": "agent_battery_chat1_pet_id",
   "model": "openai:gpt-4.1-mini"
 }

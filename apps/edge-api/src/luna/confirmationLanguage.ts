@@ -13,15 +13,19 @@ const AFFIRMATIVE = new Set(['confirmo', 'confirma', 'confirmado', 'confirmada',
   's', 'ss', 'sss', 'aham', 'uhum', 'positivo', 'correto', 'exato', 'yes', 'sou'])
 const FILLER = new Set(['o', 'a', 'os', 'as', 'do', 'da', 'dos', 'das', 'de', 'esse', 'este', 'essa', 'esta', 'novo', 'nova', 'resumo', 'agora', 'entao', 'por', 'favor', 'pode', 'ser', 'pra', 'para', 'eu', 'mesmo', 'e', 'com', 'ai', 'la', 'unidade', 'item', 'iten', 'pacote', 'valor', 'total', 'reai', 'real', 'mesma', 'nesse', 'neste', 'nessa', 'nesta', 'no', 'na', 'dia', 'data',
   // Courtesy around a yes ("sim obrigada", "perfeito, pode marcar").
-  'obrigado', 'obrigada', 'brigado', 'brigada', 'valeu', 'grato', 'grata', 'perfeito', 'perfeita', 'otimo', 'otima', 'show', 'claro', 'combinado', 'top', 'blz', 'tudo', 'bom', 'boa', 'legal', 'maravilha', 'muito', 'certinho', 'ta', 'tranquilo'])
+  'obrigado', 'obrigada', 'brigado', 'brigada', 'valeu', 'grato', 'grata', 'perfeito', 'perfeita', 'otimo', 'otima', 'show', 'claro', 'combinado', 'top', 'blz', 'tudo', 'bom', 'boa', 'legal', 'maravilha', 'muito', 'certinho', 'ta', 'tranquilo',
+  // "sim, pode seguir", "bora", "pode fazer".
+  'segue', 'seguir', 'prossegue', 'prosseguir', 'faz', 'fazer', 'vai', 'bora', 'meu', 'meus', 'minha', 'minhas'])
 // Words that change, qualify, defer or reference something outside the summary.
 const BLOCKERS = new Set(['nao', 'ainda', 'espera', 'pera', 'perai', 'mas', 'porem', 'depois', 'so', 'troca', 'trocar', 'muda', 'mudar', 'altera', 'alterar', 'tira', 'tirar', 'coloca', 'colocar', 'adiciona', 'aumenta', 'diminui', 'mais', 'menos', 'outro', 'outra', 'corrige', 'corrigindo', 'se', 'quando', 'talvez', 'acho', 'cancela', 'cancelar', 'cancelamento', 'pago', 'paguei', 'pagar', 'pix', 'cartao', 'dinheiro', 'amanha', 'hoje', 'hora', 'as'])
 const NUMBERS: Record<string, number> = { um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9, dez: 10, vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50, sessenta: 60, setenta: 70, oitenta: 80, noventa: 90, cem: 100 }
+// "pode cadastrar" is a yes to a registration summary, like "pode agendar" to a booking.
+const REGISTER = ['cadastrar', 'cadastra', 'cadastre', 'registrar', 'registra', 'salvar', 'salva', 'salve']
 const SUBJECTS: Record<string, string[]> = {
   product_order_create: ['pedido', 'compra', 'carrinho'],
   appointment_create: ['horario', 'agendamento', 'banho', 'tosa', 'servico'],
-  customer_registration: ['cadastro', 'dado'],
-  pet_registration: ['cadastro', 'dado', 'pet'],
+  customer_registration: ['cadastro', 'dado', ...REGISTER],
+  pet_registration: ['cadastro', 'dado', 'pet', ...REGISTER],
 }
 const FULFILLMENT: Record<string, string[]> = { counter: ['retirada', 'retirar', 'buscar', 'busco', 'pego', 'pegar', 'loja'], delivery: ['entrega', 'entregar'] }
 
@@ -39,7 +43,8 @@ export function requestsChange(text: string) {
 export function naturalConfirmation(value: string, operationKind: string, payload: JsonRecord): boolean {
   if (!SUBJECTS[operationKind]) return false
   const words = confirmationWords(value)
-  if (!words.length || words.length > 24 || !words.some(w => AFFIRMATIVE.has(w))) return false
+  const yes = (w: string) => AFFIRMATIVE.has(w) || /registration$/.test(operationKind) && REGISTER.includes(w)
+  if (!words.length || words.length > 24 || !words.some(yes)) return false
   const facts = new Set<string>(SUBJECTS[operationKind])
   const lines = operationKind === 'product_order_create' ? (Array.isArray(payload.items) ? payload.items : []) : (Array.isArray(payload.services) ? payload.services : [])
   for (const line of lines) for (const w of confirmationWords(String(record(line).name ?? ''))) facts.add(singular(w))

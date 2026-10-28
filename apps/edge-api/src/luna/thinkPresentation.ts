@@ -40,7 +40,7 @@ export function validateThinkReply(reply:string,results:readonly {name:string;re
 }
 // Tool failures are the server's business: the customer never reads "houve um
 // problema" or "vou tentar de novo", only the answer that came after the retry.
-const internalError=/\b(?:houve|tive|deu|ocorreu|aconteceu)\b[^.!?\n]*\b(?:problema|erro|falha|instabilidade)\b|\b(?:vou|deixa eu|irei|vamos) tentar (?:novamente|de novo|outra vez)\b|\berro (?:ao|na|no|de) (?:consult|busc|carreg|verific)|\bnao consegui (?:consultar|acessar|carregar|verificar)\b|\b(?:campo|string|parametro|schema|json)\b/
+const internalError=/\b(?:houve|tive|deu|ocorreu|aconteceu)\b[^.!?\n]*\b(?:problema|erro|falha|instabilidade)\b|\b(?:vou|deixa eu|irei|vamos) tentar (?:novamente|de novo|outra vez)\b|\berro (?:ao|na|no|de) (?:consult|busc|carreg|verific)|\bnao consegui (?:consultar|acessar|carregar|verificar)\b|\b(?:campo|string|parametro|schema|json)\b|\b[a-z]+_id\b|\bids?\b|\btentei usar\b|\bvou corrigir\b|[0-9a-f]{8}-[0-9a-f]{4}/
 export function withoutInternalErrors(reply:string){
   const kept=reply.replace(/[^.!?\n]*(?:[.!?]+|\n|$)/g,sentence=>internalError.test(normalized(sentence))?'':sentence).replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim()
   return kept||reply

@@ -119,3 +119,14 @@ describe('today\'s conversations (28/10)', () => {
     expect(promisesHandoff('Quer que eu chame um atendente?')).toBe(false)
   })
 })
+
+describe('agent battery chat 1 (28/10 night)', () => {
+  it('takes "sim, pode cadastrar" as a yes to the registration', () => {
+    for (const yes of ['sim, pode cadastrar', 'pode cadastrar', 'sim pode seguir', 'pode salvar meus dados']) expect(naturalConfirmation(yes, 'customer_registration', {})).toBe(true)
+    for (const no of ['pode cadastrar depois', 'não, espera']) expect(naturalConfirmation(no, 'customer_registration', {})).toBe(false)
+  })
+  it('never shows ids or a retry to the customer', () => {
+    const reply = 'Seu cadastro está ok, e o horário das 10h da próxima quarta está disponível para o banho do Bob. Só preciso confirmar o pet_id correto para finalizar o agendamento. O pet cadastrado tem ID diferente do que tentei usar. Vou corrigir e já volto.'
+    expect(withoutInternalErrors(reply)).toBe('Seu cadastro está ok, e o horário das 10h da próxima quarta está disponível para o banho do Bob.')
+  })
+})

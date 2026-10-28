@@ -352,8 +352,27 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     actions.register_restock_interest=action({description:'Registra interesse em SKU apresentado com consentimento explícito para aviso neste canal local. Sim sozinho exige esclarecimento: "pode me avisar".',inputSchema:z.object({product_id:z.string().min(1),consent:z.literal(true)}).strict(),permissions:['petshop:draft'],idempotencyKey:({input})=>this.actionKey('restock',input),execute:async({product_id})=>{const t=this.turn();if(!explicitRestockConsent(this.text()))return fail('RESTOCK_CONSENT_REQUIRED');if(!Object.values(this.state.catalog).some(m=>m.lastProductIds.includes(product_id)))return fail('PRODUCT_NOT_PRESENTED');await this.db.prepare("UPDATE chat_threads SET context_json=json_set(context_json,'$.think.restock_product',?,'$.think.restock_consent_message',?) WHERE tenant_id=? AND module_id='petshop' AND id=?").bind(product_id,t.context.sourceMessageId,t.context.tenantId,t.context.conversationId).run();return {ok:true,data:{interest_registered:true}}}})
     return actions
   }
+  // The model sometimes sends a pet name, a customer id or an id from before the
+  // registration as pet_id. The server maps it to the customer's own pet.
+  private async resolvePet(value:string,customer:Awaited<ReturnType<ReturnType<typeof createLunaToolRegistry>['execute']>>):Promise<string|null|undefined>{
+    if(!customer.ok)return undefined
+    const pets=(Array.isArray(record(customer.data).pets)?record(customer.data).pets as {id:string;name?:unknown}[]:[])
+    if(pets.some(p=>p.id===value))return value
+    const plain=(v:unknown)=>' '+String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()+' '
+    const named=pets.find(p=>plain(p.name)===plain(value))
+    if(named)return named.id
+    if(pets.length===1)return pets[0].id
+    const said=plain(await this.saidText()),mentioned=pets.filter(p=>plain(p.name).trim()&&said.includes(plain(p.name)))
+    return mentioned.length===1?mentioned[0].id:null
+  }
   private async applyDraft(input:DraftInput){
     const registry=createLunaToolRegistry(this.db)
+    const petChange=input.kind==='booking'?input.changes.find(ch=>ch.action==='set_field'&&ch.field==='pet_id'):undefined
+    if(petChange?.value){
+      const customer=await registry.execute('get_customer_context',{},this.turn().context),resolved=await this.resolvePet(petChange.value,customer)
+      if(resolved===null&&customer.ok)return {...fail('PET_NOT_FOUND'),pets:(record(customer.data).pets as {id:string;name?:unknown}[]).map(p=>({pet_id:p.id,name:p.name})),instruction:'Use o pet_id de um destes pets. Se o pet do cliente não estiver na lista, cadastre-o antes.'}
+      if(resolved&&resolved!==petChange.value)input={...input,changes:input.changes.map(ch=>ch===petChange?{...ch,value:resolved}:ch)}
+    }
     const refused=input.kind==='cart'?await this.ambiguousCartChange(input.operation_id,input.changes):input.kind==='booking'?await this.unnamedPet(input.changes):null
     const weight=input.kind==='booking'?input.changes.find(ch=>ch.action==='set_field'&&ch.field==='weight_kg')?.value:undefined
     if(weight!==undefined&&(!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(weight)||!weightSaid(weight,await this.saidText())))return {...fail('WEIGHT_NOT_SAID'),instruction:'O cliente não disse esse peso. Pergunte o peso aproximado; nunca estime pela raça.'}
@@ -477,6 +496,8 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     // With a duplicated registration the booking goes to the record that owns the pet.
     const petOwner=kind==='booking'&&draft.fields.pet_id?(await this.db.prepare("SELECT client_id FROM pets WHERE tenant_id=? AND module_id='petshop' AND id=? AND status='active'").bind(c.tenantId,draft.fields.pet_id).first<{client_id:string}>())?.client_id:undefined
     const customerId=petOwner&&await isConversationCustomer(this.db,c,petOwner)?petOwner:record(record(customer.data).customer).id
+    // A pet_id saved before the registration is mapped to the pet just registered.
+    if(kind==='booking'&&draft.fields.pet_id){const resolved=await this.resolvePet(draft.fields.pet_id,customer);if(resolved&&resolved!==draft.fields.pet_id&&record(await this.applyDraft({operation_id,kind:'booking',prepare:false,changes:[{action:'set_field',field:'pet_id',value:resolved}]})).ok)return this.prepareDraft(operation_id,kind)}
     if(kind==='booking')draft=await this.fillKnown(operation_id,draft,customer)
     if(kind==='booking'){const s=nextBookingStep(draft,{transportOffered:await transportOffered(this.db,c.tenantId),weightNeeded:await this.weightNeeded(draft,customer),addressOnFile:this.addressOnFile(customer)?.text});if(s.step==='transport_option'){let city='';try{city=String(JSON.parse(String(draft.fields.address)).city??'')}catch{};const quote=await registry.execute('get_transport_quote',{pet_id:draft.fields.pet_id,city,...(draft.fields.weight_kg?{weight_kg:Number(draft.fields.weight_kg.replace(',','.'))}:{})},c);// No leg named: the server picks buscar e levar instead of asking the model to.
       const both=quote.ok&&!oneLegSaid(await this.saidText())?(record(quote.data).options as Record<string,unknown>[]|undefined)?.find(o=>Number(o.pickup_required)===1&&Number(o.dropoff_required)===1):undefined
