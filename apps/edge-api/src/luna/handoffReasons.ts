@@ -2,6 +2,7 @@
 // Internal codes and the model's own wording become one category plus, for
 // free text, the model's short detail.
 const CODES: [RegExp, string][] = [
+  [/LUNA_PROMISED_HANDOFF/, 'A Luna não conseguiu concluir e passou a conversa para a loja: responda este cliente.'],
   [/AI_QUOTA|DAILY_AI_BUDGET|Limite diário de IA/i, 'Limite diário da IA atingido: responda este cliente manualmente.'],
   [/TURN_BUDGET|Limite (?:de consumo )?do turno|Orçamento de consumo|Capacidade fora/i, 'A Luna não conseguiu concluir a resposta: responda este cliente manualmente.'],
   [/ambígua|AMBIGUOUS/i, 'Cadastro duplicado: há mais de um cliente com este telefone. Confira o cadastro e responda.'],

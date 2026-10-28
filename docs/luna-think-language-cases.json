@@ -1583,6 +1583,91 @@
       },
       "family": "flow",
       "input_fragments": []
+    },
+    {
+      "id": "FLOW-12-1",
+      "name": "CPF já cadastrado de outro número: confirma a pessoa em vez de criar outro cadastro",
+      "turns": [
+        "Oi, quero agendar banho pra Mel",
+        "Sou Ana, nasci em 14/05/1990, CPF 529.982.247-25, CEP 36880-000, número 191, perto do mercado. A Mel é cachorra, shih tzu"
+      ],
+      "setup": {
+        "cpf_on_file": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "Já temos seu cadastro"
+      },
+      "family": "flow",
+      "input_fragments": [],
+      "unregistered": true
+    },
+    {
+      "id": "FLOW-12-2",
+      "name": "Confirmar que é a pessoa do CPF liga o número ao cadastro",
+      "turns": [
+        "Oi, quero agendar banho pra Mel",
+        "Sou Ana, nasci em 14/05/1990, CPF 529.982.247-25, CEP 36880-000, número 191, perto do mercado. A Mel é cachorra, shih tzu",
+        "s"
+      ],
+      "setup": {
+        "cpf_on_file": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "ligado ao seu cadastro"
+      },
+      "family": "flow",
+      "input_fragments": [],
+      "unregistered": true
+    },
+    {
+      "id": "FLOW-12-3",
+      "name": "Raça com erro de digitação vai para o cadastro com o nome certo",
+      "turns": [
+        "quero agendar uma tosa pro Teu",
+        "Teu, Huskciberiano, 15 kg, Ana Carolina, 18/02/2000, 52998224725, 36880000, s/n, perto da praça"
+      ],
+      "setup": {},
+      "expect": {
+        "appointments": 0,
+        "reply": "Husky Siberiano"
+      },
+      "family": "flow",
+      "input_fragments": [],
+      "unregistered": true
+    },
+    {
+      "id": "FLOW-12-4",
+      "name": "Só tosa higiênica: explica que vem junto com o banho",
+      "turns": [
+        "queria marcar só uma tosa higiênica pra Mel"
+      ],
+      "setup": {
+        "hygienic": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "inclu|junto|banho",
+        "no_proposal": true
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-12-5",
+      "name": "'s' confirma o cadastro de um pet novo",
+      "turns": [
+        "quero agendar um banho pro meu outro cachorro, o Bob, ele é um poodle de 5 kg",
+        "s"
+      ],
+      "setup": {},
+      "expect": {
+        "appointments": 0,
+        "reply": "registrado"
+      },
+      "family": "flow",
+      "input_fragments": []
     }
   ]
 }

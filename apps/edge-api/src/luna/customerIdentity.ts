@@ -21,12 +21,15 @@ export function samePerson(names: unknown[]): boolean {
   return keys.size === 1 && !keys.has('')
 }
 
+// Clients of this conversation's phone (?3, from phoneVariants): on the record,
+// or linked after the customer confirmed a CPF already on file.
+export const conversationClients = `status='active' AND (phone IN (SELECT value FROM json_each(?3)) OR id IN (SELECT client_id FROM luna_customer_links WHERE tenant_id=?1 AND module_id=?2 AND phone IN (SELECT value FROM json_each(?3))))`
+
 export async function isConversationCustomer(database: D1Database, context: LunaExecutionContext, customerId: string): Promise<boolean> {
   const phones = phoneVariants(context.customerAddress)
   if (!phones.length || !customerId) return false
   const rows = await database.prepare(`
-    SELECT id,name FROM clients WHERE tenant_id=?1 AND module_id=?2 AND status='active'
-      AND phone IN (SELECT value FROM json_each(?3)) ORDER BY id LIMIT 10
+    SELECT id,name FROM clients WHERE tenant_id=?1 AND module_id=?2 AND ${conversationClients} ORDER BY id LIMIT 10
   `).bind(context.tenantId, context.moduleId, JSON.stringify(phones)).all<{ id: string; name: string }>()
   return rows.results.some(row => row.id === customerId) && (rows.results.length === 1 || samePerson(rows.results.map(row => row.name)))
 }

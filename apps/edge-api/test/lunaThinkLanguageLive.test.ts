@@ -37,7 +37,7 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
    if(s.family==='flow'){
     // Whole conversations from greeting to commit: every turn must avoid handoff
     // and the final database effect must match the case.
-    const flow=s as typeof s&{turns:string[];unregistered?:boolean;setup?:{transport?:boolean;pix?:boolean;descriptions?:boolean;address?:boolean;no_weight?:boolean;bands?:boolean};expect:{sales?:number;appointments?:number;reply?:string;not_reply?:string;no_proposal?:boolean;transport_option?:string;pet_weight_kg?:number}}
+    const flow=s as typeof s&{turns:string[];unregistered?:boolean;setup?:{transport?:boolean;pix?:boolean;descriptions?:boolean;address?:boolean;no_weight?:boolean;bands?:boolean;cpf_on_file?:boolean;hygienic?:boolean};expect:{sales?:number;appointments?:number;reply?:string;not_reply?:string;no_proposal?:boolean;transport_option?:string;pet_weight_kg?:number}}
     // A new customer: the conversation phone matches no client, the chat carries only a name.
     if(flow.unregistered){await h.db.prepare("UPDATE clients SET phone='0000000001' WHERE tenant_id=?").bind(h.tenant).run();await h.db.prepare("UPDATE chat_threads SET customer_name='Joberson' WHERE tenant_id=?").bind(h.tenant).run()}
     // Store data some flows need: MotoDog options, a fictitious PIX key, service descriptions.
@@ -47,6 +47,9 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
     // A customer with an address on file, and a pet with no weight registered.
     if(flow.setup?.address)await h.db.prepare("UPDATE clients SET address='Rua das Flores',address_number='120',neighborhood='Centro',city='Cidade Teste' WHERE tenant_id=?").bind(h.tenant).run()
     if(flow.setup?.no_weight)await h.db.prepare("UPDATE pets SET weight_kg=NULL WHERE tenant_id=?").bind(h.tenant).run()
+    // The customer's CPF and birth date on file (asked from a number not on the record), and baths that include the hygienic trim.
+    if(flow.setup?.cpf_on_file)await h.db.prepare("UPDATE clients SET document='52998224725',birth_date='1990-05-14',address='Rua das Flores',neighborhood='Centro' WHERE tenant_id=?").bind(h.tenant).run()
+    if(flow.setup?.hygienic)await h.db.prepare("UPDATE services SET description='Banho com secagem, corte de unhas, limpeza de ouvidos e tosa higiênica.' WHERE tenant_id=?").bind(h.tenant).run()
     // Bath priced by weight band, as the store registers it: up to 10 kg and 10 to 25 kg.
     if(flow.setup?.bands){await h.db.prepare("UPDATE services SET name='Banho porte pequeno 0 a 10 kg',species_target='dog',min_weight_grams=0,max_weight_grams=10099 WHERE tenant_id=? AND id='banho'").bind(h.tenant).run();await h.db.prepare("INSERT INTO services(tenant_id,module_id,id,code,name,group_type,default_price_cents,default_duration_min,status,created_at_ms,updated_at_ms,species_target,min_weight_grams,max_weight_grams) SELECT tenant_id,module_id,'banho-medio','banho-medio','Banho porte médio 10 a 25 kg',group_type,7000,default_duration_min,'active',created_at_ms,updated_at_ms,'dog',10100,25000 FROM services WHERE tenant_id=? AND id='banho'").bind(h.tenant).run()}
     for(const message of flow.turns){const r=await h.turn(message);expect(r.status,'Handoff at "'+message+'": '+r.reply).not.toBe('handoff')}

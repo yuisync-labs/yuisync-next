@@ -40,7 +40,7 @@ export function explicitConfirmation(value: string, operationKind: string, fulfi
     normalized=normalized.slice(0,fulfillment.index)
   }
   normalized=normalized.replace(/^confirmo (?:esse|este) /,'confirmo o ').replace(/^confirmo (?:essa|esta) /,'confirmo a ')
-  if (/^(sim|confirmo|confirmado|ok|certo|fechado|pode confirmar|pode agendar|pode fechar)[.! ]*$/.test(normalized)) return true
+  if (/^(sim|s|ss|confirmo|confirmado|ok|certo|fechado|pode confirmar|pode agendar|pode fechar)[.! ]*$/.test(normalized)) return true
   if (/^(?:(?:sim|confirmo)[!, ]+(?:pode|pode (?:fechar|confirmar|agendar)|pix|no pix|dinheiro|no dinheiro)|pode (?:fechar|confirmar|agendar)(?: sim)?|pode ser|fechamos|confirmo sim)[.! ]*$/.test(normalized)) return true
   // This is a narrow authorization grammar, not a conversational classifier.
   // Named confirmations must match the operation actually presented. Any

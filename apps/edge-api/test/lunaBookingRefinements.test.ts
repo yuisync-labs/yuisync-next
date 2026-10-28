@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { canonicalBreed } from '../src/luna/breeds'
+import { explicitConfirmation } from '../src/luna/commitProposal'
+import { naturalConfirmation } from '../src/luna/confirmationLanguage'
+import { promisesHandoff } from '../src/luna/thinkAgent'
 import { withPostalAddress } from '../src/luna/postalCode'
 import { isTosaService, slotFits } from '../src/luna/schedulePolicy'
 import { withoutInternalErrors } from '../src/luna/thinkPresentation'
@@ -93,4 +97,25 @@ it('addressKept accepts a short yes to the quoted address and nothing else', asy
   const { addressKept } = await import('../src/luna/bookingSteps')
   for (const yes of ['sim', 'Sim, esse mesmo', 'continua', 'isso', 'é esse']) expect(addressKept(yes)).toBe(true)
   for (const no of ['não, mudei', 'agora é Rua B, 40', 'sim, mas agora é outro', 'quero só buscar']) expect(addressKept(no)).toBe(false)
+})
+
+describe('today\'s conversations (28/10)', () => {
+  it('breed typos become the breed name', () => {
+    expect(canonicalBreed('Huskciberiano')).toBe('Husky Siberiano')
+    expect(canonicalBreed('shitzu')).toBe('Shih Tzu')
+    expect(canonicalBreed('lhasa')).toBe('Lhasa Apso')
+    expect(canonicalBreed('sem raça')).toBe('SRD (sem raça definida)')
+    expect(canonicalBreed('pequeno')).toBeNull()
+  })
+  it('a short "s" confirms a registration', () => {
+    expect(explicitConfirmation('s', 'pet_registration')).toBe(true)
+    expect(naturalConfirmation('sim, obrigado', 'customer_registration', {})).toBe(true)
+    expect(naturalConfirmation('sou eu sim', 'customer_registration', {})).toBe(true)
+    expect(naturalConfirmation('não, espera', 'customer_registration', {})).toBe(false)
+  })
+  it('a reply that promises a person is a handoff', () => {
+    expect(promisesHandoff('Vou encaminhar para um atendente humano continuar o atendimento, tudo bem?')).toBe(true)
+    expect(promisesHandoff('Já estou passando seu atendimento para a equipe.')).toBe(true)
+    expect(promisesHandoff('Quer que eu chame um atendente?')).toBe(false)
+  })
 })

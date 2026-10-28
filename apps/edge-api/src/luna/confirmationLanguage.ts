@@ -8,7 +8,9 @@ const normalize = (v: string) => v.normalize('NFD').replace(/[̀-ͯ]/g, '').toLo
 const singular = (w: string) => w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w
 export const confirmationWords = (v: string) => normalize(v).replace(/r\$\s*/g, ' ').split(/[^a-z0-9]+/).filter(Boolean)
 
-const AFFIRMATIVE = new Set(['confirmo', 'confirma', 'confirmado', 'confirmada', 'confirmar', 'fecha', 'fechou', 'fechado', 'fechar', 'fechamos', 'conclui', 'concluir', 'finaliza', 'finalizar', 'sim', 'ok', 'beleza', 'certo', 'isso', 'agendar', 'marcar'])
+const AFFIRMATIVE = new Set(['confirmo', 'confirma', 'confirmado', 'confirmada', 'confirmar', 'fecha', 'fechou', 'fechado', 'fechar', 'fechamos', 'conclui', 'concluir', 'finaliza', 'finalizar', 'sim', 'ok', 'beleza', 'certo', 'isso', 'agendar', 'marcar',
+  // Short WhatsApp yeses, and "sou eu" to "você é a Ana?".
+  's', 'ss', 'sss', 'aham', 'uhum', 'positivo', 'correto', 'exato', 'yes', 'sou'])
 const FILLER = new Set(['o', 'a', 'os', 'as', 'do', 'da', 'dos', 'das', 'de', 'esse', 'este', 'essa', 'esta', 'novo', 'nova', 'resumo', 'agora', 'entao', 'por', 'favor', 'pode', 'ser', 'pra', 'para', 'eu', 'mesmo', 'e', 'com', 'ai', 'la', 'unidade', 'item', 'iten', 'pacote', 'valor', 'total', 'reai', 'real', 'mesma', 'nesse', 'neste', 'nessa', 'nesta', 'no', 'na', 'dia', 'data',
   // Courtesy around a yes ("sim obrigada", "perfeito, pode marcar").
   'obrigado', 'obrigada', 'brigado', 'brigada', 'valeu', 'grato', 'grata', 'perfeito', 'perfeita', 'otimo', 'otima', 'show', 'claro', 'combinado', 'top', 'blz', 'tudo', 'bom', 'boa', 'legal', 'maravilha', 'muito', 'certinho', 'ta', 'tranquilo'])
@@ -18,6 +20,8 @@ const NUMBERS: Record<string, number> = { um: 1, uma: 1, dois: 2, duas: 2, tres:
 const SUBJECTS: Record<string, string[]> = {
   product_order_create: ['pedido', 'compra', 'carrinho'],
   appointment_create: ['horario', 'agendamento', 'banho', 'tosa', 'servico'],
+  customer_registration: ['cadastro', 'dado'],
+  pet_registration: ['cadastro', 'dado', 'pet'],
 }
 const FULFILLMENT: Record<string, string[]> = { counter: ['retirada', 'retirar', 'buscar', 'busco', 'pego', 'pegar', 'loja'], delivery: ['entrega', 'entregar'] }
 

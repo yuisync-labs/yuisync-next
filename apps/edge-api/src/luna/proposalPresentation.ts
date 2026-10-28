@@ -46,6 +46,8 @@ export function renderProposalSummary(row: PresentableProposal): string {
 export type SummaryStore={store_name?:string|null;address?:string|null;neighborhood?:string|null;city?:string|null}
 export function renderThinkProposalSummary(row:PresentableProposal,timezone:string,store?:SummaryStore):string{
   if(row.operation_kind==='appointment_create')return renderBookingSummary(row,timezone,store)
+  const link=JSON.parse(row.payload_json) as Record<string,unknown>
+  if(row.operation_kind==='customer_registration'&&link.link_client_id)return ['Já temos seu cadastro aqui!',`Você é ${String(link.customer_name)}${link.on_file_address?', da '+String(link.on_file_address):''}?`,...(link.pet_exists?[]:[`Vou incluir ${String(link.pet_name)}${link.breed?' ('+String(link.breed)+')':''} no seu cadastro.`]),'Você confirma?'].join('\n')
   const labels:Record<string,string>={product_order_create:'seu pedido',appointment_create:'o agendamento',appointment_reschedule:'a mudança de horário',appointment_cancel:'o cancelamento',customer_registration:'o cadastro',pet_registration:'o cadastro do pet'}
   const legacy=renderProposalSummary(row).split('\n')
   const payload=JSON.parse(row.payload_json) as Record<string,unknown>

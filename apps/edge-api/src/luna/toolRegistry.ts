@@ -8,13 +8,14 @@ import { commitConfirmedProposal, getProposalOperationStatus } from './commitPro
 import { validateScheduleAvailability, withStoreScheduleDefaults } from './schedulePolicy'
 import { loadBenefitCandidates } from '../subscriptionBenefitCandidates'
 import { matchesToolSchema } from './toolSchema'
-import { isConversationCustomer, phoneVariants, samePerson } from './customerIdentity'
+import { conversationClients, isConversationCustomer, phoneVariants, samePerson } from './customerIdentity'
 import { LunaConversationRepository } from './conversationRepository'
 import type { DraftEvent } from './operationalState'
 import { executeInformationTool, informationToolDefinitions } from './informationTools'
 import { resolveBillingCatalog } from '../appointmentBillingCatalog'
 import { automaticAllocations } from '../subscriptionBenefitAuto'
 import { prepareRegistration, proposalCustomerAuthorized } from './registrationCommands'
+import { canonicalBreed } from './breeds'
 import { resolveDeliverySnapshot } from './deliveryContract'
 import { validateGroomingMachine } from '../groomingMachinePolicy'
 import { resolveContextReference } from './conversationalMemory'
@@ -257,7 +258,8 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
   })
   for (const name of ['prepare_customer_registration', 'prepare_pet_registration']) handlers.set(name, async (args, context) => {
     const existing = name === 'prepare_pet_registration'
-    const result = await prepareRegistration(database, context, args, existing)
+    // "huskciberiano" is saved as Husky Siberiano.
+    const result = await prepareRegistration(database, context, { ...args, breed: canonicalBreed(args.breed) ?? args.breed }, existing)
     return result.ok ? createProposal(database, context, existing ? 'pet_registration' : 'customer_registration', result.data, clean(args.operation_id,100)) : result
   })
   for (const definition of informationToolDefinitions) handlers.set(definition.name, (args, context) => executeInformationTool(definition.name, args, context, database))
@@ -285,7 +287,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
   handlers.set('get_customer_context', async (_args, context) => {
     const customer = await database.prepare(`
       SELECT id,name,phone,email,address,address_number,address_complement,address_reference,neighborhood,city,postal_code FROM clients
-      WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND phone IN (SELECT value FROM json_each(?3))
+      WHERE tenant_id=?1 AND module_id=?2 AND ${conversationClients}
       ORDER BY updated_at_ms DESC LIMIT 10
     `).bind(context.tenantId, context.moduleId, JSON.stringify(phoneVariants(context.customerAddress))).all<Record<string, unknown>>()
     if (customer.results.length === 0) return { ok: false, code: 'CUSTOMER_NOT_FOUND', retryable: false }
@@ -308,7 +310,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     if (!query) return { ok: false, code: 'QUERY_REQUIRED', retryable: false, missing_fields: ['query'] }
     const result = await database.prepare(`
       SELECT id,code,name,category,group_type,default_price_cents,default_duration_min
-      FROM services WHERE tenant_id=?1 AND module_id=?2 AND status='active'
+      FROM services WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND default_price_cents>0
         AND (name LIKE ?3 ESCAPE '\\' OR code LIKE ?3 ESCAPE '\\' OR category LIKE ?3 ESCAPE '\\')
       ORDER BY sort_order,name,id LIMIT 12
     `).bind(context.tenantId, context.moduleId, `%${escapeLike(query)}%`).all<Record<string, unknown>>()

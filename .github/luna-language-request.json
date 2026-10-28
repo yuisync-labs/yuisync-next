@@ -1,14 +1,14 @@
 {
-  "run": false,
+  "run": true,
   "cases": [
+    "FLOW-12-1",
+    "FLOW-12-2",
+    "FLOW-12-3",
+    "FLOW-12-4",
+    "FLOW-12-5",
     "FLOW-07-7",
-    "FLOW-05-3",
-    "FLOW-11-2",
-    "FLOW-08-2",
-    "FLOW-08-3",
-    "FLOW-08-4",
-    "FLOW-06-1"
+    "FLOW-06-3"
   ],
-  "reason": "weight_before_band_price",
+  "reason": "cpf_link_breed_hygienic_short_yes",
   "model": "openai:gpt-4.1-mini"
 }
