@@ -34,14 +34,17 @@ export function nextBookingStep(draft: Draft, options: { transportOffered: boole
   ]
   const step = order.find(([, ok]) => !ok)?.[0] ?? 'summary'
   const done = order.filter(([name, ok]) => ok && labels[name] && !(name === 'date' && f.scheduled_at) && !(name === 'weight' && !f.weight_kg) && !(name === 'transport' && !f.transport_mode) && !(/^(address|transport_option)$/.test(name) && !moto)).map(([name]) => labels[name]!)
-  // The address on file goes with the MotoDog question; the server fills it when he accepts.
-  const instruction = step === 'transport' && options.addressOnFile ? `${asks.transport} Na mesma pergunta, cite o endereço do cadastro (${options.addressOnFile}) e pergunte se o MotoDog busca e leva nele. Se ele der outro endereço, salve o novo.` : asks[step]
+  // The address on file is asked about only after the customer chose the MotoDog.
+  const instruction = step === 'address' && options.addressOnFile ? `O cliente escolheu o MotoDog. Cite o endereço do cadastro (${options.addressOnFile}) e pergunte se continua o mesmo; não peça o endereço inteiro. Se ele der outro endereço, salve o novo.` : asks[step]
   return { step, done, instruction }
 }
 
 // "Só buscar", "apenas a volta", "eu levo, vocês buscam": the customer asked for
 // one leg. Anything else ("pode buscar", "sim, MotoDog") means buscar e levar.
 export const oneLegSaid = (said: string) => /\b(?:so|somente|apenas|soh)\s+(?:pra\s+|para\s+|a\s+|o\s+)?(?:buscar|busca|levar|leva|entregar|ida|volta)\b|\bsem (?:a )?(?:volta|ida)\b|\beu (?:mesm[oa] )?(?:vou )?(?:busco|levo|pego|trago|buscar|levar|pegar|trazer)\b|\bso (?:que )?(?:voces? )?(?:busque|busquem|leve|levem)\b|\b(?:busco|levo|pego|trago) eu\b|(?:ida|volta) eu (?:mesm[oa] )?(?:busco|levo|pego|trago)\b/.test(plain(said))
+
+// "Sim", "esse mesmo", "continua": the customer kept the address Luna quoted.
+export const addressKept = (said: string) => { const t = plain(said).replace(/[^a-z ]+/g, ' ').trim(); return !/\d/.test(said) && t.split(/\s+/).length <= 8 && /^(?:sim|isso|esse|este|e esse|eh esse|continua|pode|correto|certo|ok|exato|mesmo|o mesmo|perfeito|confirmo)\b/.test(t) && !/\b(?:nao|mudou|outro|outra|agora)\b/.test(t) }
 
 // The newest weight the customer wrote ("ela tem 8kg", "uns 12 quilos").
 export function weightFromSaid(said: string): string | null {

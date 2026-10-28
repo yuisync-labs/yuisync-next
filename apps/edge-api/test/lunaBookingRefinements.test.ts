@@ -88,3 +88,9 @@ it('Byanka refinements: courtesy yes, one-leg MotoDog, said weight, duplicates, 
 it('drops sentences that leak tool fields to the customer', () => {
   expect(withoutInternalErrors('O valor do campo de transporte deve ser uma string específica. Você quer só a busca?')).toBe('Você quer só a busca?')
 })
+
+it('addressKept accepts a short yes to the quoted address and nothing else', async () => {
+  const { addressKept } = await import('../src/luna/bookingSteps')
+  for (const yes of ['sim', 'Sim, esse mesmo', 'continua', 'isso', 'é esse']) expect(addressKept(yes)).toBe(true)
+  for (const no of ['não, mudei', 'agora é Rua B, 40', 'sim, mas agora é outro', 'quero só buscar']) expect(addressKept(no)).toBe(false)
+})

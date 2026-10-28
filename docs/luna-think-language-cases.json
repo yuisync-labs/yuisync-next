@@ -1378,7 +1378,7 @@
     },
     {
       "id": "FLOW-10-1",
-      "name": "MotoDog: cita o endereço do cadastro em vez de pedir",
+      "name": "MotoDog: primeiro pergunta se traz ou MotoDog, sem citar o endereço",
       "turns": [
         "Banho pra Mel quarta às 10h"
       ],
@@ -1388,8 +1388,8 @@
       },
       "expect": {
         "appointments": 0,
-        "reply": "Flores",
-        "not_reply": "qual (?:é o |o )?(?:seu )?endere[cç]o|informe o endere[cç]o|me (?:passe|informe|diga) o endere[cç]o",
+        "reply": "traz|MotoDog",
+        "not_reply": "Flores",
         "no_proposal": true
       },
       "family": "flow",
@@ -1450,6 +1450,26 @@
       "expect": {
         "appointments": 1,
         "transport_option": "buscar"
+      },
+      "family": "flow",
+      "input_fragments": []
+    },
+    {
+      "id": "FLOW-10-5",
+      "name": "Depois de escolher o MotoDog, cita o endereço do cadastro e pergunta se continua",
+      "turns": [
+        "Banho pra Mel quarta às 10h",
+        "quero o MotoDog"
+      ],
+      "setup": {
+        "transport": true,
+        "address": true
+      },
+      "expect": {
+        "appointments": 0,
+        "reply": "Flores",
+        "not_reply": "qual (?:é o |o )?(?:seu )?endere[cç]o|informe o endere[cç]o|me (?:passe|informe|diga) o endere[cç]o",
+        "no_proposal": true
       },
       "family": "flow",
       "input_fragments": []

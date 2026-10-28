@@ -19,7 +19,7 @@ import type { LunaExecutionContext, LunaToolResult } from './contracts'
 import { catalogInput, normalizeSearchKey, thinkCatalogSearch, validateThinkJob, customerHistory, closeThinkConversation, recordThinkRating, explicitRestockConsent, fail } from './thinkDomain'
 import { THINK_MODEL, THINK_TURN_NEURON_LIMIT, thinkNeurons, thinkInstructions, thinkCommerceRules, thinkAgendaRules, thinkTopics, serviceQuery, namedPet, thinkSkills, batchDue, ratingFromMessage, clinicalRisk, storeCalendar } from './thinkPolicy'
 import { getProduct, type Memory } from './thinkCatalog/catalog'
-import { nextBookingStep, oneLegSaid, weightFromSaid, weightSaid, dateSaid, selfTransportSaid, serviceKinds, timeSaid } from './bookingSteps'
+import { addressKept, nextBookingStep, oneLegSaid, weightFromSaid, weightSaid, dateSaid, selfTransportSaid, serviceKinds, timeSaid } from './bookingSteps'
 import { publishTableInvalidation } from '../realtimeApi'
 import { validateThinkReply, withoutInternalErrors, zonedIsoTime } from './thinkPresentation'
 import { findConfirmationTarget } from './commitProposal'
@@ -438,7 +438,10 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const changes:DraftChange[]=[],pets=customer.ok&&Array.isArray(record(customer.data).pets)?record(customer.data).pets as Record<string,unknown>[]:[],pet=pets.find(p=>p.id===draft.fields.pet_id)
     if(pet&&pet.weight_kg==null&&!draft.fields.weight_kg){const kg=weightFromSaid(await this.orderedSaid());if(kg)changes.push({action:'set_field',field:'weight_kg',value:kg})}
     const onFile=this.addressOnFile(customer)
-    if(onFile&&draft.fields.transport_mode&&!/^(self|none)$/.test(draft.fields.transport_mode)&&!draft.fields.address){
+    // Filled only when Luna quoted the address on file and the customer kept it.
+    const quoted=onFile&&draft.fields.transport_mode&&!/^(self|none)$/.test(draft.fields.transport_mode)&&!draft.fields.address?await this.db.prepare("SELECT content_text FROM chat_messages WHERE tenant_id=? AND module_id='petshop' AND thread_id=? AND direction='outbound' ORDER BY created_at_ms DESC LIMIT 1").bind(this.turn().context.tenantId,this.turn().context.conversationId).first<{content_text:string}>():null
+    const flat=(v:string)=>v.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
+    if(onFile&&quoted&&flat(quoted.content_text).includes(flat(onFile.address.street))&&addressKept(this.text())){
       changes.push({action:'set_field',field:'address',value:JSON.stringify(onFile.address)})
       if(onFile.reference&&!draft.fields.reference)changes.push({action:'set_field',field:'reference',value:onFile.reference})
     }
