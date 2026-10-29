@@ -154,6 +154,8 @@ export function consistentConfirmation(value: string, operationKind: string, pay
   const split = kept.map(confirmationWords).filter(c => c.length), last = split.map(says).lastIndexOf(true)
   const words = split.flat()
   if (last < 0 || words.length > 40 || words.some(w => CHANGE.has(w)) || split.slice(last).flat().some(w => HOLD.has(w))) return false
+  // A registration summary has no day or price: "confirmo, pode marcar o banho amanhã 14h" talks about the next step.
+  if (operationKind.endsWith('registration')) return true
   // A stray letter is usually a product variant ("a Ração B").
   if (words.some(w => /^[a-z]$/.test(w) && !/^[aeos]$/.test(w))) return false
   const lines = operationKind === 'product_order_create' ? (Array.isArray(payload.items) ? payload.items : []) : (Array.isArray(payload.services) ? payload.services : [])
