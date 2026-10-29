@@ -37,7 +37,7 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
    if(s.family==='flow'){
     // Whole conversations from greeting to commit: every turn must avoid handoff
     // and the final database effect must match the case.
-    const flow=s as typeof s&{turns:string[];unregistered?:boolean;setup?:{transport?:boolean;pix?:boolean;descriptions?:boolean;address?:boolean;no_weight?:boolean;bands?:boolean;cpf_on_file?:boolean;hygienic?:boolean;heavy?:boolean};expect:{sales?:number;appointments?:number;reply?:string;not_reply?:string;no_proposal?:boolean;transport_option?:string;pet_weight_kg?:number;handoff?:boolean}}
+    const flow=s as typeof s&{turns:string[];unregistered?:boolean;setup?:{transport?:boolean;pix?:boolean;descriptions?:boolean;address?:boolean;no_weight?:boolean;bands?:boolean;cpf_on_file?:boolean;hygienic?:boolean;heavy?:boolean;wildcard?:boolean};expect:{sales?:number;appointments?:number;reply?:string;not_reply?:string;no_proposal?:boolean;transport_option?:string;pet_weight_kg?:number;handoff?:boolean}}
     // A new customer: the conversation phone matches no client, the chat carries only a name.
     if(flow.unregistered){await h.db.prepare("UPDATE clients SET phone='0000000001' WHERE tenant_id=?").bind(h.tenant).run();await h.db.prepare("UPDATE chat_threads SET customer_name='Joberson' WHERE tenant_id=?").bind(h.tenant).run()}
     // Store data some flows need: MotoDog options, a fictitious PIX key, service descriptions.
@@ -48,6 +48,8 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
     if(flow.setup?.descriptions)await h.db.prepare("UPDATE services SET description='Banho com shampoo neutro e condicionador, secagem, corte de unhas e limpeza de ouvidos.' WHERE tenant_id=?").bind(h.tenant).run()
     // A customer with an address on file, and a pet with no weight registered.
     if(flow.setup?.address)await h.db.prepare("UPDATE clients SET address='Rua das Flores',address_number='120',neighborhood='Centro',city='Cidade Teste' WHERE tenant_id=?").bind(h.tenant).run()
+    // One delivery fee for every neighborhood of the city ("*"), and a customer outside the named ones.
+    if(flow.setup?.wildcard){await h.db.prepare("UPDATE module_settings_extensions SET data_json=json_set(data_json,'$.delivery_coverage',json(?)) WHERE tenant_id=?").bind(JSON.stringify([{city:'Cidade Teste',neighborhood:'*',active:true,fee_cents:1000}]),h.tenant).run();await h.db.prepare("UPDATE clients SET neighborhood='Jardim Alegre' WHERE tenant_id=?").bind(h.tenant).run()}
     if(flow.setup?.no_weight)await h.db.prepare("UPDATE pets SET weight_kg=NULL WHERE tenant_id=?").bind(h.tenant).run()
     // The customer's CPF and birth date on file (asked from a number not on the record), and baths that include the hygienic trim.
     if(flow.setup?.cpf_on_file)await h.db.prepare("UPDATE clients SET document='52998224725',birth_date='1990-05-14',address='Rua das Flores',neighborhood='Centro' WHERE tenant_id=?").bind(h.tenant).run()

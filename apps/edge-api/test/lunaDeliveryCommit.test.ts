@@ -51,4 +51,20 @@ describe('Luna delivery native commit — real local D1',()=>{
       expect(await db.prepare('SELECT COUNT(*) AS count FROM payments WHERE tenant_id=?1').bind(tenant).first()).toEqual({count:0})
     }finally{clock.mockRestore()}
   })
+  it('área "*" cobre qualquer bairro da cidade no mesmo lote da venda',async()=>{
+    const tenant='luna-delivery-wildcard',now=Date.now()
+    const areas=[{city:'Muriaé',neighborhood:'*',active:true,fee_cents:1000},{city:'Muriaé',neighborhood:'Centro',active:true,fee_cents:500}]
+    await db.batch([
+      db.prepare(`INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(?1,?1,'Entrega curinga','active',?2,?2)`).bind(tenant,now),
+      db.prepare(`INSERT INTO module_settings_extensions(tenant_id,module_id,data_json,updated_at_ms) VALUES(?1,'petshop',?2,?3)`).bind(tenant,JSON.stringify({delivery_coverage:areas}),now),
+    ])
+    const sale=(id:string,neighborhood:string,fee:number)=>[
+      db.prepare(`INSERT INTO sales(tenant_id,module_id,id,operation_key,source,fulfillment_type,subtotal_cents,discount_cents,transport_fee_cents,total_cents,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,?2,'whatsapp','delivery',5490,0,?3,?4,'pending',?5,?5)`).bind(tenant,id,fee,5490+fee,now),
+      saleDeliveryAddressStatement(db,{tenantId:tenant,moduleId:'petshop',saleId:id,address:{street:'Rua Muriaé',number:'45',city:'Muriaé',neighborhood,reference:null,complement:null,postal_code:null,fee_cents:fee,coverage_snapshot_json:JSON.stringify(areas)},now}),
+    ]
+    await db.batch(sale('bairro-qualquer','Santa Terezinha',1000))
+    await db.batch(sale('bairro-nomeado','Centro',500))
+    // A neighborhood listed by name never takes the "*" fee.
+    await expect(db.batch(sale('bairro-nomeado-curinga','Centro',1000))).rejects.toThrow('DELIVERY_QUOTE_CHANGED')
+  })
 })

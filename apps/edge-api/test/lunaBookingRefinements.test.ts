@@ -147,3 +147,24 @@ describe('agent battery retest (28/10 night)', () => {
     expect(nextBookingStep(draft, { transportOffered: true }).instruction).toMatch(/MotoDog para buscar e levar/)
   })
 })
+
+describe('agent battery retest of 12 (29/10)', () => {
+  it('keeps the hour said before the registration', async () => {
+    const { lastHourSaid } = await import('../src/luna/bookingSteps')
+    expect(lastHourSaid('oi, quero banho pro meu cachorro sexta às 14h, eu levo Sou o Rafael, CPF 271.828.182-05, nascido em 05/01/1985, 25 kg pode cadastrar')).toBe(14)
+    expect(lastHourSaid('sexta às 10h ... na verdade 15:30')).toBe(15)
+    expect(lastHourSaid('CEP 36889-275, número 45, pesa 6 kg, nasci em 22/08/1991')).toBeNull()
+  })
+  it('shows the payment method in Portuguese', async () => {
+    const { paymentLabel } = await import('../src/luna/proposalPresentation')
+    expect(paymentLabel('card_on_delivery')).toBe('cartão na entrega')
+    expect(paymentLabel('pix')).toBe('PIX')
+    expect(paymentLabel('cash_on_pickup')).toBe('dinheiro na retirada')
+    expect(paymentLabel('cartão na entrega')).toBe('cartão na entrega')
+  })
+  it('drops "um momento" in the middle of a reply', () => {
+    expect(withoutInternalErrors('Perfeito, vou registrar seu pedido, um momento. Total: R$ 64,90.')).toBe('Total: R$ 64,90.')
+    expect(withoutInternalErrors('Certo! Aguarde um instante enquanto confirmo. A entrega custa R$ 10,00.')).toBe('Certo! A entrega custa R$ 10,00.')
+    expect(withoutInternalErrors('Temos horário em um momento tranquilo da manhã, às 9h.')).toBe('Temos horário em um momento tranquilo da manhã, às 9h.')
+  })
+})

@@ -95,6 +95,13 @@ async function latestConfirmation(database: D1Database, context: LunaExecutionCo
   const confirms = (value: string) => naturalConfirmation(value, proposal.operation_kind, payload) || closingConfirmation(value, proposal.operation_kind, payload) || explicitConfirmation(value, proposal.operation_kind, text(payload.fulfillment_type))
   if (single && intervening.results.length <= 6 && intervening.results.some(m => m.direction === 'inbound')
     && intervening.results.every(m => m.direction === 'outbound' ? m.actor_type === 'assistant' && /confirm/i.test(m.content_text) && !/\b(?:quer|deseja|gostaria)\b(?![^?]*confirm)/i.test(m.content_text) : m.actor_type === 'customer' && confirms(m.content_text))) return true
+  // "ok, confirmo" after hesitation ("talvez") or a refused discount: the word
+  // "confirmo" itself, with this summary still the only one waiting, confirms it.
+  // A requested change (time, item, quantity) still suspends it.
+  const words = confirmationWords(confirmation)
+  const haggle = (value: string) => /\bdesconto|\bmais barat|\babaix|\d+ ?%|\bregras?\b|\bpromo/.test(value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase())
+  if (single && words.length <= 8 && words.some(w => /^confirm(?:o|a|ado|ada|ar)$/.test(w)) && !words.includes('nao') && !requestsChange(confirmation)
+    && intervening.results.length <= 10 && intervening.results.every(m => m.direction === 'outbound' ? m.actor_type === 'assistant' : m.actor_type === 'customer' && (!requestsChange(m.content_text) || haggle(m.content_text)))) return true
   // A bare "sim" may answer whatever was asked in between. A confirmation that
   // names the summary survives only hesitation from the customer and Luna's
   // replies, never a requested change, a human/system message or a long detour.

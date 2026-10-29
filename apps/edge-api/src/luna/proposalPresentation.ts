@@ -27,7 +27,7 @@ export function renderProposalSummary(row: PresentableProposal): string {
   }
   if (payload.fulfillment_type) lines.push(`Modalidade: ${payload.fulfillment_type === 'counter' ? 'retirada' : 'entrega'}`)
   if(payload.pickup_reference)lines.push('Retirada: '+String(payload.pickup_reference))
-  if(payload.payment_preference)lines.push('Preferência de pagamento: '+String(payload.payment_preference)+' (pendente)')
+  if(payload.payment_preference)lines.push('Pagamento: '+paymentLabel(String(payload.payment_preference))+' (ainda não recebido)')
   if(payload.fulfillment_type==='delivery' && payload.delivery){const a=payload.delivery as Record<string,unknown>;lines.push(`Entrega: ${String(a.street)}, ${String(a.number)} — ${String(a.neighborhood)}, ${String(a.city)}`);if(a.reference)lines.push(`Referência: ${String(a.reference)}`);if(a.complement)lines.push(`Complemento: ${String(a.complement)}`);lines.push(`Taxa de entrega: ${money(a.fee_cents)}`)}
   if (payload.notes) lines.push(`Observações: ${String(payload.notes)}`)
   if (payload.reason) lines.push(`Motivo: ${String(payload.reason)}`)
@@ -102,4 +102,12 @@ function renderBookingSummary(row:PresentableProposal,timezone:string,store?:Sum
   if(Array.isArray(payload.benefit_allocations))for(const raw of payload.benefit_allocations){const allocation=raw as Record<string,unknown>;lines.push(`Benefício de pacote: ${String(allocation.planName)} — ${String(allocation.serviceCode)}. Sujeito à revalidação na confirmação.`)}
   lines.push('Você confirma este resumo?')
   return lines.join('\n')
+}
+
+// The model saves the method as a code or in the customer's words.
+const PAYMENT_LABELS: Record<string, string> = { pix: 'PIX', cash: 'dinheiro', money: 'dinheiro', dinheiro: 'dinheiro', card: 'cartão', credit_card: 'cartão de crédito', debit_card: 'cartão de débito', card_on_delivery: 'cartão na entrega', cash_on_delivery: 'dinheiro na entrega', pix_on_delivery: 'PIX na entrega', card_on_pickup: 'cartão na retirada', cash_on_pickup: 'dinheiro na retirada' }
+export function paymentLabel(value: string): string {
+  const key = value.trim().toLowerCase()
+  if (PAYMENT_LABELS[key]) return PAYMENT_LABELS[key]
+  return /^[a-z]+(?:_[a-z]+)+$/.test(key) ? key.replace(/_/g, ' ').replace(/\bcard\b/g, 'cartão').replace(/\bcash\b/g, 'dinheiro').replace(/\bon delivery\b/g, 'na entrega').replace(/\bon pickup\b/g, 'na retirada') : value.trim()
 }

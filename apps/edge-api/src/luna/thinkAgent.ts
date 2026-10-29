@@ -19,7 +19,7 @@ import type { LunaExecutionContext, LunaToolResult } from './contracts'
 import { catalogInput, normalizeSearchKey, thinkCatalogSearch, validateThinkJob, customerHistory, closeThinkConversation, recordThinkRating, explicitRestockConsent, fail } from './thinkDomain'
 import { THINK_MODEL, THINK_TURN_NEURON_LIMIT, thinkNeurons, thinkInstructions, thinkCommerceRules, thinkAgendaRules, thinkTopics, serviceQuery, namedPet, thinkSkills, batchDue, ratingFromMessage, clinicalRisk, storeCalendar } from './thinkPolicy'
 import { getProduct, type Memory } from './thinkCatalog/catalog'
-import { addressKept, nextBookingStep, oneLegSaid, weightFromSaid, weightSaid, dateSaid, selfTransportSaid, serviceKinds, timeSaid } from './bookingSteps'
+import { addressKept, lastHourSaid, nextBookingStep, oneLegSaid, weightFromSaid, weightSaid, dateSaid, selfTransportSaid, serviceKinds, timeSaid } from './bookingSteps'
 import { publishTableInvalidation } from '../realtimeApi'
 import { validateThinkReply, withoutInternalErrors, zonedIsoTime } from './thinkPresentation'
 import { findConfirmationTarget } from './commitProposal'
@@ -237,12 +237,18 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     // A service the store does not sell alone ("só a tosa higiênica"): the server
     // checks the catalog Luna can offer and tells the model it comes included.
     if(/higieni/.test(this.text(t).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase())&&!await db.prepare("SELECT 1 x FROM services WHERE tenant_id=? AND module_id='petshop' AND status='active' AND default_price_cents>0 AND name LIKE '%higi%' AND id NOT IN (SELECT value FROM module_settings_extensions m, json_each(COALESCE(json_extract(m.data_json,'$.luna_hidden_service_ids'),'[]')) WHERE m.tenant_id=services.tenant_id AND m.module_id=services.module_id) LIMIT 1").bind(c.tenantId).first())services+='\nTOSA HIGIÊNICA: a loja não faz tosa higiênica separada; ela já vem inclusa no banho e nas tosas. Diga isso com clareza e ofereça o banho; não pergunte se ele quer só a higiênica.'
+    // A pet above the MotoDog weight limit: said before any booking draft exists.
+    if(customer.ok&&!t.confirm&&(topics.agenda||/moto ?dog|\bbusca|\bleva|transporte/.test(this.text(t).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()))){
+      const pets=Array.isArray(record(customer.data).pets)?record(customer.data).pets as {id:string;name?:unknown}[]:[],pet=namedPet(this.text(t),pets)??(pets.length===1?pets[0]:undefined)
+      const limit=pet?await this.transportLimit({fields:{pet_id:pet.id}},customer):null
+      if(limit)services+='\nMOTODOG: '+limit}
     // Booking steps are decided here, not by the model.
     const bookings=Object.entries(operational.state.operations).filter(([,d])=>d.kind==='booking'&&d.status==='active')
     if(bookings.length&&!t.confirm){const offered=await transportOffered(db,c.tenantId);for(const [id,d] of bookings){
       // What the customer already gave (a weight, the address on file) is saved by the server.
       const known=await this.fillKnown(id,d,customer),s=nextBookingStep(known,{transportOffered:offered,weightNeeded:await this.weightNeeded(known,customer),addressOnFile:this.addressOnFile(customer)?.text,transportLimit:await this.transportLimit(known,customer)})
-      services+='\nAGENDAMENTO '+id+' (etapa decidida pelo servidor): já tem '+(s.done.join(', ')||'nada')+'. Próxima etapa: '+s.step+'. '+s.instruction+' Se o cliente já disse dados de etapas seguintes, salve-os também; pergunte o que faltar numa mensagem só.'}}
+      const hour=/^(date|slot)$/.test(s.step)?lastHourSaid(await this.saidText()):null,day=hour!==null&&dateSaid(await this.saidText())
+      services+='\nAGENDAMENTO '+id+' (etapa decidida pelo servidor): já tem '+(s.done.join(', ')||'nada')+'. Próxima etapa: '+s.step+'. '+s.instruction+(day?' O cliente já disse o dia e o horário ('+hour+'h) numa mensagem anterior: consulte get_available_slots com eles agora; não pergunte de novo.':'')+' Se o cliente já disse dados de etapas seguintes, salve-os também; pergunte o que faltar numa mensagem só.'}}
     // A purchase also needs a customer record, asked for only when the order is about to be closed.
     if(unregistered&&topics.commerce&&!t.confirm)services+='\nCLIENTE SEM CADASTRO: busque e monte o carrinho normalmente. Para fechar o pedido ele precisa de cadastro: o cadastro pede nome do tutor, data de nascimento, CPF, CEP da rua, número da casa e ponto de referência, nome, espécie e raça do pet (raça e porte não são nome); pergunte tudo o que faltar numa mensagem só e use prepare_customer_registration só com dados ditos por ele. Depois de confirmado, siga com o pedido.'+'\n'+registrationStatus(await this.orderedSaid())
     // Every required registration field said, in this very message: the server
@@ -307,6 +313,11 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       // A time said earlier ("sexta às 14h" before the registration) still counts
       // when the model queries exactly that hour.
       const hour=Number(/T(\d{2}):/.exec(String(args.starts_at??''))?.[1]),saidHour=Number.isFinite(hour)&&new RegExp(`\\b(?:as )?0?${hour}\\s*(?:h\\b|:\\d{2}|horas?\\b)|\\bas 0?${hour}\\b`).test((await this.saidText()).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase())
+      // A whole-day query after an hour said in an earlier message ("sexta às
+      // 14h", then the registration): the server answers for that hour.
+      const earlier=!timeSaid(this.text())&&!saidHour?lastHourSaid(await this.saidText()):null
+      if(earlier!==null){const options=(data.options as Record<string,unknown>[]).map(option=>({...option,scheduled_at:zonedIsoTime(String(option.scheduled_at),timezone)})),at=options.filter(o=>Number(String(record(o).local_time).slice(0,2))===earlier)
+        return {ok:true,data:{...data,slots:undefined,options:at.length?at:options,instruction:at.length?'O cliente já disse que quer às '+earlier+'h. Use esse horário (copie scheduled_at) e siga para o próximo passo; não pergunte o horário de novo.':'O cliente pediu às '+earlier+'h e esse horário não tem vaga. Diga isso e ofereça os horários livres de options.'}}}
       if(!timeSaid(this.text())&&!saidHour){const options=data.options as Record<string,unknown>[];return {ok:true,data:{has_slots:options.length>0,local_date:options[0]?.local_date??null,instruction:options.length?'O cliente disse só o dia e esse dia tem vagas. Pergunte que horário ele prefere; não liste horários. Quando ele disser, consulte de novo com esse horário.':'Esse dia não tem vagas. Diga isso e pergunte outro dia e horário.'}}}
       return {...result,data:{...data,slots:(data.slots as string[]).map(slot=>zonedIsoTime(slot,timezone)),options:(data.options as Record<string,unknown>[]).map(option=>({...option,scheduled_at:zonedIsoTime(String(option.scheduled_at),timezone)})),instruction:'Horários já estão no fuso da loja com offset explícito. Fale local_date/local_time e copie scheduled_at exatamente ao salvar o rascunho. Não some nem subtraia horas. Uma consulta não reserva a vaga.'}}
     }})
@@ -473,8 +484,10 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const c=this.turn().context,said=await this.db.prepare("SELECT group_concat(content_text,' ') text FROM (SELECT content_text FROM (SELECT content_text,created_at_ms FROM chat_messages WHERE tenant_id=? AND module_id='petshop' AND thread_id=? AND direction='inbound' ORDER BY created_at_ms DESC LIMIT 30) ORDER BY created_at_ms)").bind(c.tenantId,c.conversationId).first<{text:string|null}>()
     return (said?.text??'')+' '+this.text(this.turn())
   }
+  // Only what was said after the last booking or order was closed: "eu levo"
+  // or "às 10h" from the previous booking is not evidence for the next one.
   private async saidText(){
-    const c=this.turn().context,said=await this.db.prepare("SELECT group_concat(content_text,' ') text FROM (SELECT content_text FROM chat_messages WHERE tenant_id=? AND module_id='petshop' AND thread_id=? AND direction='inbound' ORDER BY created_at_ms DESC LIMIT 30)").bind(c.tenantId,c.conversationId).first<{text:string|null}>()
+    const c=this.turn().context,said=await this.db.prepare("SELECT group_concat(content_text,' ') text FROM (SELECT content_text FROM chat_messages WHERE tenant_id=? AND module_id='petshop' AND thread_id=? AND direction='inbound' AND created_at_ms>COALESCE((SELECT max(updated_at_ms) FROM luna_proposals WHERE tenant_id=chat_messages.tenant_id AND module_id='petshop' AND conversation_id=chat_messages.thread_id AND status='completed' AND operation_kind IN ('appointment_create','product_order_create')),0) ORDER BY created_at_ms DESC LIMIT 30)").bind(c.tenantId,c.conversationId).first<{text:string|null}>()
     return (said?.text??'')+' '+this.text(this.turn())
   }
   // A service priced by weight band needs the pet's weight before the summary.

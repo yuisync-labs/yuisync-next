@@ -203,11 +203,13 @@ async function createProposal(database: D1Database, context: LunaExecutionContex
     payload = { ...payload, draft_operation_id: draftId, draft_version: draft.version }
   }
   const hash = await fingerprint(payload)
+  // A newer summary of the same kind replaces any older one still waiting, so
+  // a bare "sim" is never left ambiguous between an old and a new summary.
   await database.batch([
     database.prepare(`
       UPDATE luna_proposals SET status='invalidated',updated_at_ms=?4
       WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3
-        AND status IN ('collecting','awaiting_confirmation') AND (operation_id=?5 OR (operation_id IS NULL AND operation_kind=?6))
+        AND status IN ('collecting','awaiting_confirmation') AND (operation_id=?5 OR operation_kind=?6)
     `).bind(context.tenantId, context.moduleId, context.conversationId, now, operationId, kind),
     database.prepare(`
       INSERT INTO luna_proposals(
