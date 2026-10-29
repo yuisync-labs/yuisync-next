@@ -24,6 +24,12 @@ for(const r of rows.filter(r=>r.status!=='passed')){
  lines.push(`<details><summary>${r.scenario.id} · ${r.scenario.goal} · ${r.status==='grave'?'❗ grave':'❌'} ${clip([...r.grave,...r.problems].join('; '),160)}</summary>`,'',`Estilo: ${r.scenario.style}. Desvio: ${r.scenario.detour}.`,'')
  for(const l of r.lines)lines.push(`- **${l.from==='cliente'?'Cliente':'Luna'}${l.status&&l.status!=='replied'?' ('+l.status+')':''}:** ${clip(l.text,260)}`)
  if(r.judge?.comment)lines.push('',`Avaliador: ${clip(r.judge.comment,200)}`)
+ // Why a turn went to the store, and the tools that failed on the way: the
+ // artifact holds the full trace, this is what the comment can carry.
+ const handoffs=(r.turns??[]).map(t=>t.handoffReason).filter(Boolean)
+ if(handoffs.length)lines.push('',`Motivo da passagem: ${clip([...new Set(handoffs)].join('; '),200)}`)
+ const failed=(r.turns??[]).flatMap(t=>(t.trace??[]).filter(x=>/"ok":false/.test(x.result??'')).map(x=>`${x.tool}: ${clip(String(x.result).replace(/\s+/g,' '),140)}`))
+ if(failed.length)lines.push('',`Ferramentas recusadas: ${clip([...new Set(failed)].slice(0,4).join(' | '),500)}`)
  lines.push('','</details>','')
 }
 let report=lines.join('\n');if(report.length>60000)report=report.slice(0,60000)+'\n\n(relatório cortado; o restante está no artefato da execução)'
