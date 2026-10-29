@@ -20,6 +20,12 @@
       "kind": "simulator",
       "run_id": 40890107019,
       "usd": 0.3822
+    },
+    {
+      "date": "2026-10-29",
+      "kind": "simulator",
+      "run_id": 40902626300,
+      "usd": 0.4003
     }
   ]
 }
