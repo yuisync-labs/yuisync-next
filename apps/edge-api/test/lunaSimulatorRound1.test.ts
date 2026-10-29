@@ -2,7 +2,7 @@ import {describe,expect,it} from 'vitest'
 import {command as c,createThinkHarness} from './fixtures/luna/thinkHarness'
 import {applyQuatroPatasStore} from './fixtures/luna/simulatorStore'
 import {simulatorScenarios} from './fixtures/luna/simulatorScenarios'
-import {claimsDone} from '../src/luna/thinkPresentation'
+import {claimsDone,withoutInternalErrors} from '../src/luna/thinkPresentation'
 // Failures of the first simulator round (29/10/2026), on the QuatroPatas catalogue
 // with a scripted model: what the server must do whatever the model says.
 describe('rodada 1 do simulador',()=>{
@@ -51,6 +51,16 @@ describe('rodada 1 do simulador',()=>{
   expect(r.result.status).toBe('replied')
   expect(r.result.reply).toContain('confiro a vaga')
  },60000)
+ it('marca com duas palavras e porte no nome acham a ração',async()=>{
+  const h=await createThinkHarness(7807,'-sim1')
+  await applyQuatroPatasStore(h as never,simulatorScenarios(1,1)[0])
+  const r=await h.run('ração Special Dog Ultralife adulto raças pequenas 3 kg',[c('search_products',{filters:{productType:'feed',species:'dog',lifeStage:'adult',brand:'Special Dog',productLine:'Ultralife',packageWeightGrams:3000,animalSize:'small'}}),'ok'])
+  expect(JSON.stringify(r.tools.find(t=>t.name==='search_products')?.result)).toContain('sd-ultralife-3')
+ },60000)
+ it('tira texto técnico de filtro',()=>{
+  expect(withoutInternalErrors('Estou verificando na seção correta, mas o filtro "feed" não é aceito para catálogo. Vou tentar sem esse filtro para confirmar. Não temos essa ração.')).toBe('Não temos essa ração.')
+  expect(withoutInternalErrors('Temos filtro de água para gatos por R$ 89,90.')).toContain('filtro de água')
+ })
  it('reconhece promessa de feito',()=>{
   for(const yes of ['Seu pedido está confirmado para retirada na loja.','Sim, o MotoDog vai buscar a Mel na sexta-feira às 9h certinho.','Prontinho, ficou marcado!'])expect(claimsDone(yes),yes).toBe(true)
   for(const no of ['O MotoDog vai buscar a Mel na sexta às 9h e trazer de volta. Confirma?','Tem vaga sexta às 9h. Você vai levar a Mel?','O banho custa R$ 55,00.'])expect(claimsDone(no),no).toBe(false)

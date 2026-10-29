@@ -143,7 +143,19 @@ export function consistentConfirmation(value: string, operationKind: string, pay
   // Questions about something else are set aside; a question that holds the yes is not a yes.
   // "confirmo, pode registrar, blz?": a tag question asks for agreement, not information.
   const untagged = value.replace(/[,\s]+(?:blz|beleza|ok|ta|t[aá] bom|certo|pode ser|n[eé]|combinado)\s*\?+\s*$/i, '.')
-  const clauses = untagged.split(/(?<=[.!?;\n])/).map(c => c.trim()).filter(Boolean)
+  // Facts of the summary as the customer may repeat them: "R$ 46,90", "Rua Muriaé, 200".
+  const cents = new Set<number>(), textNumbers = new Set<number>()
+  const walk = (v: unknown, key = ''): void => {
+    if (Array.isArray(v)) { v.forEach(x => walk(x, key)); return }
+    if (v && typeof v === 'object') { for (const [k, x] of Object.entries(v)) walk(x, k); return }
+    if (typeof v === 'number' && key.endsWith('_cents')) cents.add(v)
+    if (typeof v === 'string' && !/(^|_)id$|^name$/.test(key)) for (const n of v.match(/\d+/g) ?? []) textNumbers.add(Number(n))
+  }
+  walk(payload)
+  let wrongAmount = false
+  const amounts = untagged.replace(/(?:r\$\s*)?\b(\d{1,5})[.,](\d{2})\b/gi, (_all, reais, centavos) => { if (!cents.has(Number(reais) * 100 + Number(centavos))) wrongAmount = true; return ' ' })
+  if (wrongAmount) return false
+  const clauses = amounts.split(/(?<=[.!?;\n])/).map(c => c.trim()).filter(Boolean)
   const kept: string[] = []
   for (const clause of clauses) {
     if (!clause.endsWith('?')) { kept.push(clause); continue }
@@ -155,7 +167,9 @@ export function consistentConfirmation(value: string, operationKind: string, pay
   const says = (c: string[]) => c.some((w, i) => STRONG_YES.has(w) || w === 'pode' && GO_ON.has(c[i + 1] ?? ''))
   const split = kept.map(confirmationWords).filter(c => c.length), last = split.map(says).lastIndexOf(true)
   const words = split.flat()
-  if (last < 0 || words.length > 40 || words.some(w => CHANGE.has(w)) || split.slice(last).flat().some(w => HOLD.has(w))) return false
+  // Luna never takes payment: "pago no cartão, se não der me avisa" is no reservation about the summary.
+  const aboutPayment = (c: string[]) => c.some(w => PAYMENT.has(w) || w === 'pagamento')
+  if (last < 0 || words.length > 60 || split.some(c => !aboutPayment(c) && c.some(w => CHANGE.has(w))) || split.slice(last).some(c => !aboutPayment(c) && c.some(w => HOLD.has(w)))) return false
   // A registration summary has no day or price: "confirmo, pode marcar o banho amanhã 14h" talks about the next step.
   if (operationKind.endsWith('registration')) return true
   // A stray letter is usually a product variant ("a Ração B").
@@ -166,6 +180,7 @@ export function consistentConfirmation(value: string, operationKind: string, pay
   const total = Number(payload.total_cents), fee = Number(record(payload.transport).fee_cents)
   for (const cents of [total, fee, ...lines.map(l => Number(record(l).unit_price_cents ?? record(l).price_cents))]) if (Number.isFinite(cents) && cents > 0 && cents % 100 === 0) known.add(cents / 100)
   // "3 kg" restates a size from the item name, not a quantity.
+  for (const n of textNumbers) known.add(n)
   const sizes = new Set(lines.flatMap(line => (String(record(line).name ?? '').match(/\d+/g) ?? []).map(Number)))
   const at = Number(payload.scheduled_at_ms)
   let day: { y: number; m: number; d: number; hour: number; minute: number; weekday: number } | null = null

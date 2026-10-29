@@ -67,14 +67,16 @@ export function buildCatalogQuery(p:Preferences,keywords:readonly string[]=[],in
  for(const [column,value] of [['product_type',p.productType],['life_stage',p.lifeStage],['package_weight_grams',p.packageWeightGrams]] as const){if(value!=null){conditions.push(`${column==='package_weight_grams'?'COALESCE(x.net_weight_grams,a.package_weight_grams)':`COALESCE(x.${column},a.${column})`}=?`);params.push(value);}}
  if(p.saleForm){conditions.push(`${foodSaleForm}=?`);params.push(p.saleForm);}
  if(p.brand){const brand=code(p.brand);params.push(brand==='wiskas'?'whiskas':brand);
-  if(p.productName){conditions.push("(COALESCE(x.brand_code,a.brand_code)=? OR (COALESCE(x.brand_code,a.brand_code) IS NULL AND p.name LIKE ? ESCAPE '\\'))");params.push('%'+p.brand.replace(/[\\%_]/g,'\\$&')+'%');}
-  else conditions.push('COALESCE(x.brand_code,a.brand_code)=?');
+  // A classified brand can be cut short ("Special" for Special Dog): the brand
+  // said by the customer inside the product name also counts.
+  conditions.push(`(COALESCE(x.brand_code,a.brand_code)=? OR ${foldedName} LIKE ? ESCAPE '\\')`);params.push('%'+p.brand.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().replace(/[\\%_]/g,'\\$&')+'%');
  }
  if(p.species){
   const profile="SELECT 1 FROM catalog_product_profile_species s WHERE s.tenant_id=p.tenant_id AND s.module_id=p.module_id AND s.product_id=p.id",legacy="SELECT 1 FROM catalog_product_species s WHERE s.tenant_id=p.tenant_id AND s.module_id=p.module_id AND s.product_id=p.id";
   conditions.push(`(EXISTS(${profile} AND s.species=?) OR (NOT EXISTS(${profile}) AND EXISTS(${legacy} AND s.species=?))${includeUnknownSpecies?` OR (NOT EXISTS(${profile}) AND NOT EXISTS(${legacy}))`:''})`);params.push(p.species,p.species);
  }
- if(p.animalSize){conditions.push('EXISTS(SELECT 1 FROM catalog_product_sizes s WHERE s.tenant_id=a.tenant_id AND s.module_id=a.module_id AND s.product_id=a.product_id AND s.animal_size=?)');params.push(p.animalSize);}
+ // "RAÇAS PEQUENAS" in the name says the size when no size row was classified.
+ if(p.animalSize){const word={small:'pequen',medium:'medi',large:'grande',giant:'gigante'}[p.animalSize];conditions.push(`(EXISTS(SELECT 1 FROM catalog_product_sizes s WHERE s.tenant_id=a.tenant_id AND s.module_id=a.module_id AND s.product_id=a.product_id AND s.animal_size=?) OR (NOT EXISTS(SELECT 1 FROM catalog_product_sizes s WHERE s.tenant_id=a.tenant_id AND s.module_id=a.module_id AND s.product_id=a.product_id) AND ${foldedName} LIKE ?))`);params.push(p.animalSize,'%'+word+'%');}
  if(p.maxPriceCents!=null){conditions.push('p.price_cents<=?');params.push(p.maxPriceCents);}
  addClassificationFilters(p,conditions,params);
  for(const keyword of [...keywords,...(p.nameTerms??[]),...[p.productLine,p.productName].filter((v):v is string=>!!v).flatMap(v=>v.split(/\s+/))]){

@@ -47,7 +47,7 @@ describe('Luna yes in the customer own words', () => {
   const now = Date.parse('2026-10-29T13:00:00-03:00')
   const mel = { pet_name: 'Mel', services: [{ name: 'BANHO PET PORTE PEQUENO 0 KG A 10 KG (TODAS AS PELAGENS)' }], total_cents: 5500, scheduled_at_ms: Date.parse('2026-10-30T09:00:00-03:00') }
   const moto = { ...mel, total_cents: 7500, transport: { label: 'Buscar e levar', fee_cents: 2000 } }
-  const golden = { items: [{ name: 'GOLDEN FORMULA GATO ADULTO FRANGO 1 KG', quantity: 1 }], total_cents: 4690, fulfillment_type: 'delivery' }
+  const golden = { items: [{ name: 'GOLDEN FORMULA GATO ADULTO FRANGO 1 KG', quantity: 1, unit_price_cents: 3690 }], total_cents: 4690, delivery_fee_cents: 1000, fulfillment_type: 'delivery', delivery_address: { street: 'Rua Muriaé', number: '200', neighborhood: 'Santa Terezinha' } }
   const ultralife = { items: [{ name: 'RACAO SPECIAL DOG ULTRALIFE 3 KG', quantity: 2 }], total_cents: 10980, fulfillment_type: 'counter' }
   it.each([
     ['confirmo sim, pode deixar marcado entao', mel],
@@ -60,6 +60,9 @@ describe('Luna yes in the customer own words', () => {
     ['Sim, confirmo o pedido e o pagamento via PIX na retirada na loja.', ultralife],
     ['pode fechar os 2 pacotes', ultralife],
     ['Confirmo sim, pode registrar pra mim, blz?', mel],
+    ['Sim, confirmo o pedido de 1 unidade da ração Golden Fórmula Gato Adulto Frango 1 kg, com entrega na Rua Muriaé, 200, Santa Terezinha, taxa de entrega de R$ 10,00, totalizando R$ 46,90, e pagamento em dinheiro na entrega.', golden],
+    ['Sim, confirmo o resumo do pedido. Por favor, prossiga com a entrega e me avise se o pagamento com cartão na entrega for possível, caso contrário, me explique como faço o pagamento antecipado.', golden],
+    ['Sim, confirmo a finalização do pedido para entrega no endereço Rua Muriaé, 200, Santa Terezinha. Aguardo instruções caso o pagamento com cartão na entrega não seja possível.', golden],
   ])('aceita: %s', (phrase, payload) => expect(consistentConfirmation(phrase, (payload as Record<string, unknown>).items ? 'product_order_create' : 'appointment_create', payload, now)).toBe(true))
   it('cadastro: o sim pode já falar do banho', () => {
     expect(consistentConfirmation('Confirmo o resumo certinho, pode finalizar o agendamento do banho amanhã 14h.', 'customer_registration', {}, now)).toBe(true)
@@ -76,6 +79,8 @@ describe('Luna yes in the customer own words', () => {
     ['sim, confirmo 3 pacotes', ultralife],
     ['Confirma pra entregar?', golden],
     ['confirmo para as 10h, pode ser?', mel],
+    ['Sim, confirmo, totalizando R$ 56,90.', golden],
+    ['Confirmo, mas entrega na Rua Muriaé, 300.', golden],
     ['pode me passar o preço da tosa', mel],
     ['ok, vou pensar e te falo', mel],
     ['confirmo, e marca a Luna também', mel],
