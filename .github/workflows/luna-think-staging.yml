@@ -126,6 +126,8 @@ jobs:
         run: |
           export LANG_CASE_IDS=$(node -p "JSON.parse(require('fs').readFileSync('../../.github/luna-language-request.json','utf8')).cases.join(',')")
           export LANG_MODEL=$(node -p "JSON.parse(require('fs').readFileSync('../../.github/luna-language-request.json','utf8')).model??''")
+          # OpenAI runs spend from the total limit in .github/luna-spend-ledger.json.
+          if [[ "$LANG_MODEL" == openai:* ]]; then export OPENAI_BUDGET_USD=$(cd ../.. && node scripts/luna/budgetLeft.mjs .github/luna-language-request.json); fi
           npx vitest run --config vitest.language-live.config.ts
       - if: always() && steps.gate.outputs.run == 'true'
         name: Report results on the pull request
@@ -140,4 +142,54 @@ jobs:
         with:
           name: luna-language-batch-${{ github.run_id }}
           path: .artifacts/luna-language/
+          if-no-files-found: ignore
+  simulator:
+    permissions:
+      contents: read
+      pull-requests: write
+    # Simulated customers against the real Luna, with the QuatroPatas catalogue.
+    # Runs only when .github/luna-simulator-request.json sets "run": true and the
+    # battery is off, so two paid runs never share the remaining budget.
+    needs: staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    environment: cloudflare-staging
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: gate
+        run: echo "run=$(node -p "JSON.parse(require('fs').readFileSync('.github/luna-simulator-request.json','utf8')).run===true&&JSON.parse(require('fs').readFileSync('.github/luna-language-request.json','utf8')).run!==true")" >> "$GITHUB_OUTPUT"
+      - if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - if: steps.gate.outputs.run == 'true'
+        run: npm ci
+      - if: steps.gate.outputs.run == 'true'
+        name: Run simulated conversations until the budget is spent
+        working-directory: apps/edge-api
+        run: |
+          r=../../.github/luna-simulator-request.json
+          export OPENAI_BUDGET_USD=$(cd ../.. && node scripts/luna/budgetLeft.mjs .github/luna-simulator-request.json)
+          export SIM_COUNT=$(node -p "JSON.parse(require('fs').readFileSync('$r','utf8')).conversations")
+          export SIM_SEED=$(node -p "JSON.parse(require('fs').readFileSync('$r','utf8')).seed")
+          export LANG_MODEL=$(node -p "JSON.parse(require('fs').readFileSync('$r','utf8')).model")
+          export SIM_CUSTOMER_MODEL=$(node -p "JSON.parse(require('fs').readFileSync('$r','utf8')).customer_model")
+          npx vitest run --config vitest.simulator.config.ts || true
+      - if: always() && steps.gate.outputs.run == 'true'
+        name: Report results on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/luna/simulatorReport.mjs
+          pr=$(gh api "repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${{ github.ref_name }}&state=open" --jq '.[0].number')
+          if [ -n "$pr" ]; then printf '%s\n\n[Execução](%s)\n' "$(cat .artifacts/luna-simulator/report.md)" "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" > comment.md; gh pr comment "$pr" --repo "${{ github.repository }}" --body-file comment.md; fi
+      - uses: actions/upload-artifact@v6
+        if: always() && steps.gate.outputs.run == 'true'
+        with:
+          name: luna-simulator-${{ github.run_id }}
+          path: .artifacts/luna-simulator/
           if-no-files-found: ignore

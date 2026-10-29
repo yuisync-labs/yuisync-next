@@ -1,0 +1,6 @@
+{
+  "note": "Limite TOTAL de gasto na API da OpenAI definido por kai em 29/10/2026 12:54. Toda rodada paga (simulador ou bateria) entra em runs; nenhuma rodada pode passar do saldo.",
+  "limit_usd": 2,
+  "since": "2026-10-29T12:54:00Z",
+  "runs": []
+}
