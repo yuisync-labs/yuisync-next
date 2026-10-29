@@ -1752,7 +1752,7 @@
       "turns": [
         "banho pra Mel quarta às 10h, eu levo",
         "confirmo",
-        "quero outro banho pra Mel sexta às 14h, eu levo"
+        "quero outro banho pra Mel sexta às 10h, eu levo"
       ],
       "expect": {
         "appointments": 1,
@@ -1768,7 +1768,7 @@
       "turns": [
         "banho pra Mel quarta às 10h, eu levo",
         "confirmo",
-        "quero outro banho pra Mel sexta às 14h, eu levo",
+        "quero outro banho pra Mel sexta às 10h, eu levo",
         "confirmo"
       ],
       "expect": {
@@ -1813,7 +1813,8 @@
       ],
       "expect": {
         "appointments": 0,
-        "reply": "loja|atendente|equipe|pessoa"
+        "reply": "loja|atendente|equipe|pessoa",
+        "handoff": true
       }
     },
     {

@@ -37,7 +37,7 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
    if(s.family==='flow'){
     // Whole conversations from greeting to commit: every turn must avoid handoff
     // and the final database effect must match the case.
-    const flow=s as typeof s&{turns:string[];unregistered?:boolean;setup?:{transport?:boolean;pix?:boolean;descriptions?:boolean;address?:boolean;no_weight?:boolean;bands?:boolean;cpf_on_file?:boolean;hygienic?:boolean;heavy?:boolean};expect:{sales?:number;appointments?:number;reply?:string;not_reply?:string;no_proposal?:boolean;transport_option?:string;pet_weight_kg?:number}}
+    const flow=s as typeof s&{turns:string[];unregistered?:boolean;setup?:{transport?:boolean;pix?:boolean;descriptions?:boolean;address?:boolean;no_weight?:boolean;bands?:boolean;cpf_on_file?:boolean;hygienic?:boolean;heavy?:boolean};expect:{sales?:number;appointments?:number;reply?:string;not_reply?:string;no_proposal?:boolean;transport_option?:string;pet_weight_kg?:number;handoff?:boolean}}
     // A new customer: the conversation phone matches no client, the chat carries only a name.
     if(flow.unregistered){await h.db.prepare("UPDATE clients SET phone='0000000001' WHERE tenant_id=?").bind(h.tenant).run();await h.db.prepare("UPDATE chat_threads SET customer_name='Joberson' WHERE tenant_id=?").bind(h.tenant).run()}
     // Store data some flows need: MotoDog options, a fictitious PIX key, service descriptions.
@@ -54,7 +54,7 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
     if(flow.setup?.hygienic)await h.db.prepare("UPDATE services SET description='Banho com secagem, corte de unhas, limpeza de ouvidos e tosa higiênica.' WHERE tenant_id=?").bind(h.tenant).run()
     // Bath priced by weight band, as the store registers it: up to 10 kg and 10 to 25 kg.
     if(flow.setup?.bands){await h.db.prepare("UPDATE services SET name='Banho porte pequeno 0 a 10 kg',species_target='dog',min_weight_grams=0,max_weight_grams=10099 WHERE tenant_id=? AND id='banho'").bind(h.tenant).run();await h.db.prepare("INSERT INTO services(tenant_id,module_id,id,code,name,group_type,default_price_cents,default_duration_min,status,created_at_ms,updated_at_ms,species_target,min_weight_grams,max_weight_grams) SELECT tenant_id,module_id,'banho-medio','banho-medio','Banho porte médio 10 a 25 kg',group_type,7000,default_duration_min,'active',created_at_ms,updated_at_ms,'dog',10100,25000 FROM services WHERE tenant_id=? AND id='banho'").bind(h.tenant).run()}
-    for(const message of flow.turns){const r=await h.turn(message);expect(r.status,'Handoff at "'+message+'": '+r.reply).not.toBe('handoff')}
+    for(const [i,message] of flow.turns.entries()){const r=await h.turn(message);if(flow.expect.handoff&&i===flow.turns.length-1)expect(r.status,'No handoff at "'+message+'": '+r.reply).toBe('handoff');else expect(r.status,'Handoff at "'+message+'": '+r.reply).not.toBe('handoff')}
     if(flow.expect.sales!==undefined)expect(await sales()).toHaveLength(flow.expect.sales)
     if(flow.expect.appointments!==undefined)expect((await appointments()).results).toHaveLength(flow.expect.appointments)
     if(flow.expect.transport_option)expect(await h.db.prepare('SELECT option_id FROM appointment_transport WHERE tenant_id=?').bind(h.tenant).first()).toEqual({option_id:flow.expect.transport_option})
