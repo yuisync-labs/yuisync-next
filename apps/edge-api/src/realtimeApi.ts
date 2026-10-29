@@ -84,7 +84,7 @@ function hasModuleAccess(row: MembershipRow, moduleId: string): boolean {
   return Boolean(permissions[moduleId] ?? permissions['*'])
 }
 
-function realtimeObjectName(scope: Scope): string {
+export function realtimeObjectName(scope: Scope): string {
   return `realtime:v1:${scope.tenantId.length}:${scope.tenantId}:${scope.moduleId}`
 }
 
@@ -294,4 +294,14 @@ export function scheduleRealtimeInvalidation(
 ): void {
   if (!response.ok || !MUTATION_METHODS.has(request.method) || !bindings.COORDINATOR) return
   context.waitUntil(publishRealtimeInvalidations(request, response, bindings))
+}
+
+// Server-side changes (a Luna turn, not an HTTP mutation) tell open panels to reload one table.
+export async function publishTableInvalidation(coordinator: DurableObjectNamespace<CoordinationDurableObject> | undefined, scope: Scope, table: string, source: string): Promise<void> {
+  if (!coordinator) return
+  try {
+    await coordinator.getByName(realtimeObjectName(scope)).publishRealtime({ type: 'realtime.invalidate', eventId: crypto.randomUUID(), schema: 'edge', eventType: 'SYNC', table, tenantId: scope.tenantId, moduleId: scope.moduleId, source, occurredAtMs: Date.now() })
+  } catch (error) {
+    console.error(JSON.stringify({ event: 'edge.realtime.publish_failed', tenant_id: scope.tenantId, module_id: scope.moduleId, source, message: error instanceof Error ? error.message : String(error) }))
+  }
 }

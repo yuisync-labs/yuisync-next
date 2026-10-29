@@ -14,12 +14,12 @@ describe('Luna compact model context', () => {
     expect(schema.properties.description.description).toBe('annotation')
   })
 
-  it('keeps all 22 native tools and strict contracts, while reducing wire size', () => {
+  it('keeps all 23 native tools and strict contracts, while reducing wire size', () => {
     const definitions = createLunaToolRegistry({} as D1Database).definitions
     const provider = new GroqProvider({ apiKey: 'fixture-only', model: 'openai/gpt-oss-20b' })
     const messages = composeLunaModelMessages([{role:'system',content:LUNA_OPERATIONAL_SYSTEM_PROMPT},{role:'user',content:'fixture'}], [])
     const body = JSON.parse(provider.serializeRequest({messages,tools:definitions}))
-    expect(body.tools).toHaveLength(22)
+    expect(body.tools).toHaveLength(23)
     let removedBytes = 0
     for (const [index, definition] of definitions.entries()) {
       const original = strictGroqToolSchema(groqWireToolSchema(definition.parameters))

@@ -16,7 +16,7 @@ export type DraftEvent = {
 }
 const fields: Record<DraftKind, Set<string>> = {
   cart: new Set(['fulfillment_type', 'address', 'reference', 'payment_preference']),
-  booking: new Set(['pet_id', 'scheduled_at', 'period', 'transport_mode', 'transport_option_id', 'address', 'reference', 'notes', 'machine_number']),
+  booking: new Set(['pet_id', 'scheduled_at', 'period', 'transport_mode', 'transport_option_id', 'address', 'reference', 'notes', 'machine_number', 'weight_kg']),
   registration: new Set(['customer_name', 'pet_name', 'species', 'breed', 'weight_kg']),
 }
 export const CART_FULFILLMENT_VALUES = ['counter', 'delivery'] as const

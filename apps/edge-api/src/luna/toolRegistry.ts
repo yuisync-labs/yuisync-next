@@ -5,16 +5,17 @@ import type {
   LunaToolResult,
 } from './contracts'
 import { commitConfirmedProposal, getProposalOperationStatus } from './commitProposal'
-import { validateScheduleAvailability } from './schedulePolicy'
+import { validateScheduleAvailability, withStoreScheduleDefaults } from './schedulePolicy'
 import { loadBenefitCandidates } from '../subscriptionBenefitCandidates'
 import { matchesToolSchema } from './toolSchema'
-import { isConversationCustomer } from './customerIdentity'
+import { conversationClients, isConversationCustomer, phoneVariants, samePerson } from './customerIdentity'
 import { LunaConversationRepository } from './conversationRepository'
 import type { DraftEvent } from './operationalState'
 import { executeInformationTool, informationToolDefinitions } from './informationTools'
 import { resolveBillingCatalog } from '../appointmentBillingCatalog'
 import { automaticAllocations } from '../subscriptionBenefitAuto'
 import { prepareRegistration, proposalCustomerAuthorized } from './registrationCommands'
+import { canonicalBreed } from './breeds'
 import { resolveDeliverySnapshot } from './deliveryContract'
 import { validateGroomingMachine } from '../groomingMachinePolicy'
 import { resolveContextReference } from './conversationalMemory'
@@ -44,10 +45,21 @@ const draftEventSchema = objectSchema({
   petId: {type:'string',minLength:1,maxLength:160},
 }, ['operationId', 'kind', 'expectedVersion', 'action'])
 
+// What the store asks every new customer, as its own ready-made message does.
+const CUSTOMER_REGISTRATION_FIELDS = {
+  tutor_birth_date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Data de nascimento do tutor convertida para AAAA-MM-DD; ao cliente, peça como dia/mês/ano.' },
+  cpf: { type: 'string', pattern: '^\\d{11}$', description: 'CPF do tutor, só os 11 dígitos.' },
+  postal_code: { type: 'string', pattern: '^\\d{8}$', description: 'CEP da rua, só os 8 dígitos.' },
+  street: { type: ['string','null'], maxLength: 160, description: 'Rua, se o cliente disser.' },
+  address_number: { type: 'string', minLength: 1, maxLength: 20, description: 'Número da casa.' },
+  address_reference: { type: ['string','null'], maxLength: 160, description: 'Ponto de referência.' },
+  neighborhood: { type: ['string','null'], maxLength: 120 },
+  city: { type: ['string','null'], maxLength: 120, description: 'O servidor completa pelo CEP.' },
+} as const
 const DEFINITIONS: readonly LunaToolDefinition[] = [
   {name:'resolve_context_reference',description:'Resolve referência por opções realmente apresentadas. Ordinal usa a ordem aceita; single exige uma opção; other exige duas opções e um item selecionado no rascunho. Não altera rascunho nem autoriza commit.',parameters:objectSchema({kind:{type:'string',enum:['product','service','pet','slot','transport']},selection:{type:'string',enum:['ordinal','single','other']},ordinal:{type:'integer',minimum:1,maximum:40},operation_id:stringProperty('Operação em foco.')},['kind','selection'])},
   {name:'record_turn_decision',description:'Persiste intenções E os eventos do turno atomicamente, sem efeito comercial. Inclua em events as inclusões/alterações necessárias (add_item com quantidade explícita, set_field etc.); não separe intenção e evento em chamadas. focus é o operation_id exato de uma intenção, NÃO o kind. Cada events[].operationId e kind corresponde à intenção. Mantenha esse ID ao preparar. expectedVersion é sequencial por operação. Uma decisão por mensagem; consulte catálogo antes dos IDs.',parameters:objectSchema({intents:{type:'array',minItems:1,maxItems:4,items:objectSchema({operation_id:{type:'string',minLength:1,maxLength:100},kind:{type:'string',enum:['cart','booking','registration']},goal:{type:'string',enum:['create','change','query','pause','resume','cancel']}},['operation_id','kind','goal'])},focus:{type:'string',minLength:1,maxLength:100},events:{type:'array',maxItems:8,items:draftEventSchema}},['intents','focus'])},
-  ...(['prepare_customer_registration', 'prepare_pet_registration'] as const).map(name => ({ name, description: name === 'prepare_customer_registration' ? 'Prepara cadastro de cliente novo e seu pet pelo telefone da conversa; não cria antes da confirmação e não une cadastros ambíguos.' : 'Prepara cadastro de outro pet do cliente identificado; nomes ambíguos exigem humano.', parameters: objectSchema({ customer_name: { type: 'string', minLength: 1, maxLength: 160 }, customer_id: { type: 'string', minLength: 1, maxLength: 160 }, pet_name: { type: 'string', minLength: 1, maxLength: 160 }, species: { type: 'string', enum: ['dog','cat','bird','rabbit','fish','other'] }, breed: { type: ['string','null'], maxLength: 160 }, weight_kg: { type: ['number','null'], minimum: 0.01, maximum: 200 }, operation_id: stringProperty('Rascunho de cadastro.') }, [name === 'prepare_customer_registration' ? 'customer_name' : 'customer_id', 'pet_name', 'species']) })),
+  ...(['prepare_customer_registration', 'prepare_pet_registration'] as const).map(name => ({ name, description: name === 'prepare_customer_registration' ? 'Prepara cadastro de cliente novo e seu pet pelo telefone da conversa; não cria antes da confirmação e não une cadastros ambíguos. Em compra sem agendamento, o pet é opcional: sem pet, omita pet_name, species, breed e weight_kg.' : 'Prepara cadastro de outro pet do cliente identificado; nomes ambíguos exigem humano.', parameters: objectSchema({ customer_name: { type: 'string', minLength: 1, maxLength: 160 }, customer_id: { type: 'string', minLength: 1, maxLength: 160 }, pet_name: { type: 'string', minLength: 1, maxLength: 160 }, species: { type: 'string', enum: ['dog','cat','bird','rabbit','fish','other'] }, breed: { type: ['string','null'], maxLength: 160 }, weight_kg: { type: ['number','null'], minimum: 0.01, maximum: 200, description: 'Só se o cliente disse o peso; senão null. Não é preciso perguntar para cadastrar.' }, ...(name === 'prepare_customer_registration' ? CUSTOMER_REGISTRATION_FIELDS : {}), operation_id: stringProperty('Rascunho de cadastro.') }, name === 'prepare_customer_registration' ? ['customer_name'] : ['customer_id', 'pet_name', 'species']) })),
   ...informationToolDefinitions,
   {
     name: 'get_operation_status', description: 'Consulta e reconcilia uma operação pelo ID da proposta após resposta perdida. Não repete gravações. Estado incerto requer humano.',
@@ -100,7 +112,7 @@ const DEFINITIONS: readonly LunaToolDefinition[] = [
       scheduled_at: stringProperty('Data e hora ISO 8601 com fuso horário.'),
       notes: { type: ['string', 'null'] },
       grooming_machine_no: {type:['integer','null'],enum:[4,7,10,null]},
-      transport:objectSchema({option_id:{type:'string',minLength:1,maxLength:80},city:{type:'string',minLength:1,maxLength:160},address:{type:'string',minLength:1,maxLength:500},reference:{type:['string','null'],maxLength:500}},['option_id','city','address']),
+      transport:objectSchema({option_id:{type:'string',minLength:1,maxLength:80},city:{type:'string',minLength:1,maxLength:160},address:{type:'string',minLength:1,maxLength:500},reference:{type:['string','null'],maxLength:500},weight_kg:{type:'number',minimum:0.01,maximum:200}},['option_id','city','address']),
       operation_id: stringProperty('ID do rascunho de agendamento, quando existente.'),
     }, ['customer_id', 'pet_id', 'service_ids', 'scheduled_at', 'notes']),
   },
@@ -191,11 +203,13 @@ async function createProposal(database: D1Database, context: LunaExecutionContex
     payload = { ...payload, draft_operation_id: draftId, draft_version: draft.version }
   }
   const hash = await fingerprint(payload)
+  // A newer summary of the same kind replaces any older one still waiting, so
+  // a bare "sim" is never left ambiguous between an old and a new summary.
   await database.batch([
     database.prepare(`
       UPDATE luna_proposals SET status='invalidated',updated_at_ms=?4
       WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3
-        AND status IN ('collecting','awaiting_confirmation') AND (operation_id=?5 OR (operation_id IS NULL AND operation_kind=?6))
+        AND status IN ('collecting','awaiting_confirmation') AND (operation_id=?5 OR operation_kind=?6)
     `).bind(context.tenantId, context.moduleId, context.conversationId, now, operationId, kind),
     database.prepare(`
       INSERT INTO luna_proposals(
@@ -217,7 +231,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
       const id = event.action === 'replace_item' ? event.replacementId : event.itemId
       const table = event.kind === 'cart' ? 'catalog_products' : event.kind === 'booking' ? 'services' : null
       if (!table || !id) return { ok: false, code: 'OPERATION_ITEM_INVALID', retryable: false }
-      if (!await database.prepare(`SELECT id FROM ${table} WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`).bind(context.tenantId, context.moduleId, id).first()) return { ok: false, code: 'CATALOG_ITEM_NOT_FOUND', retryable: false }
+      if (!await database.prepare(`SELECT id FROM ${table} WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1`).bind(context.tenantId, context.moduleId, id).first()) return { ok: false, code: 'CATALOG_ITEM_NOT_FOUND', retryable: false, ...(event.kind === 'booking' ? { instruction: 'Esse id não é de um serviço. Chame search_services de novo e use o campo id do serviço escolhido.' } : {}) }
     }
     if ((event.field === 'pet_id' && event.value)||event.petId) {
       if(event.petId&&event.kind!=='cart')return {ok:false,code:'OPERATION_ITEM_INVALID',retryable:false}
@@ -246,7 +260,8 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
   })
   for (const name of ['prepare_customer_registration', 'prepare_pet_registration']) handlers.set(name, async (args, context) => {
     const existing = name === 'prepare_pet_registration'
-    const result = await prepareRegistration(database, context, args, existing)
+    // "huskciberiano" is saved as Husky Siberiano.
+    const result = await prepareRegistration(database, context, { ...args, breed: canonicalBreed(args.breed) ?? args.breed }, existing)
     return result.ok ? createProposal(database, context, existing ? 'pet_registration' : 'customer_registration', result.data, clean(args.operation_id,100)) : result
   })
   for (const definition of informationToolDefinitions) handlers.set(definition.name, (args, context) => executeInformationTool(definition.name, args, context, database))
@@ -272,23 +287,23 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
   })
 
   handlers.set('get_customer_context', async (_args, context) => {
-    const phone = context.customerAddress.replace(/^\+/, '')
     const customer = await database.prepare(`
       SELECT id,name,phone,email,address,address_number,address_complement,address_reference,neighborhood,city,postal_code FROM clients
-      WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND (phone=?3 OR phone=?4)
-      ORDER BY updated_at_ms DESC LIMIT 2
-    `).bind(context.tenantId, context.moduleId, phone, `+${phone}`).all<Record<string, unknown>>()
+      WHERE tenant_id=?1 AND module_id=?2 AND ${conversationClients}
+      ORDER BY updated_at_ms DESC LIMIT 10
+    `).bind(context.tenantId, context.moduleId, JSON.stringify(phoneVariants(context.customerAddress))).all<Record<string, unknown>>()
     if (customer.results.length === 0) return { ok: false, code: 'CUSTOMER_NOT_FOUND', retryable: false }
-    if (customer.results.length > 1) return { ok: false, code: 'CUSTOMER_AMBIGUOUS', retryable: false }
+    if (customer.results.length > 1 && !samePerson(customer.results.map(row => row.name))) return { ok: false, code: 'CUSTOMER_AMBIGUOUS', retryable: false }
+    // A duplicated registration is one customer: the newest record, with the pets of all of them.
     const selected = customer.results[0]
     const pets = await database.prepare(`
       SELECT id,name,species,breed,weight_kg FROM pets
-      WHERE tenant_id=?1 AND module_id=?2 AND client_id=?3 AND status='active'
+      WHERE tenant_id=?1 AND module_id=?2 AND client_id IN (SELECT value FROM json_each(?3)) AND status='active'
       ORDER BY name,id LIMIT 20
-    `).bind(context.tenantId, context.moduleId, selected.id).all<Record<string, unknown>>()
+    `).bind(context.tenantId, context.moduleId, JSON.stringify(customer.results.map(row => row.id))).all<Record<string, unknown>>()
     const settings=await database.prepare(`SELECT data_json FROM module_settings_extensions WHERE tenant_id=?1 AND module_id=?2`).bind(context.tenantId,context.moduleId).first<{data_json:string}>()
     let timezone:string|null=null
-    try{const configured=JSON.parse(settings?.data_json??'{}').petbot_timezone;if(typeof configured==='string'){new Intl.DateTimeFormat('pt-BR',{timeZone:configured}).format();timezone=configured}}catch{/* Missing/invalid configuration is not an invented timezone. */}
+    try{const configured=(await withStoreScheduleDefaults(database,context.tenantId,context.moduleId,JSON.parse(settings?.data_json??'{}'))).petbot_timezone;if(typeof configured==='string'){new Intl.DateTimeFormat('pt-BR',{timeZone:configured}).format();timezone=configured}}catch{/* Missing/invalid configuration is not an invented timezone. */}
     return { ok: true, data: { customer: selected, pets: pets.results, store_context:{timezone,current_time_utc:new Date(lunaNow(context)).toISOString(),source:'module_settings_extensions/worker-clock'} } }
   })
 
@@ -297,7 +312,9 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     if (!query) return { ok: false, code: 'QUERY_REQUIRED', retryable: false, missing_fields: ['query'] }
     const result = await database.prepare(`
       SELECT id,code,name,category,group_type,default_price_cents,default_duration_min
-      FROM services WHERE tenant_id=?1 AND module_id=?2 AND status='active'
+      FROM services WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND default_price_cents>0
+        -- Services the store chose not to offer through Luna.
+        AND id NOT IN (SELECT value FROM module_settings_extensions m, json_each(COALESCE(json_extract(m.data_json,'$.luna_hidden_service_ids'),'[]')) WHERE m.tenant_id=services.tenant_id AND m.module_id=services.module_id)
         AND (name LIKE ?3 ESCAPE '\\' OR code LIKE ?3 ESCAPE '\\' OR category LIKE ?3 ESCAPE '\\')
       ORDER BY sort_order,name,id LIMIT 12
     `).bind(context.tenantId, context.moduleId, `%${escapeLike(query)}%`).all<Record<string, unknown>>()
@@ -388,7 +405,7 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     const durationMinutes = services.results.reduce((sum, service) => sum + Number(service.default_duration_min || 0), 0)
     const availability = await validateScheduleAvailability({
       database, tenantId: context.tenantId, moduleId: context.moduleId, nowMs: lunaNow(context),
-      scheduledAtMs: scheduledAt, durationMinutes,
+      scheduledAtMs: scheduledAt, durationMinutes, serviceNames: services.results.map(service => service.name),
     })
     if (!availability.ok) return { ok: false, code: availability.code, retryable: false }
     const transport=args.transport?await resolveTransportSnapshot(database,context,petId,scheduledAt,durationMinutes,args.transport):null

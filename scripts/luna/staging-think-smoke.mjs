@@ -23,6 +23,8 @@ INSERT INTO catalog_product_attributes(tenant_id,module_id,product_id,product_ty
 INSERT INTO catalog_product_species(tenant_id,module_id,product_id,species) VALUES(${q(tenant)},'petshop',${q(product)},'dog');`)
 async function login(email,password){
  const r=await fetch(base+'/api/auth/sign-in/email',{method:'POST',headers:{'content-type':'application/json',origin:base},body:JSON.stringify({email,password,rememberMe:false})})
+ // A failed sign-in prints what staging says about it (status, code and diagnostic header), never the credentials.
+ if(r.status!==200)console.error(JSON.stringify({sign_in_failed:r.status,body:(await r.text().catch(()=>'')).slice(0,200),diagnostic:r.headers.get('x-yuisync-auth-diagnostic'),retry_after:r.headers.get('retry-after'),account:email===process.env.E2E_EMAIL?'E2E':email===process.env.TENANT_B_EMAIL?'TENANT_B':'other'}))
  assert.equal(r.status,200,'sign in');const cookies=r.headers.getSetCookie().map(s=>s.split(';')[0]).join('; ');assert(cookies.includes('better-auth'));return cookies
 }
 const cookie=await login(process.env.E2E_EMAIL,process.env.E2E_PASSWORD)
@@ -38,16 +40,21 @@ assert.equal((await api('/api/chat/quality','GET',null,{cookie:''})).status,401)
 assert.equal((await api('/api/chat/quality','GET',null,{'x-tenant-id':fixture.isolationTenantId})).status,403)
 const otherCookie=await login(process.env.TENANT_B_EMAIL,process.env.TENANT_B_PASSWORD)
 assert.equal((await api('/api/chat/respond','POST',{sessionId:thread,clientMessageId:'blocked',message:'Olá'},{cookie:otherCookie,'x-tenant-id':fixture.isolationTenantId})).status,403)
-const first=await submit('Olá, quero uma Ração A de 15 kg para cachorro adulto.','part1')
-await sleep(3000)
-const second=await submit('Um pacote, vou retirar na loja.','part2')
-await sleep(5000)
-assert.equal((await status(first)).body.status,'queued','no inference before debounce expires')
-const prepared=await complete(second)
+// Staging groups messages like production (LUNA_INBOX_DEBOUNCE_MS=10000); with
+// 0 the grouping step is skipped.
+const debounceMs=Number(process.env.LUNA_INBOX_DEBOUNCE_MS??10000)
+let prepared
+if(debounceMs>0){
+ const first=await submit('Olá, quero uma Ração A de 15 kg para cachorro adulto.','part1')
+ await sleep(3000)
+ const second=await submit('Um pacote, vou retirar na loja.','part2')
+ await sleep(5000)
+ assert.equal((await status(first)).body.status,'queued','no inference before debounce expires')
+ prepared=await complete(second)
+ assert.equal((await status(first)).body.result.reply,prepared.reply)
+ assert.equal(prepared.savedUserMessages.length,2)
+}else prepared=await complete(await submit('Olá, quero um pacote da Ração A de 15 kg para cachorro adulto, vou retirar na loja.','part1'))
 assert.equal(prepared.status,'awaiting_confirmation')
-const grouped=(await status(first)).body.result
-assert.equal(grouped.reply,prepared.reply)
-assert.equal(prepared.savedUserMessages.length,2)
 assert.equal(db(`SELECT count(*) n FROM sales WHERE tenant_id=${q(tenant)}`)[0].n,0)
 const confirmed=await complete(await submit('Confirmo esse pedido para retirada.','confirm'))
 assert.match(confirmed.reply,/1 a 5|estrelas/i)
@@ -64,20 +71,30 @@ const browser=await chromium.launch({headless:true})
 try{
  const page=await browser.newPage({viewport:{width:1440,height:900}})
  const errors=[];page.on('pageerror',e=>errors.push(e.message))
+ const qualityResponses=[];page.on('response',async r=>{if(r.url().includes('/api/chat/quality'))qualityResponses.push(r.request().method()+' '+r.status()+' '+(await r.text().catch(()=>'')).replace(/"customer_name":"[^"]*"/g,'"customer_name":"…"').slice(0,300))})
+ const authResponses=[];page.on('response',async r=>{if(r.url().includes('/api/auth/'))authResponses.push(r.status()+' '+new URL(r.url()).pathname+' '+(await r.text().catch(()=>'')).slice(0,160))})
  await page.goto(base+'/entrar')
  await page.getByLabel('E-mail',{exact:true}).fill(process.env.E2E_EMAIL)
  await page.getByLabel('Senha',{exact:true}).fill(process.env.E2E_PASSWORD)
  await page.locator('form button[type="submit"]').click()
- await page.waitForURL(u=>!u.pathname.startsWith('/entrar'),{timeout:30000})
+ await page.waitForURL(u=>!u.pathname.startsWith('/entrar'),{timeout:30000}).catch(async error=>{
+  // The login form keeps its own message; print it with the auth calls the page made.
+  console.error(JSON.stringify({login_failed:true,url:page.url(),auth:authResponses,alerts:await page.locator('[role="alert"],.text-red-400,.text-danger').allInnerTexts().catch(()=>[]),errors}))
+  throw error
+ })
  await page.goto(base+'/petshop/chat')
  await page.getByRole('button',{name:'Avaliações',exact:true}).first().click()
  const panel=page.getByRole('region',{name:'Controle de qualidade das avaliações'})
  await panel.getByLabel('Nota 5 de 5').waitFor({timeout:30000})
  await panel.getByLabel('Observação da revisão').fill('Revisão de staging: atendimento validado.')
  await panel.getByRole('button',{name:'Marcar como revisado'}).click()
- await panel.getByText('Revisado',{exact:true}).waitFor()
+ await panel.getByText('Revisado',{exact:true}).waitFor().catch(async error=>{
+  // What the panel showed instead, and what the review and list calls answered.
+  console.error(JSON.stringify({review_ui_failed:true,panel:(await panel.innerText().catch(()=>'')).slice(0,800),quality:qualityResponses,errors}))
+  throw error
+ })
  assert.deepEqual(errors,[])
 }finally{await browser.close()}
 const reviewed=(await api('/api/chat/quality')).body.items.find(i=>i.id===thread)
 assert.equal(reviewed.quality_review.status,'reviewed');assert.equal(reviewed.csat_score,5)
-console.log(JSON.stringify({event:'luna.staging.certified',debounceSeconds:10,groupedMessages:2,nativeWorkersAI:true,tenantIsolation:true,qualityUI:true,pendingSales:1,payments:0}))
+console.log(JSON.stringify({event:'luna.staging.certified',debounceSeconds:debounceMs/1000,nativeWorkersAI:true,tenantIsolation:true,qualityUI:true,pendingSales:1,payments:0}))

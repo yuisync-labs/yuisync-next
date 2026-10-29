@@ -10,6 +10,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   staging:
+    permissions:
+      contents: read
+      pull-requests: write
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment: cloudflare-staging
@@ -30,15 +33,33 @@ jobs:
       - run: npm run test --workspace @yuisync/edge-api -- test/chatQualityApi.test.ts test/lunaAiBudget.test.ts
       - run: npm test -- src/lib/internalChatApi.test.js src/lib/lunaTurnPolling.test.js
       - run: npm run build && npm run deploy:dry-run --workspace @yuisync/edge-api
+      - name: Report the staging D1 queries that read the most
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/luna/d1-insights-report.mjs
+          pr=$(gh api "repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${{ github.ref_name }}&state=open" --jq '.[0].number')
+          if [ -n "$pr" ]; then gh pr comment "$pr" --repo "${{ github.repository }}" --body-file d1-insights.md; fi
       - name: Apply additive staging migrations
         working-directory: apps/edge-api
         run: |
           npx wrangler d1 migrations apply DB --env staging --remote
           npx wrangler d1 migrations apply AUTH_DB --env staging --remote
+          # Table statistics let SQLite pick the selective index (phone, client) instead of status.
+          npx wrangler d1 execute DB --env staging --remote --command "PRAGMA optimize=0x10002"
       - name: Prepare disposable authenticated tenants
         run: node scripts/migration/staging-e2e-fixtures.mjs setup
       - name: Read today's account usage
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: node scripts/luna/staging-budget-baseline.mjs
+      - name: Give the staging worker the OpenAI key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        working-directory: apps/edge-api
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then printf '%s' "$OPENAI_API_KEY" | npx wrangler secret put OPENAI_API_KEY --env staging; else echo "OPENAI_API_KEY not set; staging keeps the Workers AI model"; fi
       - name: Deploy staging with a single authorized test tenant
         working-directory: apps/edge-api
         run: >-
@@ -51,9 +72,125 @@ jobs:
         run: npm run edge:smoke -- "$YUISYNC_E2E_BASE_URL"
       - run: npx playwright install --with-deps chromium
       - name: Verify native AI, debounce, permissions and quality UI
-        run: node scripts/luna/staging-think-smoke.mjs
+        run: |
+          set -o pipefail
+          node scripts/luna/staging-think-smoke.mjs 2>&1 | tee smoke.log
+        env:
+          LUNA_INBOX_DEBOUNCE_MS: "10000"
       - name: Enable verified QuatroPatas staging pilot
         run: node scripts/luna/staging-activate-pilot.mjs
+      - name: Report a failed smoke on the pull request
+        if: failure() && hashFiles('smoke.log') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr=$(gh api "repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${{ github.ref_name }}&state=open" --jq '.[0].number')
+          if [ -n "$pr" ]; then printf '## Smoke do staging falhou\n\nNeurons usados hoje antes do deploy: %s\n\n```\n%s\n```\n' "$LUNA_AI_BASELINE_NEURONS" "$(tail -c 3000 smoke.log)" > smoke.md; gh pr comment "$pr" --repo "${{ github.repository }}" --body-file smoke.md; fi
       - name: Clean disposable records
         if: always()
         run: node scripts/migration/staging-e2e-fixtures.mjs cleanup
+  language:
+    permissions:
+      contents: read
+      pull-requests: write
+    # Real-model conversation battery against the code just deployed. It runs only
+    # when .github/luna-language-request.json sets "run": true, one case at a
+    # time, until Workers AI refuses for lack of free daily neurons.
+    needs: staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: cloudflare-staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: gate
+        run: echo "run=$(node -p "JSON.parse(require('fs').readFileSync('.github/luna-language-request.json','utf8')).run===true")" >> "$GITHUB_OUTPUT"
+      - if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - if: steps.gate.outputs.run == 'true'
+        run: npm ci
+      - if: steps.gate.outputs.run == 'true'
+        name: Verify persistent cold-start bridge without Workers AI
+        working-directory: apps/edge-api
+        run: npx vitest run --config vitest.language-fixture.config.ts
+      - if: steps.gate.outputs.run == 'true'
+        name: Run the requested cases until Workers AI refuses for daily neurons
+        working-directory: apps/edge-api
+        run: |
+          export LANG_CASE_IDS=$(node -p "JSON.parse(require('fs').readFileSync('../../.github/luna-language-request.json','utf8')).cases.join(',')")
+          export LANG_MODEL=$(node -p "JSON.parse(require('fs').readFileSync('../../.github/luna-language-request.json','utf8')).model??''")
+          # OpenAI runs spend from the total limit in .github/luna-spend-ledger.json.
+          if [[ "$LANG_MODEL" == openai:* ]]; then export OPENAI_BUDGET_USD=$(cd ../.. && node scripts/luna/budgetLeft.mjs .github/luna-language-request.json); fi
+          npx vitest run --config vitest.language-live.config.ts
+      - if: always() && steps.gate.outputs.run == 'true'
+        name: Report results on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/luna/languageReport.mjs
+          pr=$(gh api "repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${{ github.ref_name }}&state=open" --jq '.[0].number')
+          if [ -n "$pr" ]; then printf '%s\n\n[Execução](%s)\n' "$(cat .artifacts/luna-language/report.md)" "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" > comment.md; gh pr comment "$pr" --repo "${{ github.repository }}" --body-file comment.md; fi
+      - uses: actions/upload-artifact@v6
+        if: always() && steps.gate.outputs.run == 'true'
+        with:
+          name: luna-language-batch-${{ github.run_id }}
+          path: .artifacts/luna-language/
+          if-no-files-found: ignore
+  simulator:
+    permissions:
+      contents: read
+      pull-requests: write
+    # Simulated customers against the real Luna, with the QuatroPatas catalogue.
+    # Runs only when .github/luna-simulator-request.json sets "run": true and the
+    # battery is off, so two paid runs never share the remaining budget.
+    needs: staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    environment: cloudflare-staging
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: gate
+        run: echo "run=$(node -p "JSON.parse(require('fs').readFileSync('.github/luna-simulator-request.json','utf8')).run===true&&JSON.parse(require('fs').readFileSync('.github/luna-language-request.json','utf8')).run!==true")" >> "$GITHUB_OUTPUT"
+      - if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          package-manager-cache: false
+      - if: steps.gate.outputs.run == 'true'
+        run: npm ci
+      - if: steps.gate.outputs.run == 'true'
+        name: Run simulated conversations until the budget is spent
+        working-directory: apps/edge-api
+        run: |
+          r=../../.github/luna-simulator-request.json
+          export OPENAI_BUDGET_USD=$(cd ../.. && node scripts/luna/budgetLeft.mjs .github/luna-simulator-request.json)
+          export SIM_COUNT=$(node -p "JSON.parse(require('fs').readFileSync('$r','utf8')).conversations")
+          export SIM_SEED=$(node -p "JSON.parse(require('fs').readFileSync('$r','utf8')).seed")
+          export LANG_MODEL=$(node -p "JSON.parse(require('fs').readFileSync('$r','utf8')).model")
+          export SIM_CUSTOMER_MODEL=$(node -p "JSON.parse(require('fs').readFileSync('$r','utf8')).customer_model")
+          export SIM_GOALS=$(node -p "(JSON.parse(require('fs').readFileSync('$r','utf8')).goals??[]).join('|')")
+          npx vitest run --config vitest.simulator.config.ts || true
+      - if: always() && steps.gate.outputs.run == 'true'
+        name: Report results on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/luna/simulatorReport.mjs
+          pr=$(gh api "repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${{ github.ref_name }}&state=open" --jq '.[0].number')
+          if [ -n "$pr" ]; then printf '%s\n\n[Execução](%s)\n' "$(cat .artifacts/luna-simulator/report.md)" "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" > comment.md; gh pr comment "$pr" --repo "${{ github.repository }}" --body-file comment.md; fi
+      - uses: actions/upload-artifact@v6
+        if: always() && steps.gate.outputs.run == 'true'
+        with:
+          name: luna-simulator-${{ github.run_id }}
+          path: .artifacts/luna-simulator/
+          if-no-files-found: ignore

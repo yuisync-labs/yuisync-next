@@ -1,0 +1,8 @@
+{
+  "run": false,
+  "conversations": 30,
+  "seed": 1,
+  "budget_usd": 0.45,
+  "model": "openai:gpt-4.1-mini",
+  "customer_model": "gpt-4.1-mini"
+}

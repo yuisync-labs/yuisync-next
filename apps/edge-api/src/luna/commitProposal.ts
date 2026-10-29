@@ -14,7 +14,7 @@ import { saleDeliveryAddressStatement } from '../saleDeliveryAddress'
 import { appointmentScheduleGuardStatement } from '../appointmentScheduleGuard'
 import { validateGroomingMachine } from '../groomingMachinePolicy'
 import { resolveTransportSnapshot } from './transportContract'
-import { naturalConfirmation, namesSummary, confirmationWords, requestsChange } from './confirmationLanguage'
+import { naturalConfirmation, closingConfirmation, scopedConfirmation, namesSummary, confirmationWords, requestsChange, consistentConfirmation } from './confirmationLanguage'
 
 type ProposalRow = {
   id: string
@@ -40,7 +40,7 @@ export function explicitConfirmation(value: string, operationKind: string, fulfi
     normalized=normalized.slice(0,fulfillment.index)
   }
   normalized=normalized.replace(/^confirmo (?:esse|este) /,'confirmo o ').replace(/^confirmo (?:essa|esta) /,'confirmo a ')
-  if (/^(sim|confirmo|confirmado|ok|certo|fechado|pode confirmar|pode agendar|pode fechar)[.! ]*$/.test(normalized)) return true
+  if (/^(sim|s|ss|confirmo|confirmado|ok|certo|fechado|pode confirmar|pode agendar|pode fechar)[.! ]*$/.test(normalized)) return true
   if (/^(?:(?:sim|confirmo)[!, ]+(?:pode|pode (?:fechar|confirmar|agendar)|pix|no pix|dinheiro|no dinheiro)|pode (?:fechar|confirmar|agendar)(?: sim)?|pode ser|fechamos|confirmo sim)[.! ]*$/.test(normalized)) return true
   // This is a narrow authorization grammar, not a conversational classifier.
   // Named confirmations must match the operation actually presented. Any
@@ -56,7 +56,7 @@ export function explicitConfirmation(value: string, operationKind: string, fulfi
   return (subjects[operationKind] ?? []).some(subject => phrase === `confirmo ${subject}`)
 }
 
-async function latestConfirmation(database: D1Database, context: LunaExecutionContext, proposal: ProposalRow): Promise<boolean> {
+async function latestConfirmation(database: D1Database, context: LunaExecutionContext, proposal: ProposalRow, others: ProposalRow[] = []): Promise<boolean> {
   const ids=[...new Set(context.sourceMessageIds??[context.sourceMessageId])]
   if (ids.includes(proposal.source_message_id)||ids.length>50||!ids.includes(context.sourceMessageId)) return false
   const messages = await database.prepare(`
@@ -69,9 +69,11 @@ async function latestConfirmation(database: D1Database, context: LunaExecutionCo
   const confirmation=messages.results.map(m=>m.content_text.trim()).join(' '),message=messages.results.at(-1)!
   const payload=record(JSON.parse(proposal.payload_json))
   const pending=await database.prepare("SELECT COUNT(*) count FROM luna_proposals WHERE tenant_id=? AND module_id=? AND conversation_id=? AND status='awaiting_confirmation' AND expires_at_ms>=?").bind(context.tenantId,context.moduleId,context.conversationId,lunaNow(context)).first<{count:number}>()
-  const single=Number(pending?.count)<=1
+  // A scoped confirmation names this summary and defers every other pending one.
+  const scoped=others.length>0&&scopedConfirmation(confirmation,{operation_kind:proposal.operation_kind,payload},others.map(o=>({operation_kind:o.operation_kind,payload:record(JSON.parse(o.payload_json))})))
+  const single=scoped||Number(pending?.count)<=1
   // A natural restatement is accepted only while exactly one summary is pending.
-  const natural=single&&naturalConfirmation(confirmation,proposal.operation_kind,payload)
+  const natural=scoped||single&&(naturalConfirmation(confirmation,proposal.operation_kind,payload)||closingConfirmation(confirmation,proposal.operation_kind,payload)||consistentConfirmation(confirmation,proposal.operation_kind,payload,lunaNow(context)))
   if (!natural&&!explicitConfirmation(confirmation, proposal.operation_kind, text(payload.fulfillment_type))) return false
   if(!single&&explicitConfirmation(confirmation,''))return false
   const presentation = await database.prepare(`SELECT outbound_message_id,presented_at_ms FROM luna_proposal_presentations
@@ -86,8 +88,20 @@ async function latestConfirmation(database: D1Database, context: LunaExecutionCo
     .bind(context.tenantId, context.moduleId, context.conversationId, JSON.stringify(messages.results.map(m=>m.id)), presentation.outbound_message_id, presentation.presented_at_ms, message.created_at_ms).all<{ id: string; direction: string; actor_type: string; content_text: string }>()
   const other = await database.prepare(`SELECT proposal_id FROM luna_proposal_presentations WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND (outbound_message_id=?4 OR presented_at_ms>?6) AND proposal_id<>?5 LIMIT 1`)
     .bind(context.tenantId, context.moduleId, context.conversationId, presentation.outbound_message_id, proposal.id, presentation.presented_at_ms).first()
-  if (other) return false
+  if (other && !scoped) return false
   if (!intervening.results.length) return true
+  // The customer already said yes and Luna only asked again for confirmation:
+  // the repeated yes still confirms this summary.
+  const confirms = (value: string) => naturalConfirmation(value, proposal.operation_kind, payload) || closingConfirmation(value, proposal.operation_kind, payload) || consistentConfirmation(value, proposal.operation_kind, payload, lunaNow(context)) || explicitConfirmation(value, proposal.operation_kind, text(payload.fulfillment_type))
+  if (single && intervening.results.length <= 6 && intervening.results.some(m => m.direction === 'inbound')
+    && intervening.results.every(m => m.direction === 'outbound' ? m.actor_type === 'assistant' && /confirm/i.test(m.content_text) && !/\b(?:quer|deseja|gostaria)\b(?![^?]*confirm)/i.test(m.content_text) : m.actor_type === 'customer' && confirms(m.content_text))) return true
+  // "ok, confirmo" after hesitation ("talvez") or a refused discount: the word
+  // "confirmo" itself, with this summary still the only one waiting, confirms it.
+  // A requested change (time, item, quantity) still suspends it.
+  const words = confirmationWords(confirmation)
+  const haggle = (value: string) => /\bdesconto|\bmais barat|\babaix|\d+ ?%|\bregras?\b|\bpromo/.test(value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase())
+  if (single && words.length <= 8 && words.some(w => /^confirm(?:o|a|ado|ada|ar)$/.test(w)) && !words.includes('nao') && !requestsChange(confirmation)
+    && intervening.results.length <= 10 && intervening.results.every(m => m.direction === 'outbound' ? m.actor_type === 'assistant' : m.actor_type === 'customer' && (!requestsChange(m.content_text) || haggle(m.content_text)))) return true
   // A bare "sim" may answer whatever was asked in between. A confirmation that
   // names the summary survives only hesitation from the customer and Luna's
   // replies, never a requested change, a human/system message or a long detour.
@@ -119,7 +133,7 @@ export async function reconcileProposalOperation(database: D1Database, context: 
     existing = await database.prepare(`SELECT id FROM sales WHERE tenant_id=?1 AND module_id=?2 AND operation_key=?3 LIMIT 1`)
       .bind(context.tenantId, context.moduleId, operationKey).first<{ id: string }>()
   } else if (proposal.operation_kind.endsWith('_registration')) {
-    const receipt = await database.prepare(`SELECT pet_id AS id FROM luna_registration_receipts WHERE tenant_id=?1 AND module_id=?2 AND proposal_id=?3`).bind(context.tenantId,context.moduleId,proposal.id).first<{ id: string }>()
+    const receipt = await database.prepare(`SELECT COALESCE(pet_id,customer_id) AS id FROM luna_registration_receipts WHERE tenant_id=?1 AND module_id=?2 AND proposal_id=?3`).bind(context.tenantId,context.moduleId,proposal.id).first<{ id: string }>()
     existing = receipt
   }
   if (!existing) return { ok: false, code: 'COMMIT_STATE_UNCERTAIN', retryable: false }
@@ -174,7 +188,7 @@ async function commitAppointment(database: D1Database, context: LunaExecutionCon
   const duration = catalog.items.reduce((sum, item) => sum + Number(item.duration_min || 0), 0)
   const availability = await validateScheduleAvailability({
     database, tenantId: context.tenantId, moduleId: context.moduleId, nowMs: lunaNow(context),
-    scheduledAtMs, durationMinutes: duration,
+    scheduledAtMs, durationMinutes: duration, serviceNames: catalog.items.map(item => item.name),
   })
   if (!availability.ok) return { ok: false, code: availability.code, retryable: false }
   const transport=payload.transport?await resolveTransportSnapshot(database,context,petId,scheduledAtMs,duration,payload.transport):null
@@ -202,6 +216,10 @@ async function commitAppointment(database: D1Database, context: LunaExecutionCon
   const body = await response.json() as { data?: { appointment_id?: string; idempotent?: boolean }; code?: string }
   if (!response.ok || !body.data?.appointment_id) return { ok: false, code: body.code || 'APPOINTMENT_COMMIT_FAILED', retryable: response.status >= 500 }
   await markProposal(database, context, proposal.id, 'completed', body.data.appointment_id)
+  // The weight the customer told Luna fills the pet's record when it was empty.
+  const saidWeight = Number(/Peso informado pelo cliente: (\d{1,3}(?:[.,]\d{1,2})?) kg/.exec(text(payload.notes))?.[1]?.replace(',', '.'))
+  if (pet.weight_kg == null && saidWeight > 0) await database.prepare(`UPDATE pets SET weight_kg=?4,updated_at_ms=?5 WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND weight_kg IS NULL`)
+    .bind(context.tenantId, context.moduleId, petId, saidWeight, Date.now()).run()
   return { ok: true, data: { operation_id: body.data.appointment_id, operation_kind: 'appointment_create', idempotent: Boolean(body.data.idempotent) } }
 }
 
@@ -385,7 +403,10 @@ export async function commitConfirmedProposal(database: D1Database, context: Lun
     await markProposal(database, context, proposal.id, 'invalidated')
     return { ok: false, code: 'PROPOSAL_EXPIRED', retryable: false }
   }
-  if (!await latestConfirmation(database, context, proposal)) return { ok: false, code: 'CONFIRMATION_REQUIRED', retryable: false }
+  const others = await database.prepare(`SELECT id,operation_kind,status,version,payload_json,fingerprint,source_message_id,expires_at_ms,committed_operation_id FROM luna_proposals
+    WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND status='awaiting_confirmation' AND expires_at_ms>=?4 AND id<>?5 LIMIT 3`)
+    .bind(context.tenantId, context.moduleId, context.conversationId, lunaNow(context), proposal.id).all<ProposalRow>()
+  if (!await latestConfirmation(database, context, proposal, others.results)) return { ok: false, code: 'CONFIRMATION_REQUIRED', retryable: false }
   const claimed = await database.prepare(`UPDATE luna_proposals SET status='executing',updated_at_ms=?6 WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND id=?4 AND version=?5 AND status='awaiting_confirmation' RETURNING id`)
     .bind(context.tenantId, context.moduleId, context.conversationId, proposal.id, proposalVersion, lunaNow(context)).first()
   if (!claimed) return getProposalOperationStatus(database, context, proposal.id)
@@ -417,12 +438,15 @@ export async function commitConfirmedProposal(database: D1Database, context: Lun
 // letting the model choose between re-drafting and committing.
 export async function findConfirmationTarget(database: D1Database, context: LunaExecutionContext): Promise<{ proposal_id: string; proposal_version: number } | null> {
   const rows = await database.prepare(`SELECT id,operation_kind,status,version,payload_json,fingerprint,source_message_id,expires_at_ms,committed_operation_id FROM luna_proposals
-    WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND status='awaiting_confirmation' AND expires_at_ms>=?4 LIMIT 2`)
+    WHERE tenant_id=?1 AND module_id=?2 AND conversation_id=?3 AND status='awaiting_confirmation' AND expires_at_ms>=?4 LIMIT 4`)
     .bind(context.tenantId, context.moduleId, context.conversationId, lunaNow(context)).all<ProposalRow>()
-  if (rows.results.length !== 1) return null
-  const proposal = rows.results[0]
-  try {
-    if (!await proposalCustomerAuthorized(database, context, proposal.operation_kind, record(JSON.parse(proposal.payload_json)))) return null
-    return await latestConfirmation(database, context, proposal) ? { proposal_id: proposal.id, proposal_version: proposal.version } : null
-  } catch { return null }
+  const targets: ProposalRow[] = []
+  for (const proposal of rows.results) {
+    try {
+      if (!await proposalCustomerAuthorized(database, context, proposal.operation_kind, record(JSON.parse(proposal.payload_json)))) continue
+      if (await latestConfirmation(database, context, proposal, rows.results.filter(r => r.id !== proposal.id))) targets.push(proposal)
+    } catch { /* not a target */ }
+  }
+  // Exactly one summary may be selected; two matches mean the message is ambiguous.
+  return targets.length === 1 ? { proposal_id: targets[0].id, proposal_version: targets[0].version } : null
 }

@@ -72,9 +72,17 @@ const DEFAULT_MESSAGE_TEMPLATES = {
   dental_brushing: '🦷 **Escovação Dental**\n\n🪥 Utilizando material do cliente (escova e creme dental):\n💰 **R$ 8,00**\n\n🪥 Utilizando material da empresa (escova e creme dental):\n💰 **R$ 10,00**',
 }
 
+// The only stored messages Luna reads; the other templates stay saved but hidden.
+const LUNA_MESSAGE_TEMPLATE_LABELS = {
+  monthly_plan: 'Regras do pacote mensal',
+  payment_proof_request: 'Pedido de comprovante do PIX',
+}
+
 const OPERATIONAL_STAFF_TEMPLATE_KEY = '__petshop_operational_staff'
 
 const INITIAL_FORM = {
+  luna_hidden_service_ids: [],
+  luna_service_options: [],
   store_name: '',
   store_address: '',
   store_neighborhood: '',
@@ -103,6 +111,7 @@ const INITIAL_FORM = {
   petbot_slot_interval_min: '30',
   petbot_booking_lead_time_min: '15',
   petbot_booking_capacity: '2',
+  petbot_tosa_load: '1',
   veterinary_name: DEFAULT_VETERINARY_NAME,
   veterinary_business_hours: DEFAULT_VETERINARY_BUSINESS_HOURS,
   petshop_operational_staff: DEFAULT_PETSHOP_OPERATIONAL_STAFF,
@@ -305,6 +314,7 @@ export default function SettingsPage() {
     setPetSettingsTab('geral')
   }, [effectiveModId, activeTenantId])
 
+
   useEffect(() => {
     if (!effectiveModId) {
       setLoading(false)
@@ -361,6 +371,7 @@ export default function SettingsPage() {
           petbot_slot_interval_min: data.petbot_slot_interval_min != null ? String(data.petbot_slot_interval_min) : '30',
           petbot_booking_lead_time_min: data.petbot_booking_lead_time_min != null ? String(data.petbot_booking_lead_time_min) : '15',
           petbot_booking_capacity: data.petbot_booking_capacity != null ? String(data.petbot_booking_capacity) : '2',
+          petbot_tosa_load: data.petbot_tosa_load != null ? String(data.petbot_tosa_load) : '1',
           veterinary_name: data.veterinary_name || DEFAULT_VETERINARY_NAME,
           veterinary_business_hours: normalizeBusinessHours(data.veterinary_business_hours, DEFAULT_VETERINARY_BUSINESS_HOURS),
           petshop_operational_staff: normalizeOperationalStaff(data.petshop_operational_staff ?? data.message_templates?.[OPERATIONAL_STAFF_TEMPLATE_KEY]),
@@ -375,6 +386,8 @@ export default function SettingsPage() {
           pix_holder_name: data.pix_holder_name || '',
           pet_transport_options: normalizeTransportOptions(data.pet_transport_options),
           message_templates: normalizeTemplates(data.message_templates),
+          luna_hidden_service_ids: Array.isArray(data.luna_hidden_service_ids) ? data.luna_hidden_service_ids.map(String) : [],
+          luna_service_options: Array.isArray(data.luna_service_options) ? data.luna_service_options : [],
         }
       }
 
@@ -536,7 +549,7 @@ export default function SettingsPage() {
 
     try {
       const upsertResponse = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
-        const { petshop_delivery_staff: _deliveryStaff, ...persistableForm } = form
+        const { petshop_delivery_staff: _deliveryStaff, luna_service_options: _lunaServices, ...persistableForm } = form
         const row = buildTenantPayload({
           module_id: effectiveModId,
           ...persistableForm,
@@ -553,6 +566,7 @@ export default function SettingsPage() {
           petbot_slot_interval_min: Math.max(5, Number(form.petbot_slot_interval_min || 30)),
           petbot_booking_lead_time_min: Math.max(0, Number(form.petbot_booking_lead_time_min || 15)),
           petbot_booking_capacity: Math.max(1, Math.min(4, Number(form.petbot_booking_capacity || 2))),
+          petbot_tosa_load: Math.max(1, Math.min(4, Number(form.petbot_tosa_load || 1))),
           veterinary_name: String(form.veterinary_name || DEFAULT_VETERINARY_NAME).trim(),
           veterinary_business_hours: normalizeBusinessHours(form.veterinary_business_hours, DEFAULT_VETERINARY_BUSINESS_HOURS),
           petshop_operational_staff: normalizeOperationalStaff(form.petshop_operational_staff),
@@ -588,6 +602,7 @@ export default function SettingsPage() {
           delete fallbackRow.appointment_reminder_enabled
           delete fallbackRow.appointment_reminder_lead_min
           delete fallbackRow.appointment_reminder_template_name
+          delete fallbackRow.luna_hidden_service_ids
           return supabase.from('settings').upsert(fallbackRow, { onConflict: conflict })
         }
         return firstTry
@@ -1087,7 +1102,7 @@ export default function SettingsPage() {
                     <p className="text-xs text-muted">Funcionamento define quando a loja está aberta. Agendamentos define os horários de início que a Luna pode oferecer.</p>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="md:col-span-2">
                     <label className="inp-label">Fuso horário</label>
                     <input
@@ -1121,6 +1136,19 @@ export default function SettingsPage() {
                       disabled={!canEdit}
                       value={form.petbot_booking_capacity}
                       onChange={(event) => setForm((prev) => ({ ...prev, petbot_booking_capacity: event.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="inp-label" title="Quantas vagas da capacidade simultânea uma tosa ocupa. Ex.: capacidade 4 e tosa 3 = 4 banhos ou 1 tosa + 1 banho no mesmo horário.">Vagas que uma tosa ocupa</label>
+                    <input
+                      className="inp"
+                      type="number"
+                      min="1"
+                      max="4"
+                      step="1"
+                      disabled={!canEdit}
+                      value={form.petbot_tosa_load}
+                      onChange={(event) => setForm((prev) => ({ ...prev, petbot_tosa_load: event.target.value }))}
                     />
                   </div>
                   <div>
@@ -1184,14 +1212,14 @@ export default function SettingsPage() {
                   <Stethoscope size={16} />
                   <div>
                     <h4 className="font-bold">Atendimento veterinário</h4>
-                    <p className="text-xs text-muted">Nome exibido e horários independentes da agenda de banho e tosa.</p>
+                    <p className="text-xs text-muted">Nome exibido nos atendimentos.</p>
                   </div>
                 </div>
                 <div>
                   <label className="inp-label">Nome da veterinária</label>
                   <input className="inp" disabled={!canEdit} value={form.veterinary_name} onChange={(event) => setForm((prev) => ({ ...prev, veterinary_name: event.target.value }))} />
                 </div>
-                <div className="space-y-3">
+                <div className="hidden">
                   {PETBOT_WEEKDAYS.map(([weekday, label]) => {
                     const periods = normalizeBusinessHours(form.veterinary_business_hours, DEFAULT_VETERINARY_BUSINESS_HOURS)[weekday] || []
                     const open = periods[0]?.open || '13:00'
@@ -1300,7 +1328,7 @@ export default function SettingsPage() {
               <div className="bg-card border border-white/5 rounded-3xl p-8 shadow-sm space-y-6">
                 <div className="flex items-center gap-2">
                   <Clock size={16} />
-                  <div><h4 className="font-bold">Duração dos serviços</h4><p className="text-xs text-muted">Tempos usados pela Luna para bloquear conflitos reais na agenda.</p></div>
+                  <div><h4 className="font-bold">Duração dos serviços</h4><p className="text-xs text-muted">Tempos usados pela agenda do painel para bloquear conflitos.</p></div>
                 </div>
                 {Object.entries(normalizeServiceDurations(form.petshop_service_durations)).map(([rangeKey, row]) => (
                   <div key={rangeKey} className="rounded-2xl border border-white/5 bg-white/[0.02] p-4 space-y-3">
@@ -1314,7 +1342,7 @@ export default function SettingsPage() {
                 ))}
               </div>
 
-              <div className="bg-card border border-white/5 rounded-3xl p-8 shadow-sm space-y-5">
+              <div className="hidden">
                 <div className="flex items-center gap-2"><Phone size={16}/><div><h4 className="font-bold">Lembrete de chegada pelo WhatsApp</h4><p className="text-xs text-muted">Preparação para template de utilidade aprovado pela Meta. O envio automático permanece desligado até a homologação.</p></div></div>
                 <label className="flex items-center gap-2 text-sm text-muted"><input type="checkbox" disabled={!canEdit} checked={Boolean(form.appointment_reminder_enabled)} onChange={(event) => setForm((prev) => ({ ...prev, appointment_reminder_enabled: event.target.checked }))} />Ativar quando o template estiver aprovado</label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1357,7 +1385,7 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <div className={showGeneralSettings ? 'space-y-4 order-5' : 'hidden'}>
+            <div className="hidden">
               <h3 className="text-xs font-black text-muted uppercase tracking-[0.2em] flex items-center gap-2">
                 <Bot size={14} /> PetBot e automação
               </h3>
@@ -1381,7 +1409,7 @@ export default function SettingsPage() {
                   <p className="text-xs text-muted mt-3">Edite apenas ajustes pontuais. Estoque, agenda e dados da loja continuam vindo do banco.</p>
                 </div>
               </details>
-              <div className="bg-card border border-white/5 rounded-3xl p-8 shadow-sm space-y-4">
+              <div className="hidden">
                 <div>
                   <label className="inp-label">Autonomia do PetBot</label>
                   <select
@@ -1477,19 +1505,45 @@ export default function SettingsPage() {
               <details className="bg-card border border-white/5 rounded-3xl p-6 shadow-sm group">
                 <summary className="cursor-pointer list-none flex items-center justify-between gap-4">
                   <div>
-                    <p className="text-sm font-bold text-text">Editar mensagens automáticas</p>
-                    <p className="text-xs text-muted mt-1">Banho, consulta, MotoDog, confirmações e demais textos aprovados.</p>
+                    <p className="text-sm font-bold text-text">Editar mensagens e serviços da Luna</p>
+                    <p className="text-xs text-muted mt-1">Textos que a Luna usa: regras do pacote mensal e pedido de comprovante do PIX. Preços vêm sempre do cadastro.</p>
                   </div>
                   <span className="text-xs font-bold text-muted group-open:rotate-180 transition-transform">⌄</span>
                 </summary>
                 <div className="pt-6 mt-5 border-t border-white/5 grid grid-cols-1 md:grid-cols-2 gap-5">
-                  {Object.entries(normalizeTemplates(form.message_templates)).map(([key, value]) => (
+                  {Object.entries(LUNA_MESSAGE_TEMPLATE_LABELS).map(([key, label]) => [key, label, normalizeTemplates(form.message_templates)[key]]).map(([key, label, value]) => (
                     <div key={key} className="space-y-2">
-                      <label className="inp-label">{key.replaceAll('_', ' ')}</label>
+                      <label className="inp-label">{label}</label>
                       <textarea className="inp min-h-[110px] resize-y" disabled={!canEdit} value={value} onChange={(event) => updateTemplate(key, event.target.value)} />
                     </div>
                   ))}
                 </div>
+                {form.luna_service_options.length > 0 && (
+                  <div className="pt-6 mt-6 border-t border-white/5 space-y-3">
+                    <div>
+                      <p className="text-sm font-bold text-text">Serviços que a Luna não oferece</p>
+                      <p className="text-xs text-muted mt-1">Marque os serviços que a Luna não deve citar nem agendar. Eles continuam disponíveis para a equipe.</p>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {form.luna_service_options.map((service) => (
+                        <label key={service.id} className="flex items-center gap-3 text-sm text-text">
+                          <input
+                            type="checkbox"
+                            disabled={!canEdit}
+                            checked={form.luna_hidden_service_ids.includes(String(service.id))}
+                            onChange={(event) => setForm((current) => ({
+                              ...current,
+                              luna_hidden_service_ids: event.target.checked
+                                ? [...new Set([...current.luna_hidden_service_ids, String(service.id)])]
+                                : current.luna_hidden_service_ids.filter((id) => id !== String(service.id)),
+                            }))}
+                          />
+                          {service.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </details>
             </div>
 
@@ -1497,7 +1551,7 @@ export default function SettingsPage() {
             {showFiscalSettings && (
               <div className="col-span-1 md:col-span-2 space-y-4">
                 <h3 className="text-xs font-black text-emerald-500 uppercase tracking-[0.2em] flex items-center gap-2">
-                  <FileText size={14} /> Emissao fiscal automatica
+                  <FileText size={14} /> Emissão fiscal
                 </h3>
                 <div className="bg-card border border-emerald-500/20 rounded-3xl p-8 shadow-sm space-y-7">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1568,7 +1622,7 @@ export default function SettingsPage() {
                         placeholder="1"
                       />
                     </div>
-                    <div>
+                    <div className="hidden">
                       <label className="inp-label">Documento padrao na venda</label>
                       <select
                         className="inp"
@@ -1584,7 +1638,7 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <label className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
+                    <label className="hidden">
                       <div>
                         <p className="text-sm font-bold text-text">Emitir automaticamente ao concluir venda</p>
                         <p className="text-xs text-muted">Quando ativo, o PDV ja gera documento fiscal automaticamente.</p>
@@ -1634,7 +1688,7 @@ export default function SettingsPage() {
                         </p>
                       )}
                     </div>
-                    <div>
+                    <div className="hidden">
                       <label className="inp-label">Observacoes fiscais</label>
                       <input
                         className="inp"
@@ -1646,7 +1700,7 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  <div className="space-y-4">
+                  <div className="hidden">
                     <p className="text-xs font-black text-muted uppercase tracking-[0.2em] flex items-center gap-2">
                       <Building2 size={14} /> Dados do emissor
                     </p>

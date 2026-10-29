@@ -195,7 +195,7 @@ export default function DashboardPage({ setPage }) {
   }, [load, loadSessions, getDailyStats, scheduleSecondaryContent])
 
   useEffect(() => {
-    const intervalMs = isFluidMode ? 120_000 : 60_000
+    const intervalMs = isFluidMode ? 300_000 : 120_000
     const refreshWhenVisible = () => {
       if (!document.hidden) void reloadAll()
     }

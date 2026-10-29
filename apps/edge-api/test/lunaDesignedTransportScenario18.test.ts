@@ -8,12 +8,15 @@ describe('designed scenario 18 — real Worker/local D1/simulated provider',()=>
   const at='2026-10-07T12:00:00Z',address={city:'Cidade Teste',address:'Rua Teste, 20',reference:'portão azul'}
   try{
    await h.db.batch(['both','pickup'].map(id=>h.db.prepare(`INSERT INTO transport_options(tenant_id,module_id,id,label,fee_cents,max_weight_grams,pickup_required,dropoff_required,outside_city,status,sort_order) VALUES(?1,'petshop',?2,?3,?4,20000,1,?5,0,'active',1)`).bind(h.tenant,id,id==='both'?'MotoDog buscar e levar':'MotoDog só buscar',id==='both'?2000:1000,id==='both'?1:0)))
+   // A store that tracks MotoDog capacity but has no window at that time is refused.
+   await h.db.batch([
+    h.db.prepare(`INSERT INTO transport_resources VALUES(?1,'petshop','bike',1,'active')`).bind(h.tenant),
+    ...['both','pickup'].map(id=>h.db.prepare(`INSERT INTO transport_option_resources VALUES(?1,'petshop',?2,'bike')`).bind(h.tenant,id)),
+   ])
    const transportOrder=c('prepare_appointment',{customer_id:f.customer,pet_id:'mel',service_ids:['banho'],scheduled_at:at,notes:null,transport:{...address,option_id:'both'}})
    const unavailable=await peerRuntime({tenantId:h.tenant,conversationId:'unconfigured-transport',phone:f.phone,step:1,message:'Quero banho da Mel amanhã às 09h com MotoDog.',command:transportOrder,now:h.start,expectedFailures:['TRANSPORT_CAPACITY_UNAVAILABLE']})
    expect(unavailable.result.proposalIds).toEqual([])
    await h.db.batch([
-    h.db.prepare(`INSERT INTO transport_resources VALUES(?1,'petshop','bike',1,'active')`).bind(h.tenant),
-    ...['both','pickup'].map(id=>h.db.prepare(`INSERT INTO transport_option_resources VALUES(?1,'petshop',?2,'bike')`).bind(h.tenant,id)),
     h.db.prepare(`INSERT INTO transport_availability_windows VALUES(?1,'petshop','window','bike',?2,?3,1)`).bind(h.tenant,Date.parse(at),Date.parse('2026-10-07T15:00:00Z')),
    ])
    await h.turn(1,s.messages[0],[[c('get_customer_context',{}),c('search_services',{query:'banho'}),c('get_transport_quote',{pet_id:'mel',city:'Cidade Teste'}),d('booking','booking','set_field',{field:'pet_id',value:'mel'}),d('booking','booking','add_item',{itemId:'banho',quantity:1}),d('booking','booking','set_field',{field:'transport_mode',value:'both'}),c('get_available_slots',{service_ids:['banho'],starts_at:at,ends_at:'2026-10-07T15:00:00Z'})],results=>{

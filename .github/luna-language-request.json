@@ -1,0 +1,12 @@
+{
+  "run": false,
+  "cases": [
+    "FLOW-15-3",
+    "FLOW-15-6",
+    "FLOW-15-2",
+    "FLOW-14-2",
+    "FLOW-01-1"
+  ],
+  "reason": "agent_battery_retest_12_round2",
+  "model": "openai:gpt-4.1-mini"
+}

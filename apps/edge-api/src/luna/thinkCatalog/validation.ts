@@ -8,11 +8,14 @@ export function authorizedCatalogRemoval(before:Preferences,remove:readonly (key
  const allowed=remove.filter(key=>before[key]!=null&&consent&&dimensions[key]?.test(source))
  return {allowed,blocked:remove.filter(key=>before[key]!=null&&!allowed.includes(key))}
 }
+// The porte a breed says (kai, 29/10: "shih tzu tem as rações de porte pequeno").
+// Only breeds whose size is not in doubt; "golden" alone is also a feed brand.
+export const BREED_SIZES:Record<string,RegExp>={small:/\b(shih ?tzu|shitzu|yorkshire|york|yorkie|lhasa|maltes|pinscher|spitz|lulu|chihuahua|pug|dachshund|salsicha|teckel|bichon|pequines|poodle toy)\b/,medium:/\b(beagle|cocker|border collie|basset|schnauzer)\b/,large:/\b(labrador|golden retriever|pastor|rottweiler|boxer|dalmata|doberman|akita|husky)\b/};
 export function validateCatalogChanges(before:Preferences,changes:Record<string,unknown>,text:string,refinementField?:keyof Preferences){
  const source=normalized(text);
  if(changes.animalSize!=null){
   const explicit:Record<string,RegExp>={small:/\b(pequen[oa]s?|mini|small)\b/,medium:/\b(medi[oa]s?|medium)\b/,large:/\b(grandes?|large)\b/,giant:/\b(gigantes?|giant)\b/};
-  if(!explicit[String(changes.animalSize)]?.test(source))throw Error('Peso do pet não define porte nem medida do produto. animalSize exige porte explicitamente informado; não converta 12 kg em medium.');
+  if(!explicit[String(changes.animalSize)]?.test(source)&&!BREED_SIZES[String(changes.animalSize)]?.test(source))throw Error('Peso do pet não define porte nem medida do produto. animalSize exige porte dito ou uma raça de porte conhecido (do cliente ou do pet cadastrado); não converta 12 kg em medium.');
  }
  if(changes.anyWeight===true&&!/\b(peso|pesos|kg|quilos?|gramas?|tamanhos?)\b/.test(source)&&refinementField!=='packageWeightGrams')throw Error('Qualquer marca não significa qualquer peso. anyWeight deve ser null sem dispensa explícita de peso.');
  if(changes.sizeLabel!=null&&!new RegExp(`\\b${String(changes.sizeLabel).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\\b`,'i').test(source))throw Error('sizeLabel deve ser tamanho literalmente informado. Não suponha P para filhote.');

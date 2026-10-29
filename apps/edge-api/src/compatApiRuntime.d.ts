@@ -37,3 +37,4 @@ export function selectRows(
   body: Record<string, unknown>,
   scope: CompatChatScope,
 ): Promise<{ rows: Record<string, unknown>[]; count: number | null }>
+export function mutateSettings(db: D1Database, raw: Record<string, unknown>, scope: CompatChatScope): Promise<unknown>

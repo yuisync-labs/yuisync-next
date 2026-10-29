@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import {ensureFoodClassified} from './autoClassify';
 import {classificationFields,profileJoin,profileColumns,foodSaleForm,addClassificationFilters,chooseRefinement,type Refinement} from './classification';
 export const preferencesSchema=z.object({
  ...classificationFields,
@@ -49,6 +50,14 @@ export function applyPreferences(memory:Memory,input:unknown,userText:string,mes
  const changed=reset||[...new Set([...Object.keys(memory.preferences),...Object.keys(preferences)])].some(key=>memory.preferences[key as keyof Preferences]!==preferences[key as keyof Preferences]);
  return {preferences,evidence:sources,lastProductIds:changed?[]:memory.lastProductIds,unrestricted:[...unrestricted],refinement:reset||typeChanged||speciesChanged||subtypeChanged?undefined:memory.refinement};
 }
+// Names match without accents or plural endings: "saches" finds "Sachê".
+const ACCENTS:[string,string][]=[['á','a'],['à','a'],['â','a'],['ã','a'],['é','e'],['ê','e'],['í','i'],['ó','o'],['ô','o'],['õ','o'],['ú','u'],['ü','u'],['ç','c']].flatMap(([from,to])=>[[from,to],[from.toUpperCase(),to]] as [string,string][]);
+const foldedName=ACCENTS.reduce((sql,[from,to])=>`REPLACE(${sql},'${from}','${to}')`,'LOWER(p.name)');
+export function nameTerms(keyword:string){
+ const w=keyword.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();
+ if(w.length<=3||!w.endsWith('s'))return w?[w]:[];
+ return [w,w.endsWith('oes')||w.endsWith('aes')?w.slice(0,-3)+'ao':w.endsWith('ais')?w.slice(0,-2)+'l':w.slice(0,-1)];
+}
 const code=(s:string)=>s.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
 export const searchSchema=z.object({offset:z.number().int().min(0).max(30).optional().describe('0 inicialmente; 3,6 etc. somente para pedir mais opções.')}).strict();
 export function buildCatalogQuery(p:Preferences,keywords:readonly string[]=[],includeUnknownSpecies=false,tenantId:string){
@@ -58,27 +67,33 @@ export function buildCatalogQuery(p:Preferences,keywords:readonly string[]=[],in
  for(const [column,value] of [['product_type',p.productType],['life_stage',p.lifeStage],['package_weight_grams',p.packageWeightGrams]] as const){if(value!=null){conditions.push(`${column==='package_weight_grams'?'COALESCE(x.net_weight_grams,a.package_weight_grams)':`COALESCE(x.${column},a.${column})`}=?`);params.push(value);}}
  if(p.saleForm){conditions.push(`${foodSaleForm}=?`);params.push(p.saleForm);}
  if(p.brand){const brand=code(p.brand);params.push(brand==='wiskas'?'whiskas':brand);
-  if(p.productName){conditions.push("(COALESCE(x.brand_code,a.brand_code)=? OR (COALESCE(x.brand_code,a.brand_code) IS NULL AND p.name LIKE ? ESCAPE '\\'))");params.push('%'+p.brand.replace(/[\\%_]/g,'\\$&')+'%');}
-  else conditions.push('COALESCE(x.brand_code,a.brand_code)=?');
+  // A classified brand can be cut short ("Special" for Special Dog): the brand
+  // said by the customer inside the product name also counts.
+  conditions.push(`(COALESCE(x.brand_code,a.brand_code)=? OR ${foldedName} LIKE ? ESCAPE '\\')`);params.push('%'+p.brand.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().replace(/[\\%_]/g,'\\$&')+'%');
  }
  if(p.species){
   const profile="SELECT 1 FROM catalog_product_profile_species s WHERE s.tenant_id=p.tenant_id AND s.module_id=p.module_id AND s.product_id=p.id",legacy="SELECT 1 FROM catalog_product_species s WHERE s.tenant_id=p.tenant_id AND s.module_id=p.module_id AND s.product_id=p.id";
   conditions.push(`(EXISTS(${profile} AND s.species=?) OR (NOT EXISTS(${profile}) AND EXISTS(${legacy} AND s.species=?))${includeUnknownSpecies?` OR (NOT EXISTS(${profile}) AND NOT EXISTS(${legacy}))`:''})`);params.push(p.species,p.species);
  }
- if(p.animalSize){conditions.push('EXISTS(SELECT 1 FROM catalog_product_sizes s WHERE s.tenant_id=a.tenant_id AND s.module_id=a.module_id AND s.product_id=a.product_id AND s.animal_size=?)');params.push(p.animalSize);}
+ // "RAÇAS PEQUENAS" in the name says the size when no size row was classified.
+ if(p.animalSize){const word={small:'pequen',medium:'medi',large:'grande',giant:'gigante'}[p.animalSize];conditions.push(`(EXISTS(SELECT 1 FROM catalog_product_sizes s WHERE s.tenant_id=a.tenant_id AND s.module_id=a.module_id AND s.product_id=a.product_id AND s.animal_size=?) OR (NOT EXISTS(SELECT 1 FROM catalog_product_sizes s WHERE s.tenant_id=a.tenant_id AND s.module_id=a.module_id AND s.product_id=a.product_id) AND ${foldedName} LIKE ?))`);params.push(p.animalSize,'%'+word+'%');}
  if(p.maxPriceCents!=null){conditions.push('p.price_cents<=?');params.push(p.maxPriceCents);}
  addClassificationFilters(p,conditions,params);
  for(const keyword of [...keywords,...(p.nameTerms??[]),...[p.productLine,p.productName].filter((v):v is string=>!!v).flatMap(v=>v.split(/\s+/))]){
-  const alternatives=keyword.toLowerCase()==='light'?['light','ligth']:[keyword];
-  conditions.push('('+alternatives.map(()=>"p.name LIKE ? ESCAPE '\\'").join(' OR ')+')');
+  const terms=nameTerms(keyword);if(!terms.length)continue;
+  const alternatives=terms[0]==='light'?['light','ligth']:terms;
+  conditions.push('('+alternatives.map(()=>`${foldedName} LIKE ? ESCAPE '\\'`).join(' OR ')+')');
   params.push(...alternatives.map(v=>'%'+v.replace(/[\\%_]/g,'\\$&')+'%'));
  }
  return {from:`FROM catalog_product_attributes a JOIN catalog_products p ON p.tenant_id=a.tenant_id AND p.module_id=a.module_id AND p.id=a.product_id ${profileJoin} WHERE ${conditions.join(' AND ')}`,params};
 }
 export type Product={id:string;name:string;price_cents:number;brand_label:string|null;sale_form:string|null;package_weight_grams:number|null;life_stage:string|null;review_state:string;subtype?:string|null;net_volume_ml?:number|null;capacity_ml?:number|null;size_label?:string|null;size_number?:number|null;pack_count?:number|null;food_form?:string|null;requires_professional_guidance?:number|null;attributes_json?:string|null;species_confirmation_required?:boolean;billing_unit?:'unknown';stock_confirmed?:false};
 const columns=`p.id,p.name,p.price_cents,COALESCE(x.brand_label,a.brand_label) brand_label,${foodSaleForm} sale_form,COALESCE(x.net_weight_grams,a.package_weight_grams) package_weight_grams,COALESCE(x.life_stage,a.life_stage) life_stage,COALESCE(x.review_state,a.review_state) review_state,${profileColumns}`;
-export async function searchProducts(db:D1Database,preferences:Preferences,input:unknown,unrestricted:readonly (keyof Preferences)[]=[],tenantId:string){
- const {offset=0}=searchSchema.parse(input);let query=buildCatalogQuery(preferences,[],false,tenantId);
+const folded=(v:string)=>v.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase()
+// "a mais barata", "qual você tem aí": the customer leaves brand and package to the shelf.
+export const anyChoiceSaid=(said:string)=>/\b(mais barat\w*|mais em conta|menor preco|qualquer uma?|tanto faz|o que (?:tiver|voces? tem)|qual (?:voce|vc|voces|vcs) (?:tem|tiver)|quais (?:voce|vc|voces|vcs) tem)\b/.test(folded(said))
+export async function searchProducts(db:D1Database,preferences:Preferences,input:unknown,unrestricted:readonly (keyof Preferences)[]=[],tenantId:string,said=''){
+ const {offset=0}=searchSchema.parse(input);await ensureFoodClassified(db,tenantId);let query=buildCatalogQuery(preferences,[],false,tenantId);
  let count=await db.prepare(`SELECT COUNT(*) AS total ${query.from}`).bind(...query.params).first<{total:number}>();if(!count)throw new Error('CATALOG_QUERY_FAILED');
  let speciesConfirmationRequired=false;
  // A named product with missing classification is a candidate, never a suitability claim.
@@ -87,12 +102,17 @@ export async function searchProducts(db:D1Database,preferences:Preferences,input
   count=await db.prepare(`SELECT COUNT(*) AS total ${query.from}`).bind(...query.params).first<{total:number}>();if(!count)throw new Error('CATALOG_QUERY_FAILED');
   speciesConfirmationRequired=count.total>0;
  }
- if(count.total>12||(count.total>0&&preferences.productType==='feed'&&!preferences.species&&!preferences.productName&&!unrestricted.includes('species'))){
+ if(count.total>12&&!(anyChoiceSaid(said)&&preferences.species)||(count.total>0&&preferences.productType==='feed'&&!preferences.species&&!preferences.productName&&!unrestricted.includes('species'))){
   const facets=await db.prepare(`SELECT DISTINCT a.brand_label,a.life_stage,a.sale_form,a.package_weight_grams ${query.from} ORDER BY a.brand_label,a.package_weight_grams LIMIT 8`).bind(...query.params).all<{brand_label:string|null;life_stage:string|null;sale_form:string|null;package_weight_grams:number|null}>();
   const refinement=await chooseRefinement(db,query,preferences,unrestricted,true);
   return {status:'needs_refinement' as const,total:count.total,preferences,products:[],facets:facets.results,refinement,instruction:'Use a pergunta de refinamento baseada nos resultados. Não liste todo o catálogo nem repita perguntas já respondidas.'};
  }
- const result=await db.prepare(`SELECT ${columns} ${query.from} ORDER BY p.name,p.id LIMIT 4 OFFSET ?`).bind(...query.params,offset).all<Product>();if(!result.success)throw new Error('CATALOG_QUERY_FAILED');
+ // Only three products are shown: those in stock come first, then a package
+ // weight the customer said ("de 3 kg"), so alphabetical order never hides them.
+ const saidGrams=[...said.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|quilos?|kilos?|g|gr|gramas?)\b/g)].map(m=>Math.round(Number(m[1].replace(',','.'))*(m[2].startsWith('g')?1:1000))).at(-1)??0
+ const inStock="EXISTS(SELECT 1 FROM inventory_balances b WHERE b.tenant_id=p.tenant_id AND b.module_id=p.module_id AND b.product_id=p.id AND b.on_hand_milliunits-b.reserved_milliunits>0)"
+ const cheapest=/\b(mais barat\w*|mais em conta|menor preco)\b/.test(folded(said))?1:0
+ const result=await db.prepare(`SELECT ${columns} ${query.from} ORDER BY ${inStock} DESC,CASE WHEN ?=1 THEN p.price_cents END,COALESCE(x.net_weight_grams,a.package_weight_grams)=? DESC,p.name,p.id LIMIT 4 OFFSET ?`).bind(...query.params,cheapest,saidGrams,offset).all<Product>();if(!result.success)throw new Error('CATALOG_QUERY_FAILED');
  return {status:count.total===0?'no_matches' as const:'matches' as const,total:count.total,preferences,products:result.results.slice(0,3).map(p=>({...p,species_confirmation_required:speciesConfirmationRequired,billing_unit:'unknown' as const,stock_confirmed:false as const})),speciesConfirmationRequired,hasMore:result.results.length>3,instruction:'Use somente dados retornados. Estoque e unidade de cobrança não confirmados. Candidatos sem espécie exigem confirmação de adequação. Se não houver resultado, não remova filtros automaticamente.'};
 }
 export async function getProduct(db:D1Database,id:string,allowedIds:readonly string[],tenantId:string){

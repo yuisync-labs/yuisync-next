@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { listClientPetsCommand } from './clientCommands'
+import { clearClientPetsCache, createClientPetCommand, listClientPetsCommand } from './clientCommands'
 
 vi.mock('../../../lib/visualPreview', () => ({ isVisualPreviewSession: () => false }))
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.unstubAllGlobals(); clearClientPetsCache() })
 
 it('carrega além dos primeiros mil pets e mantém a busca rápida limitada a uma página', async () => {
   const first = Array.from({ length: 1000 }, (_, i) => ({ id: `pet-${i}`, owner_name: 'Ana', pet_name: `Pet ${i}` }))
@@ -30,4 +30,15 @@ it('não apresenta um total parcial como completo quando uma página falha ou re
   await expect(listClientPetsCommand({ tenantId: 'tenant', allPages: true })).rejects.toThrow('DATABASE_UNAVAILABLE')
   await expect(listClientPetsCommand({ tenantId: 'tenant', allPages: true })).rejects.toThrow('carregar todos')
   expect(fetch).toHaveBeenCalledTimes(4)
+})
+
+it('reaproveita a lista completa entre páginas e relê depois de um cadastro', async () => {
+  const fetch = vi.fn(async (_url, init) => Response.json(init?.method === 'POST' ? { client: { id: 'b' } } : { clients: [{ id: 'a' }], next_cursor: null }))
+  vi.stubGlobal('fetch', fetch)
+  await listClientPetsCommand({ tenantId: 'tenant', allPages: true })
+  await listClientPetsCommand({ tenantId: 'tenant', allPages: true })
+  expect(fetch).toHaveBeenCalledTimes(1)
+  await createClientPetCommand({ tenantId: 'tenant', payload: {} })
+  await listClientPetsCommand({ tenantId: 'tenant', allPages: true })
+  expect(fetch).toHaveBeenCalledTimes(3)
 })

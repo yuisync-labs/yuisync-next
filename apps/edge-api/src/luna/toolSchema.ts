@@ -1,6 +1,6 @@
 // Fail closed on unsupported schema keywords. Model adherence is not authorization.
 type Schema = Readonly<Record<string, unknown>>
-const supported = new Set(['type', 'properties', 'required', 'additionalProperties', 'items', 'minItems', 'maxItems', 'minimum', 'maximum', 'enum', 'description', 'minLength', 'maxLength'])
+const supported = new Set(['type', 'properties', 'required', 'additionalProperties', 'items', 'minItems', 'maxItems', 'minimum', 'maximum', 'enum', 'description', 'minLength', 'maxLength', 'pattern'])
 export function matchesToolSchema(value: unknown, schema: Schema, depth = 0): boolean {
   if (depth > 12 || Object.keys(schema).some((key) => !supported.has(key))) return false
   const types = Array.isArray(schema.type) ? schema.type : [schema.type]
@@ -15,6 +15,7 @@ export function matchesToolSchema(value: unknown, schema: Schema, depth = 0): bo
   if (typeof value === 'string') {
     if (value.length > (typeof schema.maxLength === 'number' ? schema.maxLength : 4000)) return false
     if (typeof schema.minLength === 'number' && value.length < schema.minLength) return false
+    if (typeof schema.pattern === 'string' && !new RegExp(schema.pattern).test(value)) return false
   }
   if (Array.isArray(value)) {
     if (value.length < Number(schema.minItems ?? 0) || value.length > Number(schema.maxItems ?? 100)) return false

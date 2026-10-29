@@ -7,7 +7,7 @@ import { executeInformationTool } from '../src/luna/informationTools'
 const db = (env as EdgeEnv & { DB: D1Database }).DB
 const ctx = { tenantId: 'luna-information-fixture', moduleId: 'petshop' as const, conversationId: 'information-thread', customerAddress: '5532999990092', phoneNumberId: 'fixture', sourceMessageId: 'information-inbound', traceId: 'information-trace', executionMode: 'fixture' as const }
 const hours = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [String(i + 1), i < 5 ? [{ open: '08:00', close: '18:00' }] : []]))
-const settings = { petbot_timezone: 'America/Sao_Paulo', store_business_hours: hours, petbot_business_hours: hours, petbot_booking_capacity: 1, petbot_slot_interval_min: 30, delivery_coverage: [{ city: 'Cidade Teste', neighborhood: 'Centro', active: true, fee_cents: 1500 }] }
+const settings = { petbot_timezone: 'America/Sao_Paulo', store_business_hours: hours, petbot_business_hours: hours, petbot_booking_capacity: 1, petbot_slot_interval_min: 30, delivery_coverage: [{ city: 'Cidade Teste', neighborhood: 'Centro', active: true, fee_cents: 1500 }, { city: 'Muriaé', neighborhood: '*', active: true, fee_cents: 1000 }] }
 beforeAll(async () => {
   const now = Date.now()
   await db.batch([
@@ -37,6 +37,9 @@ describe('Luna native information tools', () => {
     const registry = createLunaToolRegistry(db)
     expect(await registry.execute('get_delivery_quote', { city: 'cidade teste', neighborhood: 'CENTRO' }, ctx)).toMatchObject({ ok: true, data: { fee_cents: 1500 } })
     expect(await registry.execute('get_delivery_quote', { city: 'Outra', neighborhood: 'Centro' }, ctx)).toMatchObject({ ok: false, code: 'DELIVERY_OUTSIDE_COVERAGE' })
+    // "*" covers every neighborhood of its city, but not other cities or listed-only cities.
+    expect(await registry.execute('get_delivery_quote', { city: 'muriae', neighborhood: 'Barra' }, ctx)).toMatchObject({ ok: true, data: { fee_cents: 1000, neighborhood: 'Barra' } })
+    expect(await registry.execute('get_delivery_quote', { city: 'Cidade Teste', neighborhood: 'Outro' }, ctx)).toMatchObject({ ok: false, code: 'DELIVERY_OUTSIDE_COVERAGE' })
     expect(await registry.execute('get_delivery_quote', { city: 'Cidade Teste', neighborhood: 'Centro', fee_cents: 0 }, ctx)).toMatchObject({ ok: false, code: 'TOOL_ARGUMENTS_INVALID' })
   })
   it('consulta MotoDog do catálogo, peso do pet e identidade do telefone', async () => {
@@ -63,6 +66,10 @@ describe('Luna native information tools', () => {
     expect(remaining).not.toContain(start.toISOString())
     expect(remaining[0]).toBe(new Date(start.getTime() + 3600000).toISOString())
     expect(await createLunaToolRegistry(db).execute('get_available_slots', { service_ids: ['bath'], starts_at: start.toISOString(), ends_at: new Date(start.getTime() + 48 * 3600000).toISOString() }, ctx)).toMatchObject({ ok: false, code: 'SCHEDULE_WINDOW_INVALID' })
+    // "quarta às 10h": an exact time looks at that time and the hours after it.
+    const exact = await createLunaToolRegistry(db).execute('get_available_slots', { service_ids: ['bath'], starts_at: start.toISOString(), ends_at: start.toISOString() }, ctx) as { ok: boolean; data: { slots: string[] } }
+    expect(exact.ok).toBe(true)
+    expect(exact.data.slots[0]).toBe(new Date(start.getTime() + 3600000).toISOString())
   })
 
   it('bloqueia agendamento fora do expediente e entrega sem endereço estruturado', async () => {
@@ -72,5 +79,20 @@ describe('Luna native information tools', () => {
     const registry = createLunaToolRegistry(db)
     expect(await registry.execute('prepare_appointment', { customer_id: 'customer', pet_id: 'pet', service_ids: ['bath'], scheduled_at: date.toISOString(), notes: null }, ctx)).toMatchObject({ ok: false, code: 'OUTSIDE_BUSINESS_HOURS' })
     expect(await registry.execute('prepare_product_order', { customer_id: 'customer', items: [{ product_id: 'nonexistent', quantity: 1 }], fulfillment_type: 'delivery' }, ctx)).toMatchObject({ ok: false, code: 'DELIVERY_ADDRESS_REQUIRED' })
+  })
+})
+
+describe('store payment and packages', () => {
+  it('sends the Pix key only when the store configured one, and lists active plans', async () => {
+    expect(await executeInformationTool('get_payment_instructions', {}, ctx, db)).toMatchObject({ ok: false, code: 'PIX_NOT_CONFIGURED' })
+    const now = Date.now()
+    await db.batch([
+      db.prepare(`UPDATE module_settings_extensions SET data_json=json_set(data_json,'$.pix_key','loja@pix.test','$.pix_holder_name','Loja Teste') WHERE tenant_id=?1`).bind(ctx.tenantId),
+      db.prepare(`INSERT INTO subscription_plans(tenant_id,module_id,id,name,price_cents,billing_cycle,services_json,status,created_at_ms,updated_at_ms) VALUES(?1,'petshop','plan','Pacote Banho Basico',20000,'monthly',?2,'active',?3,?3)`).bind(ctx.tenantId, JSON.stringify([{ service_name: 'Banho', qty_per_cycle: 4 }]), now),
+    ])
+    expect(await executeInformationTool('get_payment_instructions', {}, ctx, db)).toMatchObject({ ok: true, data: { pix_key: 'loja@pix.test', pix_holder: 'Loja Teste' } })
+    const store = await executeInformationTool('get_store_information', {}, ctx, db)
+    expect(store).toMatchObject({ ok: true, data: { pix_configured: true, packages: [{ name: 'Pacote Banho Basico', price_cents: 20000, services: [{ name: 'Banho', per_cycle: 4 }] }] } })
+    expect(JSON.stringify(store)).toContain('1 banho por semana')
   })
 })

@@ -122,8 +122,8 @@ export default function SupportHubPage() {
   useEffect(() => {
     if (!isGlobalAdmin) return undefined
     const timer = setInterval(() => {
-      loadThreads()
-    }, 15000)
+      if (!document.hidden) loadThreads()
+    }, 30_000)
     return () => clearInterval(timer)
   }, [isGlobalAdmin, loadThreads])
 

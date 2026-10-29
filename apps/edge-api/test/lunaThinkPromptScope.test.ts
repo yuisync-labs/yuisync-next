@@ -1,6 +1,6 @@
 import {describe,expect,it} from 'vitest'
 import {namedPet,serviceQuery,thinkTopics} from '../src/luna/thinkPolicy'
-import {createThinkHarness} from './fixtures/luna/thinkHarness'
+import {createThinkHarness,command as c} from './fixtures/luna/thinkHarness'
 
 describe('escopo do prompt por assunto',()=>{
  it('separa agenda, compra e alteração de agendamento',()=>{
@@ -13,6 +13,7 @@ describe('escopo do prompt por assunto',()=>{
  })
  it('extrai a busca de serviço e o pet citado só quando não há dúvida',()=>{
   expect(serviceQuery('Quero um BANHO e tosa')).toBe('banho e tosa')
+  expect(serviceQuery('quanto custa banho com tosa total pra Mel?')).toBe('tosa')
   expect(serviceQuery('hidratação para o Thor')).toBe('hidrata')
   expect(serviceQuery('quero agendar')).toBeNull()
   const pets=[{id:'1',name:'Nina'},{id:'2',name:'Thor'},{id:'3',name:'Nina'}]
@@ -42,6 +43,24 @@ describe('Think: agendamento guiado pelo servidor',()=>{
   try{
    await h.run('Preciso remarcar o banho da Mel',['Qual novo dia?'])
    expect((h.modelFootprint[0].tools??[]).map(t=>t.name)).toContain('prepare_appointment_reschedule')
+  }finally{h.close()}
+ },30000)
+})
+
+import {validateThinkReply} from '../src/luna/thinkPresentation'
+describe('preço multiplicado pela quantidade dita',()=>{
+ const search=[{name:'search_products',result:{ok:true,data:{products:[{id:'sache',price_cents:800}]}}}]
+ it('aceita 5 × preço real quando o cliente disse cinco',()=>expect(validateThinkReply('Cinco sachês ficam R$ 40,00.',search,'Quero cinco sachês pra retirar.')).toEqual({ok:true}))
+ it('recusa total sem a quantidade dita',()=>expect(validateThinkReply('Ficam R$ 40,00.',search,'Quero sachê.')).toMatchObject({ok:false,reason:'UNSUPPORTED_PRICE'}))
+})
+
+describe('preço já estabelecido na conversa',()=>{
+ it('aceita o total de um resumo ainda pendente sem nova consulta',async()=>{
+  const h=await createThinkHarness(923,'-known-price')
+  try{
+   await h.run('Uma Ração A para retirada.',[c('open_tools',{capability:'cart'}),h.update([h.add('racao-a'),h.pickup])])
+   const turn=await h.run('Quanto ficou mesmo?',['O pedido pendente ficou em R$ 90,00.'])
+   expect(turn.result.status).not.toBe('handoff')
   }finally{h.close()}
  },30000)
 })

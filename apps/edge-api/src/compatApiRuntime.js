@@ -235,7 +235,12 @@ async function readSettings(db, scope) {
   const core=await db.prepare('SELECT * FROM tenant_module_settings WHERE tenant_id=?1 AND module_id=?2 LIMIT 1').bind(scope.tenantId,scope.moduleId).first()
   if(!core)return[]
   const ext=await db.prepare('SELECT data_json FROM module_settings_extensions WHERE tenant_id=?1 AND module_id=?2 LIMIT 1').bind(scope.tenantId,scope.moduleId).first()
-  return [{...obj(jsonValue(ext?.data_json,{})),...core,created_at:iso(core.created_at_ms),updated_at:iso(core.updated_at_ms)}]
+  // MotoDog options live in transport_options, the table Luna and the agenda quote from.
+  const transport=(await db.prepare('SELECT id,label,fee_cents,max_weight_grams,status FROM transport_options WHERE tenant_id=?1 AND module_id=?2 ORDER BY sort_order,id').bind(scope.tenantId,scope.moduleId).all()).results
+  const options=transport.length?{pet_transport_options:transport.map((o)=>({id:o.id,label:o.label,fee:(Number(o.fee_cents)/100).toFixed(2),maxWeightKg:o.max_weight_grams==null?'':String(Number(o.max_weight_grams)/1000),active:o.status==='active'}))}:{}
+  // Services the store can hide from Luna, listed with the settings that hold the choice.
+  const services=(await db.prepare("SELECT id,name FROM services WHERE tenant_id=?1 AND module_id=?2 AND status='active' ORDER BY name,id LIMIT 300").bind(scope.tenantId,scope.moduleId).all()).results
+  return [{...obj(jsonValue(ext?.data_json,{})),...options,luna_service_options:services.map((s)=>({id:s.id,name:s.name})),...core,created_at:iso(core.created_at_ms),updated_at:iso(core.updated_at_ms)}]
 }
 
 export async function selectRows(db, table, config, body, scope) {
@@ -290,11 +295,23 @@ async function enrich(db,table,columns,rows,scope) {
   }
 }
 
-async function mutateSettings(db, raw, scope) {
+export async function mutateSettings(db, raw, scope) {
   const now=Date.now(), coreKeys=new Set(['store_name','store_phone','store_address','store_neighborhood','store_city','bot_prompt']), core={}, extra={}
   for(const [k,v] of Object.entries(raw)){if(['tenant_id','module_id','created_at','updated_at'].includes(k))continue;(coreKeys.has(k)?core:extra)[k]=v}
   const current=await db.prepare('SELECT data_json FROM module_settings_extensions WHERE tenant_id=?1 AND module_id=?2').bind(scope.tenantId,scope.moduleId).first()
+  const transport=Array.isArray(extra.pet_transport_options)?extra.pet_transport_options:null
+  delete extra.pet_transport_options
+  delete extra.luna_service_options
   const merged={...obj(jsonValue(current?.data_json,{})),...extra}, statements=[]
+  delete merged.pet_transport_options
+  if(transport)transport.forEach((o,i)=>{
+    // A new option says what it does in its name: "buscar", "levar", "fora".
+    const id=String(o?.id||'').toLowerCase().replace(/[^a-z0-9_]+/g,'_').slice(0,80), name=(id+' '+String(o?.label||'')).normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase()
+    if(!id)return
+    const pickup=/buscar/.test(name)?1:0, dropoff=/levar/.test(name)?1:0, kg=Number(String(o?.maxWeightKg??'').replace(',','.'))
+    statements.push(db.prepare("INSERT INTO transport_options(tenant_id,module_id,id,label,fee_cents,max_weight_grams,pickup_required,dropoff_required,outside_city,status,sort_order) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(tenant_id,module_id,id) DO UPDATE SET label=excluded.label,fee_cents=excluded.fee_cents,max_weight_grams=excluded.max_weight_grams,status=excluded.status,sort_order=excluded.sort_order")
+      .bind(scope.tenantId,scope.moduleId,id,String(o?.label||id).slice(0,160),Math.max(0,Math.round(Number(String(o?.fee??0).replace(',','.'))*100)||0),Number.isFinite(kg)&&kg>0?Math.round(kg*1000):null,pickup||!dropoff?1:0,dropoff||!pickup?1:0,/fora/.test(name)?1:0,o?.active===false?'inactive':'active',i))
+  })
   if(Object.keys(core).length){const keys=Object.keys(core);statements.push(db.prepare(`UPDATE tenant_module_settings SET ${keys.map((k)=>`${k}=?`).join(',')},version=version+1,updated_at_ms=? WHERE tenant_id=? AND module_id=?`).bind(...keys.map((k)=>scalar(core[k])),now,scope.tenantId,scope.moduleId))}
   statements.push(db.prepare('INSERT INTO module_settings_extensions(tenant_id,module_id,data_json,version,updated_at_ms) VALUES(?1,?2,?3,1,?4) ON CONFLICT(tenant_id,module_id) DO UPDATE SET data_json=excluded.data_json,version=module_settings_extensions.version+1,updated_at_ms=excluded.updated_at_ms').bind(scope.tenantId,scope.moduleId,JSON.stringify(merged),now))
   await db.batch(statements)

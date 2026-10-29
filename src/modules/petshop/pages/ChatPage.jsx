@@ -281,6 +281,32 @@ function HandoffAlerts({ alerts, onDismiss, onOpen }) {
   )
 }
 
+const HANDOFF_KINDS = { booking: 'Agendamento', cart: 'Pedido', registration: 'Cadastro' }
+const HANDOFF_FIELDS = { scheduled_at: 'Data', transport_mode: 'Transporte', fulfillment_type: 'Entrega', notes: 'Observações', payment_preference: 'Pagamento' }
+// What Luna hands over: who the customer is, what was in progress, what is missing.
+function HandoffSummary({ summary }) {
+  const customer = summary.customer
+  const operations = Array.isArray(summary.pending_operations) ? summary.pending_operations : []
+  return (
+    <div className="space-y-1">
+      <p className="font-semibold">Resumo para continuar o atendimento</p>
+      <p>{summary.reason}</p>
+      {customer?.name && <p><span className="text-muted">Cliente:</span> {customer.name}{customer.pets?.length ? ` · Pets: ${customer.pets.join('; ')}` : ''}</p>}
+      {operations.map((operation, index) => (
+        <p key={index}>
+          <span className="text-muted">{HANDOFF_KINDS[operation.kind] || operation.kind}:</span>{' '}
+          {[...(operation.items || []), ...Object.entries(operation.fields || {}).filter(([key]) => HANDOFF_FIELDS[key]).map(([key, value]) => `${HANDOFF_FIELDS[key]}: ${value}`)].join(' · ') || 'sem itens'}
+          {operation.missing?.length ? <span className="text-muted"> · Falta: {operation.missing.join(', ')}</span> : null}
+        </p>
+      ))}
+      {!operations.length && summary.request && <p className="text-muted">{summary.request}</p>}
+      {Array.isArray(summary.recent) && summary.recent.length > 0 && (
+        <details className="text-muted"><summary className="cursor-pointer">Últimas mensagens</summary>{summary.recent.map((line, index) => <p key={index}>{line}</p>)}</details>
+      )}
+    </div>
+  )
+}
+
 export default function ChatPage() {
   const {
     sessions, messages, activeSession, botTyping, botTurn, quickReplies,
@@ -296,7 +322,8 @@ export default function ChatPage() {
   const [showQuality,setShowQuality]=useState(false)
   const [input, setInput]         = useState('')
   const [statusFilter, setStatusFilter] = useState('')
-  const [dateRange, setDateRange] = useState({ from: '', to: '' })
+  // Opens on today's conversations; the clear button shows every day.
+  const [dateRange, setDateRange] = useState(() => { const today = new Date().toLocaleDateString('en-CA'); return { from: today, to: today } })
   const [showModal, setShowModal] = useState(false)
   const [sending, setSending]     = useState(false)
   const [sendError, setSendError] = useState('')
@@ -306,6 +333,27 @@ export default function ChatPage() {
   const restoredSessionRef = useRef(false)
   const isGlobalAdmin = auth?.profile?.role === 'admin'
   const activeChatStorageKey = `@yuisync-active-chat:${auth?.activeTenantId || 'tenant'}:${activeModule.id}`
+
+  // A number can have only one conversation per channel: "Nova Conversa" with a
+  // number already in use opens that conversation instead of failing.
+  const createOrOpenSession = async (form) => {
+    const digits = value => String(value || '').replace(/\D/g, '')
+    const channel = value => value === 'interno' ? 'internal' : String(value || '')
+    const samePhone = session => digits(session.customer_phone) === digits(form.customer_phone)
+    const same = session => samePhone(session) && channel(session.channel) === channel(form.channel)
+    const existing = sessions.find(same)
+    if (existing) return handleOpenSession(existing)
+    try {
+      return await createSession(form)
+    } catch (error) {
+      const everyDay = { from: '', to: '' }
+      setDateRange(everyDay)
+      setStatusFilter('')
+      const found = (await loadSessions('', everyDay) || []).find(samePhone)
+      if (!found) throw error
+      return handleOpenSession(found)
+    }
+  }
 
   const handleOpenSession = async (session) => {
     await openSession(session)
@@ -570,9 +618,7 @@ export default function ChatPage() {
               {/* Messages */}
               {activeSession.status==='human'&&activeSession.context?.think?.handoff_summary&&(
                 <div className="mx-5 mt-3 p-3 rounded-xl border border-[var(--border2)] text-sm">
-                  <p className="font-semibold">Resumo para continuar o atendimento</p>
-                  <p>{activeSession.context.think.handoff_summary.reason}</p>
-                  <p className="text-muted">{activeSession.context.think.handoff_summary.request}</p>
+                  <HandoffSummary summary={activeSession.context.think.handoff_summary} />
                 </div>
               )}
               <div ref={messagesRef} className="flex-1 overflow-y-auto px-5 py-4">
@@ -695,7 +741,7 @@ export default function ChatPage() {
       {showModal && (
         <NewSessionModal
           onClose={() => setShowModal(false)}
-          onCreate={createSession}
+          onCreate={createOrOpenSession}
         />
       )}
       <HandoffAlerts
