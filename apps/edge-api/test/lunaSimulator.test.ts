@@ -4,6 +4,7 @@ import {createLiveHarness,liveService} from './fixtures/luna/liveHarness'
 import {applyQuatroPatasStore} from './fixtures/luna/simulatorStore'
 import {simulatorScenarios,type SimScenario} from './fixtures/luna/simulatorScenarios'
 import store from './fixtures/luna/quatropatas-store.json'
+import {claimsDone} from '../src/luna/thinkPresentation'
 // Simulated customers against the real Luna: a model plays the customer from a
 // random scenario, Luna answers on local Think/D1 fixtures with the QuatroPatas
 // catalogue, and the run is judged on the database plus one reading of the chat.
@@ -27,15 +28,16 @@ Seu objetivo: ${s.persona}
 O que você sabe (use só quando fizer sentido ou quando perguntarem): ${s.facts}
 Jeito de escrever: ${s.style}.
 Desvio de roteiro: ${s.detour}.
-Regras: uma mensagem curta por vez, como no WhatsApp. Nunca invente dados além dos acima. Responda ao que a atendente perguntou. Se ela pedir uma nota de 1 a 5, responda 5. Quando o objetivo estiver cumprido, ou se a atendente disser que passou para alguém da loja, ou se ficar claro que não vai dar, encerre.
+Regras: uma mensagem curta por vez, como no WhatsApp. Nunca invente dados além dos acima. Responda ao que a atendente perguntou. Se ela mandar um resumo para você confirmar e ele estiver de acordo com o seu objetivo, confirme com suas palavras; se estiver errado, peça a correção. Um resumo ainda não é o objetivo cumprido: só considere cumprido depois que a atendente disser que registrou. Se ela pedir uma nota de 1 a 5, responda 5. Encerre quando o objetivo estiver cumprido, quando a atendente disser que passou para alguém da loja, ou quando ficar claro que não vai dar.
 Responda em JSON: {"mensagem": "texto do cliente", "fim": false}. Use "fim": true sem mensagem quando a conversa já terminou para você.`
  const out=await chat([{role:'system',content:system},{role:'user',content:lines.length?'Conversa até agora:\n'+transcript(lines)+'\n\nSua próxima mensagem:':'Comece a conversa.'}],0.9)
  return {message:String(out.mensagem??'').trim(),done:out.fim===true}
 }
 
 async function judge(s:SimScenario,lines:Line[]){
- const prices=store.services.filter(v=>v.group_type==='banho_tosa').map(v=>`${v.name}: R$ ${(v.price_cents/100).toFixed(2)}`).join('; ')
- const out=await chat([{role:'system',content:`Você avalia uma conversa entre um cliente e a atendente virtual de um pet shop. Seja rigoroso e objetivo. Preços do cadastro (banho e tosa): ${prices}. MotoDog: buscar e levar R$ 20, só buscar ou só levar R$ 10, só para pets até 10 kg. Entrega R$ 10 em Muriaé.
+ const prices=store.services.filter(v=>v.group_type==='banho_tosa').map(v=>`${v.name}: R$ ${(v.price_cents/100).toFixed(2)}${v.description?' (inclui: '+v.description+')':''}`).join('; ')
+ const others=store.services.filter(v=>v.group_type!=='banho_tosa'&&!store.hidden_service_ids.includes(v.id)).map(v=>`${v.name}: R$ ${(v.price_cents/100).toFixed(2)}`).join('; ')
+ const out=await chat([{role:'system',content:`Você avalia uma conversa entre um cliente e a atendente virtual de um pet shop. Seja rigoroso e objetivo. Preços do cadastro (banho e tosa): ${prices}. Outros serviços: ${others}. O que está em "inclui" vem junto no serviço, sem custo extra. MotoDog: buscar e levar R$ 20, só buscar ou só levar R$ 10, só para pets até 10 kg. Entrega R$ 10 em Muriaé.
 Responda em JSON: {"pergunta_repetida": bool (a atendente pediu de novo um dado que o cliente já tinha dado), "nao_entendeu": bool (a atendente não entendeu o que o cliente queria ou seguiu no caminho errado), "informacao_errada": bool (preço, regra ou dado errado dito pela atendente), "comentario": "uma frase curta"}`},{role:'user',content:`Objetivo do cliente: ${s.persona}\n\n${transcript(lines)}`}],0)
  return {repeated:out.pergunta_repetida===true,misunderstood:out.nao_entendeu===true,wrongInfo:out.informacao_errada===true,comment:String(out.comentario??'')}
 }
@@ -70,6 +72,8 @@ describe.skipIf(!liveService||!count)('Simulated customers',()=>{
   if(wrongService)grave.push('preço de serviço diferente do cadastro: '+JSON.stringify(wrongService))
   const wrongProduct=await h.db.prepare("SELECT i.product_id,i.unit_price_cents,p.price_cents FROM sale_items i JOIN catalog_products p ON p.tenant_id=i.tenant_id AND p.id=i.product_id WHERE i.tenant_id=? AND i.unit_price_cents<>p.price_cents LIMIT 1").bind(h.tenant).first()
   if(wrongProduct)grave.push('preço de produto diferente do cadastro: '+JSON.stringify(wrongProduct))
+  // Grave: Luna said it was done and nothing was written.
+  if(!appointments.length&&!sales.length){const claim=lines.find(l=>l.from==='luna'&&claimsDone(l.text));if(claim)grave.push('disse que fez sem gravar: '+claim.text.slice(0,120))}
   if(error)problems.push('erro na execução: '+error)
   if(e.appointments!==undefined&&appointments.length!==e.appointments)problems.push(`agendamentos: esperado ${e.appointments}, ficou ${appointments.length}`)
   const first=appointments[0]

@@ -38,9 +38,15 @@ export function validateThinkReply(reply:string,results:readonly {name:string;re
   }
   return {ok:true}
 }
+// A reply that says the booking or order is done. Only a commit in this turn
+// (or a completed proposal) may say it.
+const doneClaim=/\b(?:ja (?:reservei|agendei|marquei|registrei|confirmei)|agendad[oa]|reservad[oa]|(?:esta|ficou|foi|ta) (?:marcad[oa]|confirmad[oa]|registrad[oa]|fechad[oa]|feit[oa])|pedido (?:criado|confirmado|registrado))/
+// "O MotoDog vai buscar a Mel sexta às 9h certinho" promises it; with a question it only explains.
+const pickupPromise=/\b(?:motodog|vamos|vai|iremos) (?:buscar|levar|passar)[^.!?]*\b(?:as \d|amanha|hoje|segunda|terca|quarta|quinta|sexta|sabado|domingo|dia \d)/
+export function claimsDone(reply:string){const text=normalized(reply);return doneClaim.test(text)||!text.includes('?')&&pickupPromise.test(text)}
 // Tool failures are the server's business: the customer never reads "houve um
 // problema" or "vou tentar de novo", only the answer that came after the retry.
-const internalError=/\b(?:houve|tive|deu|ocorreu|aconteceu)\b[^.!?\n]*\b(?:problema|erro|falha|instabilidade)\b|\b(?:vou|deixa eu|irei|vamos) tentar (?:novamente|de novo|outra vez)\b|\berro (?:ao|na|no|de) (?:consult|busc|carreg|verific)|\bnao consegui (?:consultar|acessar|carregar|verificar)\b|\b(?:campo|string|parametro|schema|json)\b|\b[a-z]+_id\b|\bids?\b|\btentei usar\b|\bvou corrigir\b|[0-9a-f]{8}-[0-9a-f]{4}|\brascunhos?\b|\bcodigos? (?:corret|errad|do |da |de )|\b(?:problema|erro|falha) tecnic|\bfiltro (?:para|de|por|na) (?:raca|busca|porte)|\bna (?:minha )?busca\b|(?:^|,|\bok\b|\bcerto\b)\s*(?:um momento|so um (?:instante|momento)|aguarde(?: um)?(?: momento| instante)?)\s*(?:$|[,.!]|enquanto)|\benquanto (?:eu )?(?:verifico|confirmo|consulto|preparo|atualizo|registro|corrijo|ajusto)\b|\b(?:vou|deixa eu) (?:usar|criar|preparar|montar|refazer|gerar) (?:o |um )?(?:codigo|rascunho|novo rascunho)/
+const internalError=/\bcom fuso\b|\bfuso horario\b|\d{4}-\d{2}-\d{2}t\d|\b(?:houve|tive|deu|ocorreu|aconteceu)\b[^.!?\n]*\b(?:problema|erro|falha|instabilidade)\b|\b(?:vou|deixa eu|irei|vamos) tentar (?:novamente|de novo|outra vez)\b|\berro (?:ao|na|no|de) (?:consult|busc|carreg|verific)|\bnao consegui (?:consultar|acessar|carregar|verificar)\b|\b(?:campo|string|parametro|schema|json)\b|\b[a-z]+_id\b|\bids?\b|\btentei usar\b|\bvou corrigir\b|[0-9a-f]{8}-[0-9a-f]{4}|\brascunhos?\b|\bcodigos? (?:corret|errad|do |da |de )|\b(?:problema|erro|falha) tecnic|\bfiltro (?:para|de|por|na) (?:raca|busca|porte)|\bna (?:minha )?busca\b|(?:^|,|\bok\b|\bcerto\b)\s*(?:um momento|so um (?:instante|momento)|aguarde(?: um)?(?: momento| instante)?)\s*(?:$|[,.!]|enquanto)|\benquanto (?:eu )?(?:verifico|confirmo|consulto|preparo|atualizo|registro|corrijo|ajusto)\b|\b(?:vou|deixa eu) (?:usar|criar|preparar|montar|refazer|gerar) (?:o |um )?(?:codigo|rascunho|novo rascunho)/
 export function withoutInternalErrors(reply:string){
   const kept=reply.replace(/[^.!?\n]*(?:[.!?]+|\n|$)/g,sentence=>internalError.test(normalized(sentence))?'':sentence).replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim()
   return kept||reply

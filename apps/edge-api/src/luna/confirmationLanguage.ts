@@ -124,3 +124,81 @@ export function scopedConfirmation(value: string, target: Summary, others: Summa
   }
   return selected
 }
+
+// A yes in the customer's own words: "confirmo sim, pode deixar marcado",
+// "sim, confirmo o banho da Mel amanhã às 9h", "pode confirmar, pago no cartão
+// na entrega". Unknown words are allowed; what decides is that the message says
+// yes, asks for no change, and every fact it restates (numbers, day, hour,
+// modality, MotoDog) matches the persisted summary. Questions in the same
+// message ("quanto custa a unha?") neither confirm nor block.
+const STRONG_YES = new Set([...AFFIRMATIVE, ...CLOSING, 'confirmamos', 'confirmando', 'marcado', 'marcada', 'agendado', 'agendada', 'reservar', 'reservado'].filter(w => w !== 'isso' && w !== 'sou'))
+const HOLD = new Set(['nao', 'mas', 'porem', 'ainda', 'espera', 'pera', 'perai', 'aguarda', 'segura', 'depois', 'talvez', 'acho', 'se', 'antes', 'pensar', 'pensando', 'decidir', 'decidindo', 'ver', 'vendo', 'conferir', 'conferindo', 'pessoa', 'atendente', 'humano', 'humana', 'gerente', 'so', 'somente', 'apenas', 'tambem', 'junto'])
+// "pode" says yes only with a verb that carries on ("pode deixar marcado", not "pode me passar o preço").
+const GO_ON = new Set(['agendar', 'marcar', 'confirmar', 'fechar', 'deixar', 'seguir', 'prosseguir', 'reservar', 'fazer', 'ser', 'cadastrar', 'salvar', 'mandar', 'finalizar', 'concluir', 'enviar', 'separar', 'registrar'])
+const CHANGE = new Set(['troca', 'trocar', 'muda', 'mudar', 'altera', 'alterar', 'tira', 'tirar', 'coloca', 'colocar', 'adiciona', 'aumenta', 'diminui', 'mais', 'menos', 'outro', 'outra', 'corrige', 'corrigindo', 'cancela', 'cancelar', 'desisto', 'desistir'])
+const WEEKDAYS = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado']
+const QUESTION = /\b(quanto|qual|quais|como|onde|quando|tem|teria|aceita|aceitam|voces|vcs|vc)\b/
+export function consistentConfirmation(value: string, operationKind: string, payload: JsonRecord, nowMs: number, timeZone = 'America/Sao_Paulo'): boolean {
+  if (!SUBJECTS[operationKind]) return false
+  // Questions about something else are set aside; a question that holds the yes is not a yes.
+  const clauses = value.split(/(?<=[.!?;\n])/).map(c => c.trim()).filter(Boolean)
+  const kept: string[] = []
+  for (const clause of clauses) {
+    if (!clause.endsWith('?')) { kept.push(clause); continue }
+    const words = confirmationWords(clause)
+    if (!QUESTION.test(words.join(' ')) || words.some(w => STRONG_YES.has(w) || HOLD.has(w) || CHANGE.has(w))) return false
+  }
+  // Hesitation before the yes ("hmm, deixa eu ver... sim") is resolved by it;
+  // hesitation in or after the clause that says yes holds it.
+  const says = (c: string[]) => c.some((w, i) => STRONG_YES.has(w) || w === 'pode' && GO_ON.has(c[i + 1] ?? ''))
+  const split = kept.map(confirmationWords).filter(c => c.length), last = split.map(says).lastIndexOf(true)
+  const words = split.flat()
+  if (last < 0 || words.length > 40 || words.some(w => CHANGE.has(w)) || split.slice(last).flat().some(w => HOLD.has(w))) return false
+  // A stray letter is usually a product variant ("a Ração B").
+  if (words.some(w => /^[a-z]$/.test(w) && !/^[aeos]$/.test(w))) return false
+  const lines = operationKind === 'product_order_create' ? (Array.isArray(payload.items) ? payload.items : []) : (Array.isArray(payload.services) ? payload.services : [])
+  const known = new Set<number>(lines.map(line => Number(record(line).quantity ?? 1)))
+  known.add(lines.reduce((sum, line) => sum + Number(record(line).quantity ?? 1), 0))
+  const total = Number(payload.total_cents), fee = Number(record(payload.transport).fee_cents)
+  for (const cents of [total, fee, ...lines.map(l => Number(record(l).unit_price_cents ?? record(l).price_cents))]) if (Number.isFinite(cents) && cents > 0 && cents % 100 === 0) known.add(cents / 100)
+  // "3 kg" restates a size from the item name, not a quantity.
+  const sizes = new Set(lines.flatMap(line => (String(record(line).name ?? '').match(/\d+/g) ?? []).map(Number)))
+  const at = Number(payload.scheduled_at_ms)
+  let day: { y: number; m: number; d: number; hour: number; minute: number; weekday: number } | null = null
+  const parts = (ms: number) => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', hourCycle: 'h23', weekday: 'short' }).formatToParts(new Date(ms)).map(x => [x.type, x.value])); return { y: +p.year, m: +p.month, d: +p.day, hour: +p.hour, minute: +p.minute, weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(p.weekday) } }
+  if (Number.isFinite(at) && at > 0) { day = parts(at); known.add(day.d); known.add(day.m); known.add(day.y); known.add(day.hour); if (day.minute) known.add(day.minute); if (day.hour > 12) known.add(day.hour - 12) }
+  if (day && day.minute === 0) known.add(0)
+  for (const [i, w] of words.entries()) {
+    const number = /^\d+$/.test(w) ? Number(w) : NUMBERS[w]
+    if (number !== undefined && /^(kg|kgs|g|gr|ml|l|quilos?|kilos?)$/.test(words[i + 1] ?? '')) { if (!sizes.has(number)) return false; continue }
+    if (number !== undefined) { if (!known.has(number) && !(w in NUMBERS && (w === 'um' || w === 'uma'))) return false; continue }
+    const hm = /^(\d{1,2})h(\d{2})?$/.exec(w)
+    if (hm) { if (!day || +hm[1] !== day.hour || Number(hm[2] ?? 0) !== day.minute) return false; continue }
+    const size = /^(\d+)(kg|g|gr|ml|l)$/.exec(w)
+    if (size) { if (!sizes.has(Number(size[1]))) return false; continue }
+    if (/^\d/.test(w)) return false
+  }
+  // Day words must point at the scheduled day; an order has no day to restate.
+  const dayWord = words.find(w => w === 'hoje' || w === 'amanha' || WEEKDAYS.includes(w))
+  if (dayWord) {
+    if (!day) return false
+    const today = parts(nowMs), dayIndex = Date.UTC(day.y, day.m - 1, day.d) / 864e5, todayIndex = Date.UTC(today.y, today.m - 1, today.d) / 864e5
+    for (const w of words) {
+      if (w === 'hoje' && dayIndex !== todayIndex) return false
+      if (w === 'amanha' && dayIndex !== todayIndex + 1) return false
+      if (WEEKDAYS.includes(w) && WEEKDAYS.indexOf(w) !== day.weekday) return false
+    }
+  }
+  const text = ' ' + words.join(' ') + ' '
+  if (operationKind === 'product_order_create') {
+    const f = String(payload.fulfillment_type ?? '')
+    if (f === 'counter' && /\b(entrega|entregar|entregue|delivery|endereco)\b/.test(text)) return false
+    if (f === 'delivery' && /\b(retirada|retirar|retiro|busco|buscar|pego|pegar)\b/.test(text)) return false
+  }
+  if (operationKind === 'appointment_create') {
+    const moto = Boolean(payload.transport)
+    if (!moto && /\b(motodog|moto|busca|buscar|buscam|busquem|leva e traz|levar e buscar)\b/.test(text) && !/\b(eu|mesma|mesmo) (levo|busco|vou levar|vou buscar)\b/.test(text)) return false
+    if (moto && /\b(eu levo|eu mesma levo|eu mesmo levo|vou levar|levo ela|levo ele)\b/.test(text)) return false
+  }
+  return true
+}

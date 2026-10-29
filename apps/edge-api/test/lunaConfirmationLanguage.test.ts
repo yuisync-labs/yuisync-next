@@ -39,3 +39,42 @@ describe('Luna closing and scoped confirmation', () => {
   it.each(['Confirmo o banho e o pedido.', 'Fecha o banho, a compra também.', 'Sim.', 'Confirma só o banho?'])('não escolhe entre resumos: %s', phrase => expect(scopedConfirmation(phrase, bathSummary, [orderSummary])).toBe(false))
   it('busca nomes sem acento e plural', () => { expect(nameTerms('saches')).toEqual(['saches', 'sache']); expect(nameTerms('Rações')).toEqual(['racoes', 'racao']); expect(nameTerms('gato')).toEqual(['gato']) })
 })
+
+import { consistentConfirmation } from '../src/luna/confirmationLanguage'
+// Phrases from the customer simulator (29/10/2026): a yes in the customer's own
+// words, checked against the facts of the persisted summary.
+describe('Luna yes in the customer own words', () => {
+  const now = Date.parse('2026-10-29T13:00:00-03:00')
+  const mel = { pet_name: 'Mel', services: [{ name: 'BANHO PET PORTE PEQUENO 0 KG A 10 KG (TODAS AS PELAGENS)' }], total_cents: 5500, scheduled_at_ms: Date.parse('2026-10-30T09:00:00-03:00') }
+  const moto = { ...mel, total_cents: 7500, transport: { label: 'Buscar e levar', fee_cents: 2000 } }
+  const golden = { items: [{ name: 'GOLDEN FORMULA GATO ADULTO FRANGO 1 KG', quantity: 1 }], total_cents: 4690, fulfillment_type: 'delivery' }
+  const ultralife = { items: [{ name: 'RACAO SPECIAL DOG ULTRALIFE 3 KG', quantity: 2 }], total_cents: 10980, fulfillment_type: 'counter' }
+  it.each([
+    ['confirmo sim, pode deixar marcado entao', mel],
+    ['Sim, confirmo o agendamento para o banho da Mel amanhã às 9h.', mel],
+    ['Sim, confirmo mesmo o agendamento para amanhã às 9h, vou levar a Mel até a loja.', mel],
+    ['confirma sim, obrigada! ah e quanto custa o corte de unha?', moto],
+    ['Confirmo, sexta 9h com o MotoDog buscando, R$ 75.', moto],
+    ['Hmm, deixa eu ver... Sim, está tudo certo, pode confirmar o pedido para entrega com pagamento no cartão na entrega.', golden],
+    ['sim confirma, quero pagar com cartao na entrega', golden],
+    ['Sim, confirmo o pedido e o pagamento via PIX na retirada na loja.', ultralife],
+    ['pode fechar os 2 pacotes', ultralife],
+  ])('aceita: %s', (phrase, payload) => expect(consistentConfirmation(phrase, (payload as Record<string, unknown>).items ? 'product_order_create' : 'appointment_create', payload, now)).toBe(true))
+  it.each([
+    ['confirmo, mas às 10h', mel],
+    ['Confirmo o banho amanhã às 10h.', mel],
+    ['Confirmo pra segunda às 9h.', mel],
+    ['sim, com o MotoDog buscando', mel],
+    ['sim, mas eu levo ela', moto],
+    ['Confirmo, eu vou levar ela.', moto],
+    ['Confirmo para retirada.', golden],
+    ['sim, confirmo 3 pacotes', ultralife],
+    ['Confirma pra entregar?', golden],
+    ['pode me passar o preço da tosa', mel],
+    ['ok, vou pensar e te falo', mel],
+    ['confirmo, e marca a Luna também', mel],
+    ['Pode fechar a Ração B.', ultralife],
+    ['Sim, pode trocar pra tosa.', mel],
+    ['confirmo, quero falar com uma pessoa antes', mel],
+  ])('recusa: %s', (phrase, payload) => expect(consistentConfirmation(phrase, (payload as Record<string, unknown>).items ? 'product_order_create' : 'appointment_create', payload, now)).toBe(false))
+})

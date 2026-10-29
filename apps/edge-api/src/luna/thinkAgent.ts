@@ -21,7 +21,7 @@ import { THINK_MODEL, THINK_TURN_NEURON_LIMIT, thinkNeurons, thinkInstructions, 
 import { getProduct, type Memory } from './thinkCatalog/catalog'
 import { addressKept, lastHourSaid, nextBookingStep, oneLegSaid, weightFromSaid, weightSaid, dateSaid, selfTransportSaid, serviceKinds, timeSaid } from './bookingSteps'
 import { publishTableInvalidation } from '../realtimeApi'
-import { validateThinkReply, withoutInternalErrors, zonedIsoTime } from './thinkPresentation'
+import { claimsDone, validateThinkReply, withoutInternalErrors, zonedIsoTime } from './thinkPresentation'
 import { findConfirmationTarget } from './commitProposal'
 import { registrationComplete, registrationIssue, registrationStatus } from './registrationLanguage'
 import { withPostalAddress } from './postalCode'
@@ -295,7 +295,11 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const registry=createLunaToolRegistry(this.db)
     let pet:{client_id:string;species:string;weight_kg:number|null}|null=null
     if(pet_id){pet=await this.db.prepare("SELECT client_id,species,weight_kg FROM pets WHERE tenant_id=? AND module_id='petshop' AND id=? AND status='active'").bind(c.tenantId,pet_id).first();const customer=await registry.execute('get_customer_context',{},c);if(!pet||!customer.ok||!await isConversationCustomer(this.db,c,pet.client_id))return fail('CUSTOMER_SCOPE_DENIED')}
-    const rows=await this.db.prepare("SELECT id,code,name,default_price_cents,default_duration_min,min_weight_grams,max_weight_grams,species_target,description FROM services WHERE tenant_id=? AND module_id='petshop' AND status='active' AND default_price_cents>0 AND id NOT IN (SELECT value FROM module_settings_extensions m, json_each(COALESCE(json_extract(m.data_json,'$.luna_hidden_service_ids'),'[]')) WHERE m.tenant_id=services.tenant_id AND m.module_id=services.module_id) AND (name LIKE ? ESCAPE '\\' OR code LIKE ? ESCAPE '\\') AND (? IS NULL OR species_target IS NULL OR species_target IN ('all','other') OR species_target=?) AND (? IS NULL OR ((min_weight_grams IS NULL OR min_weight_grams<=?) AND (max_weight_grams IS NULL OR max_weight_grams>=?))) ORDER BY sort_order,name,id LIMIT 16").bind(c.tenantId,'%'+query.replace(/[\\%_]/g,'\\$&')+'%','%'+query.replace(/[\\%_]/g,'\\$&')+'%',pet?.species??species??null,pet?.species??species??null,pet?.weight_kg??null,pet?.weight_kg==null?null:Math.round(pet.weight_kg*1000),pet?.weight_kg==null?null:Math.round(pet.weight_kg*1000)).all()
+    const find=(q:string)=>this.db.prepare("SELECT id,code,name,default_price_cents,default_duration_min,min_weight_grams,max_weight_grams,species_target,description FROM services WHERE tenant_id=? AND module_id='petshop' AND status='active' AND default_price_cents>0 AND id NOT IN (SELECT value FROM module_settings_extensions m, json_each(COALESCE(json_extract(m.data_json,'$.luna_hidden_service_ids'),'[]')) WHERE m.tenant_id=services.tenant_id AND m.module_id=services.module_id) AND (name LIKE ? ESCAPE '\\' OR code LIKE ? ESCAPE '\\') AND (? IS NULL OR species_target IS NULL OR species_target IN ('all','other') OR species_target=?) AND (? IS NULL OR ((min_weight_grams IS NULL OR min_weight_grams<=?) AND (max_weight_grams IS NULL OR max_weight_grams>=?))) ORDER BY sort_order,name,id LIMIT 16").bind(c.tenantId,'%'+q.replace(/[\\%_]/g,'\\$&')+'%','%'+q.replace(/[\\%_]/g,'\\$&')+'%',pet?.species??species??null,pet?.species??species??null,pet?.weight_kg??null,pet?.weight_kg==null?null:Math.round(pet.weight_kg*1000),pet?.weight_kg==null?null:Math.round(pet.weight_kg*1000)).all()
+    // "banho e tosa total" is no service name: the most specific word said
+    // ("total", then "tosa") finds the service, whose description says what it includes.
+    let rows=await find(query)
+    if(!rows.results.length)for(const word of query.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().split(/[^a-z]+/).filter(w=>w.length>=4&&!['para','pelo','pela','com','sem','servico','quanto','custa'].includes(w)).reverse()){rows=await find(word);if(rows.results.length)break}
     // What the store says a service includes, listed once and referenced by index:
     // eight bath sizes share one sentence.
     const includes:string[]=[],services=rows.results.map(({description,...row})=>{const text=String(description??'').trim();if(!text)return row;const i=includes.indexOf(text);return {...row,includes:i<0?includes.push(text)-1:i}})
@@ -616,9 +620,9 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     await validateThinkJob(db,t.batch.entries.at(-1)!.job,true,t.results.some(r=>r.name==='handoff_to_human'&&record(r.result).ok===true))
     let reply=content(response.message)
     const proposalIds=t.results.map(r=>record(record(r.result).data).proposal_id).filter((id):id is string=>typeof id==='string')
-    const rows=await loadPresentableProposals(db,c,proposalIds)
+    let rows=await loadPresentableProposals(db,c,proposalIds)
     const store=await createLunaToolRegistry(db).execute('get_store_information',{},c),timezone=String(record(record(store).data).timezone??'UTC')
-    const summary=rows.length?renderThinkProposalSummary(rows[0],timezone,record(record(store).data)):''
+    let summary=rows.length?renderThinkProposalSummary(rows[0],timezone,record(record(store).data)):''
     if(rows.length)reply=rows.length===1?summary:summary+'\nHá outra proposta separada; vamos confirmar uma de cada vez.'
     if(rows.length&&t.results.some(r=>r.name==='commit_confirmed_proposal'&&record(r.result).revised_summary===true))reply='Os valores ou a disponibilidade mudaram desde o último resumo. Confira o resumo atualizado:\n'+reply
     const committed=t.results.some(r=>r.name==='commit_confirmed_proposal'&&record(r.result).ok===true)
@@ -631,7 +635,12 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const pixSent=t.results.some(r=>r.name==='get_payment_instructions'&&record(r.result).ok===true&&reply.includes(String(record(record(r.result).data).pix_key)))
     reply=withoutInternalErrors(reply)
     if(/pagamento (?:confirmado|recebido)|pix (?:gerado|confirmado)/i.test(reply)||!pixSent&&/chave pix/i.test(reply))reply='O pedido pode ser registrado, mas o pagamento ainda precisa ser verificado pela loja.'
-    if(!committed&&/\b(?:ja (?:reservei|agendei|marquei)|agendad[oa]|reservad[oa]|(?:esta|ficou|foi) marcad[oa]|(?:agendamento|banho|tosa|horario)\b[^.!?]*\b(?:esta|ficou|foi) confirmad[oa]|pedido (?:criado|confirmado))\b/i.test(reply.normalize('NFD').replace(/\p{Diacritic}/gu,'')))reply=rows.length?summary:'Ainda preciso da confirmação de uma proposta válida para concluir essa operação.'
+    // "Está confirmado", "o MotoDog vai buscar sexta às 9h": only a commit says so.
+    // Without one, the customer gets the summary still waiting for a yes.
+    if(!committed&&claimsDone(reply)&&!await db.prepare("SELECT 1 x FROM luna_proposals WHERE tenant_id=? AND module_id='petshop' AND conversation_id=? AND status='completed' AND operation_kind NOT LIKE '%registration' LIMIT 1").bind(c.tenantId,c.conversationId).first()){
+      if(!rows.length){const waiting=await db.prepare("SELECT id FROM luna_proposals WHERE tenant_id=? AND module_id='petshop' AND conversation_id=? AND status='awaiting_confirmation' ORDER BY updated_at_ms DESC LIMIT 1").bind(c.tenantId,c.conversationId).first<{id:string}>();if(waiting){rows=await loadPresentableProposals(db,c,[waiting.id]);if(rows.length)summary=renderThinkProposalSummary(rows[0],timezone,record(record(store).data))}}
+      reply=rows.length?summary:'Ainda não registrei nada. Posso montar o resumo para você confirmar?'
+    }
     if(rating)reply='Obrigado pela avaliação!'
     const receiptRows=await db.prepare("SELECT payload_json,operation_kind FROM luna_proposals WHERE tenant_id=? AND module_id='petshop' AND conversation_id=? AND status='completed' AND id IN (SELECT value FROM json_each(?))").bind(c.tenantId,c.conversationId,JSON.stringify(t.results.filter(r=>r.name==='commit_confirmed_proposal'&&record(r.result).ok).map(r=>record(r.input).proposal_id))).all<{payload_json:string;operation_kind:string}>()
     if(committed){const receipts:Record<string,string>={product_order_create:'Pedido registrado e estoque reservado. O pagamento continua pendente.',appointment_create:'Agendamento registrado na Agenda. Qualquer dúvida, fico à disposição. Aguardamos vocês!',appointment_reschedule:'Horário alterado na Agenda.',appointment_cancel:'Agendamento cancelado na Agenda.',customer_registration:'Cadastro do cliente registrado.',pet_registration:'Cadastro do pet registrado.'};const next=receiptRows.results.every(r=>/registration$/.test(r.operation_kind))?(rows.length?summary:afterTools):'';reply=receiptRows.results.map(r=>r.operation_kind==='customer_registration'&&JSON.parse(r.payload_json).link_client_id?'Pronto! Este número ficou ligado ao seu cadastro.':receipts[r.operation_kind]??'Operação registrada.').join('\n')+(next?'\n'+next:'')}

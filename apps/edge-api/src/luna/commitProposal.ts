@@ -14,7 +14,7 @@ import { saleDeliveryAddressStatement } from '../saleDeliveryAddress'
 import { appointmentScheduleGuardStatement } from '../appointmentScheduleGuard'
 import { validateGroomingMachine } from '../groomingMachinePolicy'
 import { resolveTransportSnapshot } from './transportContract'
-import { naturalConfirmation, closingConfirmation, scopedConfirmation, namesSummary, confirmationWords, requestsChange } from './confirmationLanguage'
+import { naturalConfirmation, closingConfirmation, scopedConfirmation, namesSummary, confirmationWords, requestsChange, consistentConfirmation } from './confirmationLanguage'
 
 type ProposalRow = {
   id: string
@@ -73,7 +73,7 @@ async function latestConfirmation(database: D1Database, context: LunaExecutionCo
   const scoped=others.length>0&&scopedConfirmation(confirmation,{operation_kind:proposal.operation_kind,payload},others.map(o=>({operation_kind:o.operation_kind,payload:record(JSON.parse(o.payload_json))})))
   const single=scoped||Number(pending?.count)<=1
   // A natural restatement is accepted only while exactly one summary is pending.
-  const natural=scoped||single&&(naturalConfirmation(confirmation,proposal.operation_kind,payload)||closingConfirmation(confirmation,proposal.operation_kind,payload))
+  const natural=scoped||single&&(naturalConfirmation(confirmation,proposal.operation_kind,payload)||closingConfirmation(confirmation,proposal.operation_kind,payload)||consistentConfirmation(confirmation,proposal.operation_kind,payload,lunaNow(context)))
   if (!natural&&!explicitConfirmation(confirmation, proposal.operation_kind, text(payload.fulfillment_type))) return false
   if(!single&&explicitConfirmation(confirmation,''))return false
   const presentation = await database.prepare(`SELECT outbound_message_id,presented_at_ms FROM luna_proposal_presentations
@@ -92,7 +92,7 @@ async function latestConfirmation(database: D1Database, context: LunaExecutionCo
   if (!intervening.results.length) return true
   // The customer already said yes and Luna only asked again for confirmation:
   // the repeated yes still confirms this summary.
-  const confirms = (value: string) => naturalConfirmation(value, proposal.operation_kind, payload) || closingConfirmation(value, proposal.operation_kind, payload) || explicitConfirmation(value, proposal.operation_kind, text(payload.fulfillment_type))
+  const confirms = (value: string) => naturalConfirmation(value, proposal.operation_kind, payload) || closingConfirmation(value, proposal.operation_kind, payload) || consistentConfirmation(value, proposal.operation_kind, payload, lunaNow(context)) || explicitConfirmation(value, proposal.operation_kind, text(payload.fulfillment_type))
   if (single && intervening.results.length <= 6 && intervening.results.some(m => m.direction === 'inbound')
     && intervening.results.every(m => m.direction === 'outbound' ? m.actor_type === 'assistant' && /confirm/i.test(m.content_text) && !/\b(?:quer|deseja|gostaria)\b(?![^?]*confirm)/i.test(m.content_text) : m.actor_type === 'customer' && confirms(m.content_text))) return true
   // "ok, confirmo" after hesitation ("talvez") or a refused discount: the word
