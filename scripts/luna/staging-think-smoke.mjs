@@ -23,6 +23,8 @@ INSERT INTO catalog_product_attributes(tenant_id,module_id,product_id,product_ty
 INSERT INTO catalog_product_species(tenant_id,module_id,product_id,species) VALUES(${q(tenant)},'petshop',${q(product)},'dog');`)
 async function login(email,password){
  const r=await fetch(base+'/api/auth/sign-in/email',{method:'POST',headers:{'content-type':'application/json',origin:base},body:JSON.stringify({email,password,rememberMe:false})})
+ // A failed sign-in prints what staging says about it (status, code and diagnostic header), never the credentials.
+ if(r.status!==200)console.error(JSON.stringify({sign_in_failed:r.status,body:(await r.text().catch(()=>'')).slice(0,200),diagnostic:r.headers.get('x-yuisync-auth-diagnostic'),retry_after:r.headers.get('retry-after'),account:email===process.env.E2E_EMAIL?'E2E':email===process.env.TENANT_B_EMAIL?'TENANT_B':'other'}))
  assert.equal(r.status,200,'sign in');const cookies=r.headers.getSetCookie().map(s=>s.split(';')[0]).join('; ');assert(cookies.includes('better-auth'));return cookies
 }
 const cookie=await login(process.env.E2E_EMAIL,process.env.E2E_PASSWORD)
@@ -69,6 +71,7 @@ const browser=await chromium.launch({headless:true})
 try{
  const page=await browser.newPage({viewport:{width:1440,height:900}})
  const errors=[];page.on('pageerror',e=>errors.push(e.message))
+ const qualityResponses=[];page.on('response',async r=>{if(r.url().includes('/api/chat/quality'))qualityResponses.push(r.request().method()+' '+r.status()+' '+(await r.text().catch(()=>'')).replace(/"customer_name":"[^"]*"/g,'"customer_name":"…"').slice(0,300))})
  const authResponses=[];page.on('response',async r=>{if(r.url().includes('/api/auth/'))authResponses.push(r.status()+' '+new URL(r.url()).pathname+' '+(await r.text().catch(()=>'')).slice(0,160))})
  await page.goto(base+'/entrar')
  await page.getByLabel('E-mail',{exact:true}).fill(process.env.E2E_EMAIL)
@@ -85,7 +88,11 @@ try{
  await panel.getByLabel('Nota 5 de 5').waitFor({timeout:30000})
  await panel.getByLabel('Observação da revisão').fill('Revisão de staging: atendimento validado.')
  await panel.getByRole('button',{name:'Marcar como revisado'}).click()
- await panel.getByText('Revisado',{exact:true}).waitFor()
+ await panel.getByText('Revisado',{exact:true}).waitFor().catch(async error=>{
+  // What the panel showed instead, and what the review and list calls answered.
+  console.error(JSON.stringify({review_ui_failed:true,panel:(await panel.innerText().catch(()=>'')).slice(0,800),quality:qualityResponses,errors}))
+  throw error
+ })
  assert.deepEqual(errors,[])
 }finally{await browser.close()}
 const reviewed=(await api('/api/chat/quality')).body.items.find(i=>i.id===thread)
