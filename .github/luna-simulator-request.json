@@ -1,5 +1,5 @@
 {
-  "run": true,
+  "run": false,
   "conversations": 30,
   "seed": 1,
   "budget_usd": 0.45,
