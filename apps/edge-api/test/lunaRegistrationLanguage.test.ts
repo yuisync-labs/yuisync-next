@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { registrationIssue } from '../src/luna/registrationLanguage'
+import { onlyBuying, registrationIssue } from '../src/luna/registrationLanguage'
 
 // A new customer also gives what the store asks; these tests vary only the names.
 const owner = { tutor_birth_date: '1990-05-14', cpf: '52998224725', postal_code: '36880000', address_number: '191' }
@@ -41,5 +41,13 @@ describe('registration asks what the store asks', () => {
     expect(check(owner, said)?.instruction).toContain('CPF do tutor')
     expect(check(owner, said + ' CPF 52998224725, nasci 14-5-90, cep 36880000, casa 191')).toBeNull()
     expect(check({ ...owner, cpf: '11111111111' }, said + ownerSaid)?.instruction).toContain('CPF do tutor')
+  })
+  it('compra sem agendamento dispensa o pet; agendamento ainda exige', () => {
+    const said = 'Sou o Tiago, quero só a ração.'
+    expect(registrationIssue({ ...owner, customer_name: 'Tiago' }, said + ownerSaid, true, true)).toBeNull()
+    expect(registrationIssue({ ...owner, customer_name: 'Tiago' }, said + ownerSaid, true, false)).toMatchObject({ code: 'PET_NAME_NOT_SAID' })
+    expect(onlyBuying('quero 2 da ultralife frango, vou buscar na loja')).toBe(true)
+    expect(onlyBuying('qual marca de ração vocês têm?')).toBe(true)
+    expect(onlyBuying('quero marcar um banho')).toBe(false)
   })
 })

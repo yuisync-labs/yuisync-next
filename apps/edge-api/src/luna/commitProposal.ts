@@ -133,7 +133,7 @@ export async function reconcileProposalOperation(database: D1Database, context: 
     existing = await database.prepare(`SELECT id FROM sales WHERE tenant_id=?1 AND module_id=?2 AND operation_key=?3 LIMIT 1`)
       .bind(context.tenantId, context.moduleId, operationKey).first<{ id: string }>()
   } else if (proposal.operation_kind.endsWith('_registration')) {
-    const receipt = await database.prepare(`SELECT pet_id AS id FROM luna_registration_receipts WHERE tenant_id=?1 AND module_id=?2 AND proposal_id=?3`).bind(context.tenantId,context.moduleId,proposal.id).first<{ id: string }>()
+    const receipt = await database.prepare(`SELECT COALESCE(pet_id,customer_id) AS id FROM luna_registration_receipts WHERE tenant_id=?1 AND module_id=?2 AND proposal_id=?3`).bind(context.tenantId,context.moduleId,proposal.id).first<{ id: string }>()
     existing = receipt
   }
   if (!existing) return { ok: false, code: 'COMMIT_STATE_UNCERTAIN', retryable: false }

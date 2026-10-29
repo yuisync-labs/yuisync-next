@@ -23,7 +23,7 @@ import { addressKept, lastHourSaid, nextBookingStep, oneLegSaid, weightFromSaid,
 import { publishTableInvalidation } from '../realtimeApi'
 import { claimsDone, validateThinkReply, withoutInternalErrors, zonedIsoTime } from './thinkPresentation'
 import { findConfirmationTarget } from './commitProposal'
-import { registrationComplete, registrationIssue, registrationStatus } from './registrationLanguage'
+import { onlyBuying, registrationComplete, registrationIssue, registrationStatus } from './registrationLanguage'
 import { withPostalAddress } from './postalCode'
 
 type DraftInput={operation_id:string;kind:'cart'|'booking'|'registration';prepare?:boolean;changes:DraftChange[]}
@@ -255,7 +255,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       const hour=/^(date|slot)$/.test(s.step)?lastHourSaid(await this.saidText()):null,day=hour!==null&&dateSaid(await this.saidText())
       services+='\nAGENDAMENTO '+id+' (etapa decidida pelo servidor): já tem '+(s.done.join(', ')||'nada')+'. Próxima etapa: '+s.step+'. '+s.instruction+(day?' O cliente já disse o dia e o horário ('+hour+'h) numa mensagem anterior: consulte get_available_slots com eles agora; não pergunte de novo.':'')+' Se o cliente já disse dados de etapas seguintes, salve-os também; pergunte o que faltar numa mensagem só.'}}
     // A purchase also needs a customer record, asked for only when the order is about to be closed.
-    if(unregistered&&topics.commerce&&!t.confirm)services+='\nCLIENTE SEM CADASTRO: busque e monte o carrinho normalmente. Para fechar o pedido ele precisa de cadastro: o cadastro pede nome do tutor, data de nascimento, CPF, CEP da rua, número da casa e ponto de referência, nome, espécie e raça do pet (raça e porte não são nome); pergunte tudo o que faltar numa mensagem só e use prepare_customer_registration só com dados ditos por ele. Depois de confirmado, siga com o pedido.'+'\n'+registrationStatus(await this.orderedSaid())
+    if(unregistered&&topics.commerce&&!t.confirm)services+='\nCLIENTE SEM CADASTRO: busque e monte o carrinho normalmente. Para fechar o pedido ele precisa de cadastro: o cadastro pede nome do tutor, data de nascimento, CPF, CEP da rua, número da casa e ponto de referência. Numa compra o pet é opcional: não peça o pet nem diga que é obrigatório; se ele disser nome e raça do pet, inclua. Com entrega, o endereço sai do cadastro (CEP e número): peça o cadastro, não rua e bairro separados. Pergunte tudo o que faltar numa mensagem só e use prepare_customer_registration só com dados ditos por ele. Depois de confirmado, siga com o pedido.'+'\n'+registrationStatus(await this.orderedSaid(),!topics.agenda)
     // Every required registration field said, in this very message: the server
     // makes the registration summary instead of letting the model ask again.
     if(unregistered&&!t.confirm&&/\d{5}-?\d{3}|\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}/.test(text)&&registrationComplete(await this.orderedSaid())&&!await db.prepare("SELECT 1 x FROM luna_proposals WHERE tenant_id=? AND module_id='petshop' AND conversation_id=? AND operation_kind='customer_registration' AND status='awaiting_confirmation' LIMIT 1").bind(c.tenantId,c.conversationId).first()){this.updateTurn({register:true},ctx.requestId);services+='\nCADASTRO COMPLETO: chame prepare_customer_registration agora com os dados que o cliente disse.'}
@@ -331,7 +331,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       return {...result,data:{...data,slots:(data.slots as string[]).map(slot=>zonedIsoTime(slot,timezone)),options:(data.options as Record<string,unknown>[]).map(option=>({...option,scheduled_at:zonedIsoTime(String(option.scheduled_at),timezone)})),instruction:'Horários já estão no fuso da loja com offset explícito. Fale local_date/local_time e copie scheduled_at exatamente ao salvar o rascunho. Não some nem subtraia horas. Uma consulta não reserva a vaga. Se o horário que o cliente pediu está em options, salve agora serviço, pet, scheduled_at e o que mais ele disse (ex.: eu levo = transport_mode self) com update_draft prepare:true; não pergunte se ele confirma o horário, porque o resumo já pede a confirmação.'}}
     }})
     tools.search_services=tool({description:'Consulta serviços, preço, duração e faixa de peso reais. Informe pet_id conhecido para limitar ao próprio pet. Query curta: banho, tosa, consulta. Não confirma vaga.',inputSchema:z.object({query:z.string().min(1).max(120),pet_id:z.string().optional()}).strict(),execute:({query,pet_id})=>this.searchServices(query,pet_id)})
-    tools.search_products=tool({description:'Consulta catálogo e estoque com TODOS os critérios pedidos, inclusive peso e linha. Não escolha marca pelo cliente. needs_refinement: pergunte refinement sem escolher opções. query=nome/família; características em filters. Cama: query=cama ou subtype=bed. Peso do pet não define porte/embalagem. Preserve search_key e filtros; remover exige consentimento. Até 3 produtos.',inputSchema:catalogInput,execute:async rawInput=>{const input={...rawInput,search_key:normalizeSearchKey(rawInput.search_key)},c=this.turn().context;const found=await thinkCatalogSearch(this.db,c,this.state.catalog[input.search_key]??emptyMemory(),input,this.text());const catalog={...this.state.catalog};delete catalog[input.search_key];catalog[input.search_key]=found.memory;this.setState({...this.state,catalog:Object.fromEntries(Object.entries(catalog).slice(-12))});return {ok:true,data:compactThinkFacts(found.result)}}})
+    tools.search_products=tool({description:'Consulta catálogo e estoque com TODOS os critérios pedidos, inclusive peso e linha. Não escolha marca pelo cliente. needs_refinement: pergunte refinement sem escolher opções. query=nome/família; características em filters. Cama: query=cama ou subtype=bed. Peso do pet não define porte/embalagem. Preserve search_key e filtros; remover exige consentimento. Até 3 produtos.',inputSchema:catalogInput,execute:async rawInput=>{const input={...rawInput,search_key:normalizeSearchKey(rawInput.search_key)},c=this.turn().context;const found=await thinkCatalogSearch(this.db,c,this.state.catalog[input.search_key]??emptyMemory(),input,this.text()+await this.petBreeds());const catalog={...this.state.catalog};delete catalog[input.search_key];catalog[input.search_key]=found.memory;this.setState({...this.state,catalog:Object.fromEntries(Object.entries(catalog).slice(-12))});return {ok:true,data:compactThinkFacts(found.result)}}})
     tools.consultar_produto=tool({description:'Detalhes de um ID realmente apresentado em busca anterior. Não confirma indicação clínica.',inputSchema:z.object({product_id:z.string().min(1)}).strict(),execute:async({product_id})=>compactThinkFacts(await getProduct(this.db,product_id,Object.values(this.state.catalog).flatMap(m=>m.lastProductIds),this.turn().context.tenantId))})
     tools.get_customer_history=tool({description:'Últimas compras e serviços concluídos do próprio cliente. Sem histórico, peça identificação do produto; reconsulte preços atuais.',inputSchema:z.object({}).strict(),execute:()=>customerHistory(this.db,this.turn().context)})
     return tools
@@ -359,7 +359,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
         if(index<0){index=t.events.length;this.updateTurn({events:[...t.events,key]})}
         if(index>=10)return fail('TOOL_BUDGET_EXCEEDED')
         const ctx={...t.context,actionIndex:index}
-        if(d.name==='prepare_customer_registration'||d.name==='prepare_pet_registration'){const issue=registrationIssue(input,await this.inboundText(ctx),d.name==='prepare_customer_registration');if(issue)return {...fail(issue.code),instruction:issue.instruction}}
+        if(d.name==='prepare_customer_registration'||d.name==='prepare_pet_registration'){const said=await this.inboundText(ctx),issue=registrationIssue(input,said,d.name==='prepare_customer_registration',onlyBuying(said)&&!await this.hasBooking(ctx));if(issue)return {...fail(issue.code),instruction:issue.instruction}}
         if(d.name==='prepare_customer_registration'&&this.env.LUNA_POSTAL_LOOKUP==='viacep'){const filled=await withPostalAddress(input);if(filled.notFound)return {...fail('POSTAL_CODE_NOT_FOUND'),instruction:'Esse CEP não existe. Peça para o cliente conferir o CEP; os outros dados já estão certos.'};Object.assign(input,filled.input)}
         const result=d.name.startsWith('draft_')?await executeDraftTool(this.db,registry,d.name,input,ctx):await registry.execute(d.name,input,ctx)
         if(d.name==='commit_confirmed_proposal'&&result.ok){
@@ -480,6 +480,15 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
   private async inboundText(c=this.turn().context){
     const said=await this.db.prepare("SELECT group_concat(content_text,' ') text FROM (SELECT content_text FROM chat_messages WHERE tenant_id=? AND module_id='petshop' AND thread_id=? AND direction='inbound' ORDER BY created_at_ms DESC LIMIT 30)").bind(c.tenantId,c.conversationId).first<{text:string|null}>()
     return (said?.text??'')+' '+this.text()
+  }
+  // Breeds on file are evidence for the porte of a food search ("ração pro Fred").
+  private async petBreeds(){
+    const customer=await createLunaToolRegistry(this.db).execute('get_customer_context',{},this.turn().context)
+    const pets=customer.ok&&Array.isArray(record(customer.data).pets)?record(customer.data).pets as Record<string,unknown>[]:[]
+    return pets.map(p=>p.breed?' '+String(p.breed):'').join('')
+  }
+  private async hasBooking(c=this.turn().context){
+    return Object.values((await new LunaConversationRepository(this.db).loadState(c)).state.operations).some(op=>op.kind==='booking'&&op.status!=='cancelled')
   }
   private async isRegistration(proposal_id:string){
     const c=this.turn().context,row=await this.db.prepare("SELECT operation_kind FROM luna_proposals WHERE tenant_id=? AND module_id='petshop' AND conversation_id=? AND id=?").bind(c.tenantId,c.conversationId,proposal_id).first<{operation_kind:string}>()

@@ -23,7 +23,10 @@ const NUMBERS: Record<string, number> = { um: 1, uma: 1, dois: 2, duas: 2, tres:
 const REGISTER = ['cadastrar', 'cadastra', 'cadastre', 'registrar', 'registra', 'salvar', 'salva', 'salve']
 const SUBJECTS: Record<string, string[]> = {
   product_order_create: ['pedido', 'compra', 'carrinho'],
-  appointment_create: ['horario', 'agendamento', 'banho', 'tosa', 'servico'],
+  appointment_create: ['horario', 'agendamento', 'banho', 'tosa', 'servico', 'agendar', 'marcar'],
+  // "sim, confirmo o cancelamento", "pode cancelar": the operation's own verb is no change request.
+  appointment_cancel: ['cancelamento', 'cancelar', 'cancela', 'desmarcar', 'desmarca', 'agendamento', 'horario', 'banho', 'tosa'],
+  appointment_reschedule: ['mudanca', 'reagendamento', 'remarcacao', 'remarcar', 'horario', 'agendamento', 'banho', 'tosa'],
   customer_registration: ['cadastro', 'dado', ...REGISTER],
   pet_registration: ['cadastro', 'dado', 'pet', ...REGISTER],
 }
@@ -164,12 +167,13 @@ export function consistentConfirmation(value: string, operationKind: string, pay
   }
   // Hesitation before the yes ("hmm, deixa eu ver... sim") is resolved by it;
   // hesitation in or after the clause that says yes holds it.
-  const says = (c: string[]) => c.some((w, i) => STRONG_YES.has(w) || w === 'pode' && GO_ON.has(c[i + 1] ?? ''))
+  const says = (c: string[]) => c.some((w, i) => STRONG_YES.has(w) || w === 'pode' && (GO_ON.has(c[i + 1] ?? '') || operationKind === 'appointment_cancel' && /^(cancelar|desmarcar)$/.test(c[i + 1] ?? '')))
   const split = kept.map(confirmationWords).filter(c => c.length), last = split.map(says).lastIndexOf(true)
   const words = split.flat()
   // Luna never takes payment: "pago no cartão, se não der me avisa" is no reservation about the summary.
   const aboutPayment = (c: string[]) => c.some(w => PAYMENT.has(w) || w === 'pagamento')
-  if (last < 0 || words.length > 60 || split.some(c => !aboutPayment(c) && c.some(w => CHANGE.has(w))) || split.slice(last).some(c => !aboutPayment(c) && c.some(w => HOLD.has(w)))) return false
+  const own = new Set(SUBJECTS[operationKind])
+  if (last < 0 || words.length > 60 || split.some(c => !aboutPayment(c) && c.some(w => CHANGE.has(w) && !own.has(w))) || split.slice(last).some(c => !aboutPayment(c) && c.some(w => HOLD.has(w)))) return false
   // A registration summary has no day or price: "confirmo, pode marcar o banho amanhã 14h" talks about the next step.
   if (operationKind.endsWith('registration')) return true
   // A stray letter is usually a product variant ("a Ração B").

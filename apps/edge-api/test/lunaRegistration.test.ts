@@ -45,6 +45,36 @@ describe('Luna registration — real Worker/local D1', () => {
     } finally { clock.mockRestore() }
   })
 
+  it('cliente que só compra é cadastrado sem pet (rodada 3, testes 6 a 8)', async () => {
+    const now = Date.now(), tenant = 'registration-without-pet'
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    const ctx = { tenantId: tenant, moduleId: 'petshop' as const, conversationId: 'buyer', customerAddress: '5532999990306', phoneNumberId: 'fixture', sourceMessageId: 'prepare', traceId: 'registration-buyer', executionMode: 'fixture' as const }
+    try {
+      await db.batch([
+        db.prepare(`INSERT INTO tenants(id,slug,name,status,created_at_ms,updated_at_ms) VALUES(?1,?1,'Cadastro fictício','active',?2,?2)`).bind(tenant, now),
+        db.prepare(`INSERT INTO chat_threads(tenant_id,module_id,id,channel,external_thread_id,status,last_message_at_ms,created_at_ms,updated_at_ms) VALUES(?1,'petshop',?2,'whatsapp',?3,'open',?4,?4,?4)`).bind(tenant,ctx.conversationId,ctx.customerAddress,now),
+      ])
+      await new LunaConversationRepository(db).ensureConversation(ctx)
+      const registry = createLunaToolRegistry(db)
+      const prepared = await registry.execute('prepare_customer_registration', { customer_name: 'Tiago Teste', tutor_birth_date:'1993-03-03',cpf:'01748332023',postal_code:'36889275',address_number:'306',address_reference:'casa amarela' }, ctx)
+      expect(prepared).toMatchObject({ ok: true })
+      const data = (prepared as { data: { proposal_id: string; proposal_version: number } }).data
+      const reference = { proposal_id: data.proposal_id, proposal_version: data.proposal_version }
+      const summary = renderProposalSummary((await loadPresentableProposals(db,ctx,[reference.proposal_id]))[0])
+      expect(summary).toContain('Cliente: Tiago Teste')
+      expect(summary).not.toMatch(/Pet:|Espécie/)
+      await db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop','out',?2,'outbound','assistant',?3,?4)`).bind(tenant,ctx.conversationId,summary,now).run()
+      await recordProposalPresentation(db,ctx,[reference.proposal_id],'out')
+      clock.mockReturnValue(now+1)
+      await db.prepare(`INSERT INTO chat_messages(tenant_id,module_id,id,thread_id,external_message_id,direction,actor_type,content_text,created_at_ms) VALUES(?1,'petshop','confirm',?2,'confirm','inbound','customer','pode cadastrar',?3)`).bind(tenant,ctx.conversationId,Date.now()).run()
+      const confirmed = { ...ctx, sourceMessageId: 'confirm' }
+      expect(await registry.execute('commit_confirmed_proposal', reference, confirmed)).toMatchObject({ ok: true, data: { operation_kind: 'customer_registration', idempotent: false } })
+      expect(await registry.execute('commit_confirmed_proposal', reference, confirmed)).toMatchObject({ ok: true, data: { idempotent: true } })
+      expect(await db.prepare('SELECT name,document FROM clients WHERE tenant_id=?1').bind(tenant).all()).toMatchObject({ results: [{ name: 'Tiago Teste', document: '01748332023' }] })
+      expect((await db.prepare('SELECT COUNT(*) n FROM pets WHERE tenant_id=?1').bind(tenant).first<{n:number}>())!.n).toBe(0)
+    } finally { clock.mockRestore() }
+  })
+
   it('CPF já cadastrado vindo de outro número confirma a pessoa e liga o número ao cliente', async () => {
     const now = Date.now(), tenant = 'registration-cpf-link'
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now)

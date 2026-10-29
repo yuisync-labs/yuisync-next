@@ -24,29 +24,37 @@ export function addClassificationFilters(p:Preferences,conditions:string[],param
  if(p.foodForm){conditions.push('COALESCE(x.food_form,a.food_form)=?');params.push(p.foodForm);}
  for(const [key,facet] of [['material','material'],['color','color'],['flavor','flavor']] as const){const v=p[key];if(v){let condition='EXISTS(SELECT 1 FROM catalog_product_profile_values v WHERE v.tenant_id=p.tenant_id AND v.module_id=p.module_id AND v.product_id=p.id AND v.facet=? AND v.value_text=? COLLATE NOCASE)';params.push(facet,v);if(key==='flavor'){condition="("+condition+" OR (x.product_id IS NULL AND p.name LIKE ? ESCAPE '\\'))";params.push('%'+v.replace(/[\\%_]/g,'\\$&')+'%');}conditions.push(condition);}}
 }
-export type Refinement={field:keyof Preferences;question:string;options:{value:string|number;label:string;count:number}[]};
-const labels:Record<string,Record<string,string>>={species:{dog:'cachorro',cat:'gato',bird:'ave',rodent:'roedor',rabbit:'coelho',fish:'peixe'},lifeStage:{puppy:'filhote',adult:'adulto',senior:'sênior'},saleForm:{bulk:'a granel',packaged:'pacote fechado'},foodForm:{dry:'seca',wet:'úmida'},subtype:subtypeLabels};
-const questions:Partial<Record<keyof Preferences,string>>={subtype:'Qual tipo de produto você procura?',species:'É para qual animal?',brand:'Qual marca você prefere?',lifeStage:'É para qual fase da vida?',saleForm:'Você prefere a granel ou pacote fechado?',packageWeightGrams:'Qual peso de embalagem você procura?',foodForm:'Você procura ração seca ou úmida?',netVolumeMl:'Qual volume do produto você procura?',capacityMl:'Qual capacidade você procura?',sizeLabel:'Qual tamanho você procura?',sizeNumber:'Qual número de tamanho você procura?',packCount:'Quantas unidades por embalagem você procura?',material:'Qual material você prefere?',color:'Qual cor você prefere?',flavor:'Qual sabor você prefere?'};
+const TRIAGE=new Set<string>(['species','animalSize','lifeStage']);
+export type Refinement={field:keyof Preferences;question:string;options:{value:string|number;label:string;count:number}[];fields?:(keyof Preferences)[]};
+const labels:Record<string,Record<string,string>>={animalSize:{small:'pequeno',medium:'médio',large:'grande',giant:'gigante'},species:{dog:'cachorro',cat:'gato',bird:'ave',rodent:'roedor',rabbit:'coelho',fish:'peixe'},lifeStage:{puppy:'filhote',adult:'adulto',senior:'sênior'},saleForm:{bulk:'a granel',packaged:'pacote fechado'},foodForm:{dry:'seca',wet:'úmida'},subtype:subtypeLabels};
+const questions:Partial<Record<keyof Preferences,string>>={animalSize:'Qual o porte ou a raça do pet?',subtype:'Qual tipo de produto você procura?',species:'É para qual animal?',brand:'Qual marca você prefere?',lifeStage:'É para qual fase da vida?',saleForm:'Você prefere a granel ou pacote fechado?',packageWeightGrams:'Qual peso de embalagem você procura?',foodForm:'Você procura ração seca ou úmida?',netVolumeMl:'Qual volume do produto você procura?',capacityMl:'Qual capacidade você procura?',sizeLabel:'Qual tamanho você procura?',sizeNumber:'Qual número de tamanho você procura?',packCount:'Quantas unidades por embalagem você procura?',material:'Qual material você prefere?',color:'Qual cor você prefere?',flavor:'Qual sabor você prefere?'};
 export async function chooseRefinement(db:D1Database,query:{from:string;params:(string|number)[]},p:Preferences,unrestricted:readonly (keyof Preferences)[],food:boolean):Promise<Refinement>{
  const missing=(key:keyof Preferences)=>p[key]==null&&!unrestricted.includes(key)&&!(key==='packageWeightGrams'&&p.anyWeight);
- if(food&&p.productType==='feed'&&missing('species')&&!p.productName)return {field:'species',question:'É para qual animal?',options:[]};
+ // Triage asks what is missing in ONE message (kai, 29/10), never one question per reply.
+ if(food&&p.productType==='feed'&&missing('species')&&!p.productName)return {field:'species',fields:['species','animalSize','lifeStage'],question:'É para cachorro ou gato? Qual o porte ou a raça, e é filhote, adulto ou idoso?',options:[]};
  const candidates:[keyof Preferences,string][]=[
  ...(!food?[['subtype','x.subtype'] as [keyof Preferences,string]]:[]),
  ['species',"(SELECT GROUP_CONCAT(s.species) FROM catalog_product_profile_species s WHERE s.tenant_id=p.tenant_id AND s.module_id=p.module_id AND s.product_id=p.id)"],
- ['brand','COALESCE(x.brand_label,a.brand_label)'],['lifeStage','COALESCE(x.life_stage,a.life_stage)'],
+ ...(food?[['animalSize','(SELECT GROUP_CONCAT(z.animal_size) FROM catalog_product_sizes z WHERE z.tenant_id=p.tenant_id AND z.module_id=p.module_id AND z.product_id=p.id)'] as [keyof Preferences,string]]:[]),
+ ['lifeStage','COALESCE(x.life_stage,a.life_stage)'],['brand','COALESCE(x.brand_label,a.brand_label)'],
  ['saleForm',foodSaleForm],['packageWeightGrams','COALESCE(x.net_weight_grams,a.package_weight_grams)'],
  ['foodForm','COALESCE(x.food_form,a.food_form)'],['netVolumeMl','x.net_volume_ml'],['capacityMl','x.capacity_ml'],
  ['sizeLabel','x.size_label'],['sizeNumber','x.size_number'],['packCount','x.pack_count'],
  ...(['material','color','flavor'] as const).map(k=>[k,`(SELECT v.value_text FROM catalog_product_profile_values v WHERE v.tenant_id=p.tenant_id AND v.module_id=p.module_id AND v.product_id=p.id AND v.facet='${k}' ORDER BY v.ordinal LIMIT 1)`] as [keyof Preferences,string])];
+ const found:Refinement[]=[];
  for(const [field,expr] of candidates){
   if(!missing(field)||field==='saleForm'&&!food||field==='packageWeightGrams'&&p.saleForm==='bulk')continue;
   const r=await db.prepare(`SELECT ${expr} value,COUNT(*) count ${query.from} GROUP BY value HAVING value IS NOT NULL AND value<>'' ORDER BY count DESC,value LIMIT 6`).bind(...query.params).all<{value:string|number;count:number}>();
   if(!r.success)throw Error('CATALOG_FACETS_FAILED');
   // Unknown classifications and multi-species values cannot establish suitability.
-  const values=r.results.filter(v=>field!=='species'||!String(v.value).includes(',')).filter(v=>field!=='subtype'||!String(v.value).endsWith('_unspecified'));
+  const values=r.results.filter(v=>field!=='species'&&field!=='animalSize'||!String(v.value).includes(',')).filter(v=>field!=='subtype'||!String(v.value).endsWith('_unspecified'));
   if(values.length<2)continue;
   const options=values.map(v=>({...v,label:labels[field]?.[String(v.value)]??(field==='packageWeightGrams'?`${Number(v.value)/1000} kg`:field==='netVolumeMl'||field==='capacityMl'?`${v.value} ml`:String(v.value))}));
-  return {field,options,question:`${questions[field]} Há opções como ${options.slice(0,4).map(v=>v.label).join(', ')}.`};
+  found.push({field,options,question:`${questions[field]} Há opções como ${options.slice(0,4).map(v=>v.label).join(', ')}.`});
+  // Porte and fase go together; then marca and granel/pacote together.
+  if(found.length===(TRIAGE.has(found[0].field)?3:2)||TRIAGE.has(found[0].field)&&!TRIAGE.has(field))break;
  }
+ const asked=found[0]&&TRIAGE.has(found[0].field)?found.filter(f=>TRIAGE.has(f.field)):found;
+ if(asked.length)return {...asked[0],fields:asked.map(f=>f.field),options:asked.flatMap(f=>f.options),question:asked.map(f=>f.question).join(' ')};
  return {field:'productName',options:[],question:'Qual produto específico você procura? Pode informar o nome ou uma característica que deseja.'};
 }

@@ -11,13 +11,15 @@ const GENERIC_PEOPLE = new Set(['cliente', 'tutor', 'tutora', 'dono', 'dona', 'c
 // "se chama Lulu", "o nome dela é Lulu", "meu pet é o Golden".
 const NAMING = / (?:chama|chamad[oa]|nome (?:dele |dela |do pet )?e|e o|e a) $/
 const looksLikeBreed = (name: string) => plain(name).trim().split(' ').some(word => SIZE_WORDS.has(word) || BREED_STEMS.some(stem => stem.length <= 4 ? word === stem || (stem.length === 4 && word.startsWith(stem)) : word.startsWith(stem)))
-export function registrationIssue(args: Record<string, unknown>, said: string, newCustomer: boolean) {
+// petOptional: a new customer who only buys may be registered without a pet.
+export function registrationIssue(args: Record<string, unknown>, said: string, newCustomer: boolean, petOptional = false) {
   const text = plain(said), pet = String(args.pet_name ?? '').trim(), breed = String(args.breed ?? '').trim(), customer = String(args.customer_name ?? '').trim()
   if (newCustomer) {
     const words = plain(customer).trim().split(' ').filter(w => w && !/^\d+$/.test(w))
     if (!words.length || words.every(w => GENERIC_PEOPLE.has(w)) || !words.some(w => text.includes(' ' + w + ' ')))
       return { code: 'CUSTOMER_NAME_NOT_SAID', instruction: 'O cliente ainda não disse o próprio nome. Pergunte como ele se chama; não use nome de contato nem invente.' }
   }
+  if (newCustomer && petOptional && !pet && args.species == null) return tutorIssue(args, said, true)
   const at = pet ? text.indexOf(plain(pet)) : -1
   if (at < 0) return { code: 'PET_NAME_NOT_SAID', instruction: 'O cliente ainda não disse o nome do pet. Pergunte como o pet se chama.' }
   if (breed && plain(breed) === plain(pet) || looksLikeBreed(pet) && ![...text.matchAll(new RegExp(plain(pet).trim(), 'g'))].some(m => NAMING.test(text.slice(0, m.index))))
@@ -27,7 +29,11 @@ export function registrationIssue(args: Record<string, unknown>, said: string, n
     return { code: 'WEIGHT_NOT_SAID', instruction: 'O cliente não disse esse peso. Use weight_kg null; uma faixa não é o peso do pet.' }
   if (breed && plain(breed).trim().split(' ').every(w => SIZE_WORDS.has(w)))
     return { code: 'BREED_IS_SIZE', instruction: `"${breed}" é porte, não raça. Use breed null ou a raça que o cliente disse.` }
-  if (newCustomer) {
+  return newCustomer ? tutorIssue(args, said, false) : null
+}
+
+function tutorIssue(args: Record<string, unknown>, said: string, petless: boolean) {
+  {
     const digits = said.replace(/\D+/g, ' '), compact = said.replace(/\D+/g, '')
     const birth = String(args.tutor_birth_date ?? '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
     const missing = [
@@ -36,7 +42,7 @@ export function registrationIssue(args: Record<string, unknown>, said: string, n
       !args.postal_code || !compact.includes(String(args.postal_code)) ? 'CEP da rua' : '',
       !args.address_number || !(' ' + digits + ' ').includes(' ' + String(args.address_number).replace(/\D+/g, '') + ' ') && !plain(said).includes(plain(String(args.address_number))) ? 'número da casa' : '',
     ].filter(Boolean)
-    if (missing.length) return { code: 'REGISTRATION_DATA_NOT_SAID', instruction: `Para o cadastro a loja precisa, ditos pelo cliente: ${missing.join(', ')}. Peça numa mensagem só, junto com ponto de referência e nome e raça do pet se faltarem. Não invente nem complete dados.` }
+    if (missing.length) return { code: 'REGISTRATION_DATA_NOT_SAID', instruction: `Para o cadastro a loja precisa, ditos pelo cliente: ${missing.join(', ')}. Peça numa mensagem só, junto com ponto de referência${petless ? '' : ' e nome e raça do pet'} se faltarem. Não invente nem complete dados.` }
   }
   return null
 }
@@ -50,7 +56,10 @@ export function registrationComplete(said: string): boolean {
   return Boolean(cpf && validCpf(cpf)) && /(?<!\d)\d{1,2}[/.-]\d{1,2}[/.-](?:\d{4}|\d{2})(?!\d)/.test(said) && /(?<![\d.])\d{5}-?\d{3}(?![\d-])/.test(said)
 }
 
-export function registrationStatus(said: string): string {
+// A customer who never asked for a service is only buying: the pet is optional.
+export const onlyBuying = (said: string) => !/\b(banho|tosa|agend\w*|hidrata\w*|vacina\w*|consulta|motodog|horario)\b/.test(plain(said))
+
+export function registrationStatus(said: string, petOptional = false): string {
   const cpf = [...said.matchAll(/(?<![\d.])(\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?!\d)/g)].at(-1)?.[1].replace(/\D/g, '')
   const told = [
     /(?<!\d)\d{1,2}[/.-]\d{1,2}[/.-](?:\d{4}|\d{2})(?!\d)/.test(said) ? 'data de nascimento' : '',
@@ -62,6 +71,6 @@ export function registrationStatus(said: string): string {
     + (cpf && !validCpf(cpf) ? 'o último CPF que o cliente mandou é inválido (os dígitos não conferem). Diga isso a ele e peça para conferir o CPF; não agradeça como se estivesse certo nem siga para dia, horário ou resumo antes do cadastro. ' : '')
     + (told.length ? 'Já disse e está válido: ' + told.join(', ') + '. ' : '')
     + (missing.length ? 'Ainda não disse: ' + missing.join(', ') + '. ' : '')
-    + (!missing.length && cpf && validCpf(cpf) ? 'Os dados obrigatórios do tutor estão completos: com o nome do tutor e o nome e a raça do pet ditos, chame prepare_customer_registration nesta resposta. A espécie vem da raça (shih tzu, poodle, husky = cachorro; siamês, persa = gato) e o peso fica null se ele não disse; não peça isso antes de mostrar o cadastro. ' : '')
+    + (!missing.length && cpf && validCpf(cpf) ? (petOptional ? 'Os dados obrigatórios do tutor estão completos. É uma compra: o pet é opcional; com o nome do tutor dito, chame prepare_customer_registration nesta resposta, com o pet só se ele disse nome e raça, e não peça o pet. ' : '') + 'Os dados obrigatórios do tutor estão completos: com o nome do tutor e o nome e a raça do pet ditos, chame prepare_customer_registration nesta resposta. A espécie vem da raça (shih tzu, poodle, husky = cachorro; siamês, persa = gato) e o peso fica null se ele não disse; não peça isso antes de mostrar o cadastro. ' : '')
     + 'Peça só o que falta ou está errado, nunca a lista toda de novo. Enquanto o cadastro não for confirmado, não pergunte se ele confirma o agendamento.'
 }

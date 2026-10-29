@@ -5,7 +5,7 @@ import { isConversationCustomer } from './customerIdentity'
 import { membershipAllows, type OperationMembership } from '../operationAuthorization'
 import type { InternalChatJob } from './internalChatTurn'
 import type { LunaExecutionContext, LunaToolResult } from './contracts'
-import { preferencesSchema, applyPreferences, searchProducts, type Memory } from './thinkCatalog/catalog'
+import { anyChoiceSaid, preferencesSchema, applyPreferences, searchProducts, type Memory } from './thinkCatalog/catalog'
 import { ensureCatalogProfiled } from './thinkCatalog/autoClassify'
 import { resolveCatalogCategory, resolveVolumeDimension, searchOtherProducts } from './thinkCatalog/other-catalog'
 import { supportedClassificationChanges, validateCatalogChanges, authorizedCatalogRemoval } from './thinkCatalog/validation'
@@ -50,11 +50,28 @@ export async function thinkCatalogSearch(db:D1Database,c:LunaExecutionContext,be
   await resolveCatalogCategory(db,changes,c.tenantId)
   await resolveVolumeDimension(db,changes,before.preferences,before.refinement?.field,c.tenantId)
   const removal=authorizedCatalogRemoval(before.preferences,input.remove,text)
-  const memory=applyPreferences(before,{...changes,remove:removal.allowed.filter(k=>!(k in changes)),reset:input.reset,evidence:text},text,c.sourceMessageId)
-  const result=memory.preferences.catalogCategory?await searchOtherProducts(db,memory.preferences,{offset:input.offset},memory.unrestricted,c.tenantId):await searchProducts(db,memory.preferences,{offset:input.offset},memory.unrestricted,c.tenantId)
+  const applied=applyPreferences(before,{...changes,remove:removal.allowed.filter(k=>!(k in changes)),reset:input.reset,evidence:text},text,c.sourceMessageId)
+  // "a mais barata", "qual você tem aí": the customer does not know the brand or
+  // the package, so those questions stop and the shelf is shown, cheapest first.
+  const anyChoice=anyChoiceSaid(text)
+  const memory=anyChoice?{...applied,unrestricted:[...new Set([...(applied.unrestricted??[]),...(['brand','saleForm','packageWeightGrams','productLine'] as const).filter(k=>applied.preferences[k]==null)])]}:applied
+  const result=memory.preferences.catalogCategory?await searchOtherProducts(db,memory.preferences,{offset:input.offset},memory.unrestricted,c.tenantId):await searchProducts(db,memory.preferences,{offset:input.offset},memory.unrestricted,c.tenantId,text)
   const products=[]
   for(const p of result.products){const stock=await db.prepare("SELECT on_hand_milliunits,reserved_milliunits FROM inventory_balances WHERE tenant_id=? AND module_id='petshop' AND product_id=?").bind(c.tenantId,p.id).first<{on_hand_milliunits:number;reserved_milliunits:number}>();products.push({...p,available_milliunits:stock?Math.max(0,stock.on_hand_milliunits-stock.reserved_milliunits):null,stock_confirmed:stock!==null})}
-  return {memory:{...memory,lastProductIds:products.map(p=>p.id),lastOutOfStockProductIds:products.filter(p=>p.stock_confirmed&&p.available_milliunits===0).map(p=>p.id),refinement:'refinement' in result?result.refinement:undefined},result:{...result,products,...(Object.keys(checked.discarded).length?{ignored_filters:checked.discarded,ignored_filters_instruction:"Esses filtros inferidos pelo modelo JÁ foram descartados. Não precisa removê-los em outra chamada. Eles não comprovam características do produto."}:{}),...(removal.blocked.length?{retained_filters:removal.blocked}:{}),instruction:(result.status==='needs_refinement'?'Pergunte refinement: as opções dependem da escolha do cliente. Não preencha sozinho. ':'')+'Use apenas fatos retornados; campo omitido é desconhecido. Saldo disponível desconta reservas; stock_confirmed=false é desconhecido. Unidade de cobrança não confirmada. species_confirmation_required exige confirmar adequação. Sem resultado, preserve filtros; remoção exige consentimento explícito.'}}
+  // Everything found is out of stock: the same product in another flavor is the
+  // natural offer ("salmão" sold out, "frango" in stock), in the same reply.
+  const flavors=/^(frango|carne|salmao|peixe|cordeiro|atum|peru|figado|vegetais|legumes|arroz)$/
+  let alternatives:typeof products=[]
+  if(!memory.preferences.catalogCategory&&products.length&&products.every(p=>p.stock_confirmed&&p.available_milliunits===0)){
+    const strip=(v?:string|null)=>v?v.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().split(/\s+/).filter(w=>w&&!flavors.test(w)).join(' ')||null:v
+    const prefs={...memory.preferences,productName:strip(memory.preferences.productName),productLine:strip(memory.preferences.productLine),nameTerms:memory.preferences.nameTerms?.map(t=>strip(t)).filter((t):t is string=>!!t)??memory.preferences.nameTerms}
+    if(JSON.stringify(prefs)!==JSON.stringify(memory.preferences)){
+      const other=await searchProducts(db,prefs,{},memory.unrestricted,c.tenantId,text)
+      for(const p of other.products){if(products.some(o=>o.id===p.id))continue;const stock=await db.prepare("SELECT on_hand_milliunits,reserved_milliunits FROM inventory_balances WHERE tenant_id=? AND module_id='petshop' AND product_id=?").bind(c.tenantId,p.id).first<{on_hand_milliunits:number;reserved_milliunits:number}>();const available=stock?Math.max(0,stock.on_hand_milliunits-stock.reserved_milliunits):0;if(available>0)alternatives.push({...p,available_milliunits:available,stock_confirmed:true})}
+      alternatives=alternatives.slice(0,3)
+    }
+  }
+  return {memory:{...memory,lastProductIds:[...products,...alternatives].map(p=>p.id),lastOutOfStockProductIds:products.filter(p=>p.stock_confirmed&&p.available_milliunits===0).map(p=>p.id),refinement:'refinement' in result?result.refinement:undefined},result:{...result,products,...(alternatives.length?{in_stock_alternatives:alternatives,alternatives_instruction:'O produto pedido está sem estoque. Na mesma resposta, ofereça estas opções com estoque (nome e preço) sem esperar o cliente pedir.'}:{}),...(Object.keys(checked.discarded).length?{ignored_filters:checked.discarded,ignored_filters_instruction:"Esses filtros inferidos pelo modelo JÁ foram descartados. Não precisa removê-los em outra chamada. Eles não comprovam características do produto."}:{}),...(removal.blocked.length?{retained_filters:removal.blocked}:{}),instruction:(result.status==='needs_refinement'?'Pergunte refinement: as opções dependem da escolha do cliente. Não preencha sozinho. ':'')+'Use apenas fatos retornados; campo omitido é desconhecido. Saldo disponível desconta reservas; stock_confirmed=false é desconhecido. Unidade de cobrança não confirmada. species_confirmation_required exige confirmar adequação. Sem resultado, preserve filtros; remoção exige consentimento explícito.'}}
 }
 
 export async function customerHistory(db:D1Database,c:LunaExecutionContext) {

@@ -89,7 +89,10 @@ export function buildCatalogQuery(p:Preferences,keywords:readonly string[]=[],in
 }
 export type Product={id:string;name:string;price_cents:number;brand_label:string|null;sale_form:string|null;package_weight_grams:number|null;life_stage:string|null;review_state:string;subtype?:string|null;net_volume_ml?:number|null;capacity_ml?:number|null;size_label?:string|null;size_number?:number|null;pack_count?:number|null;food_form?:string|null;requires_professional_guidance?:number|null;attributes_json?:string|null;species_confirmation_required?:boolean;billing_unit?:'unknown';stock_confirmed?:false};
 const columns=`p.id,p.name,p.price_cents,COALESCE(x.brand_label,a.brand_label) brand_label,${foodSaleForm} sale_form,COALESCE(x.net_weight_grams,a.package_weight_grams) package_weight_grams,COALESCE(x.life_stage,a.life_stage) life_stage,COALESCE(x.review_state,a.review_state) review_state,${profileColumns}`;
-export async function searchProducts(db:D1Database,preferences:Preferences,input:unknown,unrestricted:readonly (keyof Preferences)[]=[],tenantId:string){
+const folded=(v:string)=>v.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase()
+// "a mais barata", "qual você tem aí": the customer leaves brand and package to the shelf.
+export const anyChoiceSaid=(said:string)=>/\b(mais barat\w*|mais em conta|menor preco|qualquer uma?|tanto faz|o que (?:tiver|voces? tem)|qual (?:voce|vc|voces|vcs) (?:tem|tiver)|quais (?:voce|vc|voces|vcs) tem)\b/.test(folded(said))
+export async function searchProducts(db:D1Database,preferences:Preferences,input:unknown,unrestricted:readonly (keyof Preferences)[]=[],tenantId:string,said=''){
  const {offset=0}=searchSchema.parse(input);await ensureFoodClassified(db,tenantId);let query=buildCatalogQuery(preferences,[],false,tenantId);
  let count=await db.prepare(`SELECT COUNT(*) AS total ${query.from}`).bind(...query.params).first<{total:number}>();if(!count)throw new Error('CATALOG_QUERY_FAILED');
  let speciesConfirmationRequired=false;
@@ -99,12 +102,17 @@ export async function searchProducts(db:D1Database,preferences:Preferences,input
   count=await db.prepare(`SELECT COUNT(*) AS total ${query.from}`).bind(...query.params).first<{total:number}>();if(!count)throw new Error('CATALOG_QUERY_FAILED');
   speciesConfirmationRequired=count.total>0;
  }
- if(count.total>12||(count.total>0&&preferences.productType==='feed'&&!preferences.species&&!preferences.productName&&!unrestricted.includes('species'))){
+ if(count.total>12&&!(anyChoiceSaid(said)&&preferences.species)||(count.total>0&&preferences.productType==='feed'&&!preferences.species&&!preferences.productName&&!unrestricted.includes('species'))){
   const facets=await db.prepare(`SELECT DISTINCT a.brand_label,a.life_stage,a.sale_form,a.package_weight_grams ${query.from} ORDER BY a.brand_label,a.package_weight_grams LIMIT 8`).bind(...query.params).all<{brand_label:string|null;life_stage:string|null;sale_form:string|null;package_weight_grams:number|null}>();
   const refinement=await chooseRefinement(db,query,preferences,unrestricted,true);
   return {status:'needs_refinement' as const,total:count.total,preferences,products:[],facets:facets.results,refinement,instruction:'Use a pergunta de refinamento baseada nos resultados. Não liste todo o catálogo nem repita perguntas já respondidas.'};
  }
- const result=await db.prepare(`SELECT ${columns} ${query.from} ORDER BY p.name,p.id LIMIT 4 OFFSET ?`).bind(...query.params,offset).all<Product>();if(!result.success)throw new Error('CATALOG_QUERY_FAILED');
+ // Only three products are shown: those in stock come first, then a package
+ // weight the customer said ("de 3 kg"), so alphabetical order never hides them.
+ const saidGrams=[...said.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|quilos?|kilos?|g|gr|gramas?)\b/g)].map(m=>Math.round(Number(m[1].replace(',','.'))*(m[2].startsWith('g')?1:1000))).at(-1)??0
+ const inStock="EXISTS(SELECT 1 FROM inventory_balances b WHERE b.tenant_id=p.tenant_id AND b.module_id=p.module_id AND b.product_id=p.id AND b.on_hand_milliunits-b.reserved_milliunits>0)"
+ const cheapest=/\b(mais barat\w*|mais em conta|menor preco)\b/.test(folded(said))?1:0
+ const result=await db.prepare(`SELECT ${columns} ${query.from} ORDER BY ${inStock} DESC,CASE WHEN ?=1 THEN p.price_cents END,COALESCE(x.net_weight_grams,a.package_weight_grams)=? DESC,p.name,p.id LIMIT 4 OFFSET ?`).bind(...query.params,cheapest,saidGrams,offset).all<Product>();if(!result.success)throw new Error('CATALOG_QUERY_FAILED');
  return {status:count.total===0?'no_matches' as const:'matches' as const,total:count.total,preferences,products:result.results.slice(0,3).map(p=>({...p,species_confirmation_required:speciesConfirmationRequired,billing_unit:'unknown' as const,stock_confirmed:false as const})),speciesConfirmationRequired,hasMore:result.results.length>3,instruction:'Use somente dados retornados. Estoque e unidade de cobrança não confirmados. Candidatos sem espécie exigem confirmação de adequação. Se não houver resultado, não remova filtros automaticamente.'};
 }
 export async function getProduct(db:D1Database,id:string,allowedIds:readonly string[],tenantId:string){

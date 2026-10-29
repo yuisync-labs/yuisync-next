@@ -10,7 +10,7 @@ export function renderProposalSummary(row: PresentableProposal): string {
   if(payload.grooming_machine_no!=null)lines.push(`Número da máquina: ${String(payload.grooming_machine_no)}`)
   if(payload.transport){const t=payload.transport as Record<string,unknown>;lines.push(`Transporte: ${String(t.label)} — ${money(t.fee_cents)}`,`Endereço: ${String(t.address)}, ${String(t.city)}`);if(t.reference)lines.push(`Referência: ${String(t.reference)}`)}
   if (row.operation_kind.endsWith('_registration')) {
-    lines.push(`Espécie: ${({ dog: 'Cachorro', cat: 'Gato', bird: 'Ave', rabbit: 'Coelho', fish: 'Peixe', other: 'Outro' } as Record<string, string>)[String(payload.species)] ?? String(payload.species)}`)
+    if (payload.species) lines.push(`Espécie: ${({ dog: 'Cachorro', cat: 'Gato', bird: 'Ave', rabbit: 'Coelho', fish: 'Peixe', other: 'Outro' } as Record<string, string>)[String(payload.species)] ?? String(payload.species)}`)
     if (payload.breed) lines.push(`Raça: ${String(payload.breed)}`)
     if (payload.weight_kg != null) lines.push(`Peso: ${String(payload.weight_kg)} kg`)
     if (payload.tutor_birth_date) lines.push(`Nascimento do tutor: ${String(payload.tutor_birth_date).split('-').reverse().join('/')}`)
@@ -51,7 +51,7 @@ export function renderThinkProposalSummary(row:PresentableProposal,timezone:stri
   const labels:Record<string,string>={product_order_create:'seu pedido',appointment_create:'o agendamento',appointment_reschedule:'a mudança de horário',appointment_cancel:'o cancelamento',customer_registration:'o cadastro',pet_registration:'o cadastro do pet'}
   const legacy=renderProposalSummary(row).split('\n')
   const payload=JSON.parse(row.payload_json) as Record<string,unknown>
-  const lines=legacy.map(line=>line.startsWith('Resumo para confirmação')?'Confira '+(labels[row.operation_kind]??'a operação')+':':line.startsWith('Data/hora:')?'Data e horário: '+new Intl.DateTimeFormat('pt-BR',{timeZone:timezone,dateStyle:'short',timeStyle:'short'}).format(Number(payload.scheduled_at_ms))+' ('+timezone+')':line)
+  const lines=legacy.map(line=>line.startsWith('Resumo para confirmação')?'Confira '+(labels[row.operation_kind]??'a operação')+':':line.startsWith('Data/hora:')?'Data e horário: '+new Intl.DateTimeFormat('pt-BR',{timeZone:timezone,dateStyle:'short',timeStyle:'short'}).format(Number(payload.scheduled_at_ms)):line)
   return lines.filter(line=>!line.startsWith('Cliente:')||Boolean(payload.customer_name)).join('\n')
 }
 

@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest'
-import {naturalConfirmation,requestsChange} from '../src/luna/confirmationLanguage'
+import {consistentConfirmation,naturalConfirmation,requestsChange} from '../src/luna/confirmationLanguage'
 import {command as c,createThinkHarness} from './fixtures/luna/thinkHarness'
 
 const racao={items:[{name:'Ração A',quantity:1}],fulfillment_type:'counter',total_cents:9000}
@@ -32,9 +32,11 @@ describe('confirmação natural de um resumo apresentado (frases da bateria de 2
   ['Quero cinco sachês pra retirar.',saches],
  ])('recusa: %s',(phrase,payload)=>expect(naturalConfirmation(phrase,'product_order_create',payload)).toBe(false))
  it('recusa horário novo no agendamento',()=>expect(naturalConfirmation('Confirmo o banho da Mel amanhã às dez.','appointment_create',banho)).toBe(false))
- it('não usa a gramática natural para cancelamento ou reagendamento',()=>{
-  expect(naturalConfirmation('Pode confirmar o cancelamento.','appointment_cancel',banho)).toBe(false)
-  expect(naturalConfirmation('Pode confirmar.','appointment_reschedule',banho)).toBe(false)
+ it('aceita o sim natural para cancelamento e reagendamento (rodada 3, teste 10)',()=>{
+  expect(naturalConfirmation('Pode confirmar.','appointment_reschedule',banho)).toBe(true)
+  expect(consistentConfirmation('sim, confirmo o cancelamento','appointment_cancel',banho,Date.now())).toBe(true)
+  expect(consistentConfirmation('pode cancelar','appointment_cancel',banho,Date.now())).toBe(true)
+  expect(consistentConfirmation('não, não cancela','appointment_cancel',banho,Date.now())).toBe(false)
  })
  it('distingue hesitação de pedido de mudança',()=>{
   expect(requestsChange('Não confirme o pedido ainda. Só estou conferindo o resumo.')).toBe(false)

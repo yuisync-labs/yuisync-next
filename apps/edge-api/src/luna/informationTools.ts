@@ -57,9 +57,12 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
     try { new Intl.DateTimeFormat('pt-BR', { timeZone: timezone }) } catch { return { ok: false, code: 'SCHEDULE_CONFIGURATION_UNAVAILABLE', retryable: false } }
     const ids = args.service_ids as string[]
     if (new Set(ids).size !== ids.length) return { ok: false, code: 'SERVICE_IDS_DUPLICATED', retryable: false }
-    const rows = await db.prepare(`SELECT id,name,default_duration_min FROM services WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND id IN (${ids.map((_, i) => `?${i + 3}`).join(',')})`)
+    // The model sometimes passes the service code or name instead of its id; each
+    // reference must still match exactly one active service.
+    const refs = ids.map((_, i) => `?${i + 3}`).join(',')
+    const rows = await db.prepare(`SELECT id,name,default_duration_min FROM services WHERE tenant_id=?1 AND module_id=?2 AND status='active' AND (id IN (${refs}) OR code IN (${refs}) OR name COLLATE NOCASE IN (${refs}))`)
       .bind(ctx.tenantId, ctx.moduleId, ...ids).all<{ id: string; name: string; default_duration_min: number }>()
-    if (rows.results.length !== ids.length) return { ok: false, code: 'SERVICE_NOT_FOUND', retryable: false }
+    if (rows.results.length !== ids.length) return { ok: false, code: 'SERVICE_NOT_FOUND', retryable: false, instruction: 'Use o id do serviço que veio de search_services e consulte de novo. Não diga ao cliente que o serviço não foi encontrado.' } as LunaToolResult
     const duration = rows.results.reduce((total, row) => total + row.default_duration_min, 0)
     if (!Number.isSafeInteger(duration) || duration <= 0 || duration > 1440) return { ok: false, code: 'SERVICE_DURATION_UNAVAILABLE', retryable: false }
     const policy = await loadSchedulePolicy(db, ctx.tenantId, ctx.moduleId)
