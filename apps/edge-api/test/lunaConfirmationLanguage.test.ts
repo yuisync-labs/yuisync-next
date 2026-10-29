@@ -59,6 +59,7 @@ describe('Luna yes in the customer own words', () => {
     ['sim confirma, quero pagar com cartao na entrega', golden],
     ['Sim, confirmo o pedido e o pagamento via PIX na retirada na loja.', ultralife],
     ['pode fechar os 2 pacotes', ultralife],
+    ['Confirmo sim, pode registrar pra mim, blz?', mel],
   ])('aceita: %s', (phrase, payload) => expect(consistentConfirmation(phrase, (payload as Record<string, unknown>).items ? 'product_order_create' : 'appointment_create', payload, now)).toBe(true))
   it('cadastro: o sim pode já falar do banho', () => {
     expect(consistentConfirmation('Confirmo o resumo certinho, pode finalizar o agendamento do banho amanhã 14h.', 'customer_registration', {}, now)).toBe(true)
@@ -74,6 +75,7 @@ describe('Luna yes in the customer own words', () => {
     ['Confirmo para retirada.', golden],
     ['sim, confirmo 3 pacotes', ultralife],
     ['Confirma pra entregar?', golden],
+    ['confirmo para as 10h, pode ser?', mel],
     ['pode me passar o preço da tosa', mel],
     ['ok, vou pensar e te falo', mel],
     ['confirmo, e marca a Luna também', mel],

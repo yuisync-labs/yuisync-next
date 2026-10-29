@@ -38,6 +38,19 @@ describe('rodada 1 do simulador',()=>{
   const found=r.tools.find(t=>t.name==='search_services'&&JSON.stringify(t.result).includes('tosa-total-p'))
   expect(found).toBeTruthy()
  },60000)
+ it('preço do cadastro dito de novo não passa para a loja',async()=>{
+  const h=await createThinkHarness(7805,'-sim1')
+  await applyQuatroPatasStore(h as never,simulatorScenarios(1,1)[0])
+  const r=await h.run('é R$ 85 mesmo a tosa total?',['Sim, a tosa total da Mel é R$ 85,00.'])
+  expect(r.result.status).toBe('replied')
+ },60000)
+ it('"tem vaga" sem consultar a agenda vira pergunta',async()=>{
+  const h=await createThinkHarness(7806,'-sim1')
+  await applyQuatroPatasStore(h as never,simulatorScenarios(1,1)[0])
+  const r=await h.run('oi, tem horário amanhã?',['Temos vaga amanhã às 9h!'])
+  expect(r.result.status).toBe('replied')
+  expect(r.result.reply).toContain('confiro a vaga')
+ },60000)
  it('reconhece promessa de feito',()=>{
   for(const yes of ['Seu pedido está confirmado para retirada na loja.','Sim, o MotoDog vai buscar a Mel na sexta-feira às 9h certinho.','Prontinho, ficou marcado!'])expect(claimsDone(yes),yes).toBe(true)
   for(const no of ['O MotoDog vai buscar a Mel na sexta às 9h e trazer de volta. Confirma?','Tem vaga sexta às 9h. Você vai levar a Mel?','O banho custa R$ 55,00.'])expect(claimsDone(no),no).toBe(false)

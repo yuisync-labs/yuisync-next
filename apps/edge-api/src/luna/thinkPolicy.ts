@@ -27,7 +27,8 @@ export function thinkTopics(text: string, capability?: string) {
 }
 const SERVICE_QUERIES = ['banho e tosa', 'banho', 'tosa', 'hidrata']
 // Service query the server can run before the model asks for it.
-export function serviceQuery(text: string) { const t = plain(text); return SERVICE_QUERIES.find(q => t.includes(q)) ?? null }
+// "banho com tosa total" asks for a tosa (which includes the bath).
+export function serviceQuery(text: string) { const t = plain(text); if (/\btosa (?:total|tesoura|maquina|na tesoura|na maquina)\b/.test(t)) return 'tosa'; return SERVICE_QUERIES.find(q => t.includes(q)) ?? null }
 // The pet the customer named, when exactly one of their pets has that name.
 export function namedPet<T extends { name?: unknown }>(text: string, pets: T[]) {
   const words = new Set(plain(text).split(/[^a-z0-9]+/))

@@ -141,7 +141,9 @@ const QUESTION = /\b(quanto|qual|quais|como|onde|quando|tem|teria|aceita|aceitam
 export function consistentConfirmation(value: string, operationKind: string, payload: JsonRecord, nowMs: number, timeZone = 'America/Sao_Paulo'): boolean {
   if (!SUBJECTS[operationKind]) return false
   // Questions about something else are set aside; a question that holds the yes is not a yes.
-  const clauses = value.split(/(?<=[.!?;\n])/).map(c => c.trim()).filter(Boolean)
+  // "confirmo, pode registrar, blz?": a tag question asks for agreement, not information.
+  const untagged = value.replace(/[,\s]+(?:blz|beleza|ok|ta|t[aá] bom|certo|pode ser|n[eé]|combinado)\s*\?+\s*$/i, '.')
+  const clauses = untagged.split(/(?<=[.!?;\n])/).map(c => c.trim()).filter(Boolean)
   const kept: string[] = []
   for (const clause of clauses) {
     if (!clause.endsWith('?')) { kept.push(clause); continue }

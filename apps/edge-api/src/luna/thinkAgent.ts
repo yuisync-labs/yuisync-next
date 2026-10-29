@@ -654,6 +654,8 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     let validation:{ok:boolean;reason?:string;unverifiedHour?:string}=rows.length?{ok:true}:validateThinkReply(reply,[...t.results,...known,...receiptRows.results.map(r=>({name:'validated_commit_receipt',result:JSON.parse(r.payload_json)}))],this.text(t))
     // A stock claim without data is rewritten, not handed off: the customer can still pick another product.
     if(!validation.ok&&/^STOCK_/.test(String(validation.reason))){console.log(JSON.stringify({event:'think_response_rewritten',reason:validation.reason}));reply='Não consegui confirmar se esse produto está disponível agora. Quer que eu procure uma opção parecida, ou prefere que alguém da loja confirme para você?';validation={ok:true}}
+    // "Tem vaga" before the agenda was checked: ask the time and check it, the customer keeps talking to Luna.
+    if(!validation.ok&&validation.reason==='SLOT_UNVERIFIED'){console.log(JSON.stringify({event:'think_response_rewritten',reason:validation.reason}));reply='Qual dia e horário você prefere? Eu confiro a vaga na agenda.';validation={ok:true}}
     if(!validation.ok)console.log(JSON.stringify({event:'think_response_rejected',reason:validation.reason,...('unverifiedHour' in validation?{unverified_hour:validation.unverifiedHour}:{})}))
     let handoff=t.results.some(r=>r.name==='handoff_to_human'&&record(r.result).ok===true)
     // "Vou encaminhar para um atendente" without the handoff tool: the store must really get the chat.
@@ -687,7 +689,9 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const pending=await this.db.prepare("SELECT payload_json FROM luna_proposals WHERE tenant_id=? AND module_id='petshop' AND conversation_id=? AND status='awaiting_confirmation' LIMIT 4").bind(c.tenantId,c.conversationId).all<{payload_json:string}>()
     const shown=[...new Set(Object.values(this.state.catalog).flatMap(m=>m.lastProductIds))].slice(0,12)
     const products=shown.length?(await this.db.prepare("SELECT id,price_cents FROM catalog_products WHERE tenant_id=? AND module_id='petshop' AND id IN (SELECT value FROM json_each(?))").bind(c.tenantId,JSON.stringify(shown)).all()).results:[]
-    return [...pending.results.map(r=>({name:'pending_proposal',result:JSON.parse(r.payload_json) as unknown})),{name:'shown_products',result:products as unknown}]
+    // A service price the store registered ("é R$ 85 mesmo?") is evidence on any later turn.
+    const services=(await this.db.prepare("SELECT id,default_price_cents FROM services WHERE tenant_id=? AND module_id='petshop' AND status='active' AND default_price_cents>0 AND id NOT IN (SELECT value FROM module_settings_extensions m, json_each(COALESCE(json_extract(m.data_json,'$.luna_hidden_service_ids'),'[]')) WHERE m.tenant_id=services.tenant_id AND m.module_id=services.module_id)").bind(c.tenantId).all()).results
+    return [...pending.results.map(r=>({name:'pending_proposal',result:JSON.parse(r.payload_json) as unknown})),{name:'shown_products',result:products as unknown},{name:'store_services',result:services as unknown}]
   }
   // What the store needs to take over without rereading the chat: who the
   // customer is, what was being prepared and what is still missing.

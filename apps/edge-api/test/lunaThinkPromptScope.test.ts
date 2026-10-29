@@ -13,6 +13,7 @@ describe('escopo do prompt por assunto',()=>{
  })
  it('extrai a busca de serviço e o pet citado só quando não há dúvida',()=>{
   expect(serviceQuery('Quero um BANHO e tosa')).toBe('banho e tosa')
+  expect(serviceQuery('quanto custa banho com tosa total pra Mel?')).toBe('tosa')
   expect(serviceQuery('hidratação para o Thor')).toBe('hidrata')
   expect(serviceQuery('quero agendar')).toBeNull()
   const pets=[{id:'1',name:'Nina'},{id:'2',name:'Thor'},{id:'3',name:'Nina'}]
