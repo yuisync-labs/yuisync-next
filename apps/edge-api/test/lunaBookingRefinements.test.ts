@@ -102,6 +102,8 @@ it('addressKept accepts a short yes to the quoted address and nothing else', asy
 describe('today\'s conversations (28/10)', () => {
   it('breed typos become the breed name', () => {
     expect(canonicalBreed('Huskciberiano')).toBe('Husky Siberiano')
+    expect(canonicalBreed('husckiberiano')).toBe('Husky Siberiano')
+    expect(canonicalBreed('golden retriver')).toBe('Golden Retriever')
     expect(canonicalBreed('shitzu')).toBe('Shih Tzu')
     expect(canonicalBreed('lhasa')).toBe('Lhasa Apso')
     expect(canonicalBreed('sem raça')).toBe('SRD (sem raça definida)')
@@ -128,5 +130,20 @@ describe('agent battery chat 1 (28/10 night)', () => {
   it('never shows ids or a retry to the customer', () => {
     const reply = 'Seu cadastro está ok, e o horário das 10h da próxima quarta está disponível para o banho do Bob. Só preciso confirmar o pet_id correto para finalizar o agendamento. O pet cadastrado tem ID diferente do que tentei usar. Vou corrigir e já volto.'
     expect(withoutInternalErrors(reply)).toBe('Seu cadastro está ok, e o horário das 10h da próxima quarta está disponível para o banho do Bob.')
+  })
+})
+
+describe('agent battery retest (28/10 night)', () => {
+  it('drops internal narration about drafts, codes and searches', () => {
+    expect(withoutInternalErrors('Vou usar o código correto e tentar de novo. Parece que o rascunho anterior foi finalizado e não pode ser alterado. Qual horário você prefere?')).toBe('Qual horário você prefere?')
+    expect(withoutInternalErrors('Não encontrei filtro para raça na busca de produtos. Um momento. Temos a Premier Yorkshire Filhote 2,5 kg por R$ 118,50.')).toBe('Temos a Premier Yorkshire Filhote 2,5 kg por R$ 118,50.')
+    expect(withoutInternalErrors('Não consegui criar o agendamento. Pode ter sido um problema técnico. Quer ajuda de um atendente?')).toBe('Não consegui criar o agendamento. Quer ajuda de um atendente?')
+    expect(withoutInternalErrors('Temos filtro de água para aquário por R$ 30,00.')).toBe('Temos filtro de água para aquário por R$ 30,00.')
+  })
+  it('explains the MotoDog weight limit instead of offering it', async () => {
+    const { nextBookingStep } = await import('../src/luna/bookingSteps')
+    const draft = { items: [{ id: 'banho' }], fields: { pet_id: 'thor', scheduled_at: '2026-11-02T08:00:00-03:00' } }
+    expect(nextBookingStep(draft, { transportOffered: true, transportLimit: 'O MotoDog só leva pets até 10 kg' }).instruction).toMatch(/até 10 kg/)
+    expect(nextBookingStep(draft, { transportOffered: true }).instruction).toMatch(/MotoDog para buscar e levar/)
   })
 })

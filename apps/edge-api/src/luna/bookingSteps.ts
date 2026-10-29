@@ -16,7 +16,7 @@ const asks: Record<BookingStep, string> = {
 }
 const labels: Partial<Record<BookingStep, string>> = { service: 'serviço', pet: 'pet', weight: 'peso', date: 'dia', slot: 'horário', transport: 'transporte', address: 'endereço', transport_option: 'opção de MotoDog' }
 
-export function nextBookingStep(draft: Draft, options: { transportOffered: boolean; weightNeeded?: boolean; addressOnFile?: string | null }): { step: BookingStep; done: string[]; instruction: string } {
+export function nextBookingStep(draft: Draft, options: { transportOffered: boolean; weightNeeded?: boolean; addressOnFile?: string | null; transportLimit?: string | null }): { step: BookingStep; done: string[]; instruction: string } {
   const f = draft.fields
   const moto = Boolean(f.transport_mode && !/^(self|none)$/.test(f.transport_mode))
   let address: Record<string, unknown> = {}
@@ -35,7 +35,8 @@ export function nextBookingStep(draft: Draft, options: { transportOffered: boole
   const step = order.find(([, ok]) => !ok)?.[0] ?? 'summary'
   const done = order.filter(([name, ok]) => ok && labels[name] && !(name === 'date' && f.scheduled_at) && !(name === 'weight' && !f.weight_kg) && !(name === 'transport' && !f.transport_mode) && !(/^(address|transport_option)$/.test(name) && !moto)).map(([name]) => labels[name]!)
   // The address on file is asked about only after the customer chose the MotoDog.
-  const instruction = step === 'address' && options.addressOnFile ? `O cliente escolheu o MotoDog. Cite o endereço do cadastro (${options.addressOnFile}) e pergunte se continua o mesmo; não peça o endereço inteiro. Se ele der outro endereço, salve o novo.` : asks[step]
+  // A pet heavier than every MotoDog option: Luna says so and asks whether the customer brings it.
+  const instruction = step === 'transport' && options.transportLimit ? options.transportLimit : step === 'address' && options.addressOnFile ? `O cliente escolheu o MotoDog. Cite o endereço do cadastro (${options.addressOnFile}) e pergunte se continua o mesmo; não peça o endereço inteiro. Se ele der outro endereço, salve o novo.` : asks[step]
   return { step, done, instruction }
 }
 

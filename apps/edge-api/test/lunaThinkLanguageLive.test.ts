@@ -37,11 +37,13 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
    if(s.family==='flow'){
     // Whole conversations from greeting to commit: every turn must avoid handoff
     // and the final database effect must match the case.
-    const flow=s as typeof s&{turns:string[];unregistered?:boolean;setup?:{transport?:boolean;pix?:boolean;descriptions?:boolean;address?:boolean;no_weight?:boolean;bands?:boolean;cpf_on_file?:boolean;hygienic?:boolean};expect:{sales?:number;appointments?:number;reply?:string;not_reply?:string;no_proposal?:boolean;transport_option?:string;pet_weight_kg?:number}}
+    const flow=s as typeof s&{turns:string[];unregistered?:boolean;setup?:{transport?:boolean;pix?:boolean;descriptions?:boolean;address?:boolean;no_weight?:boolean;bands?:boolean;cpf_on_file?:boolean;hygienic?:boolean;heavy?:boolean};expect:{sales?:number;appointments?:number;reply?:string;not_reply?:string;no_proposal?:boolean;transport_option?:string;pet_weight_kg?:number}}
     // A new customer: the conversation phone matches no client, the chat carries only a name.
     if(flow.unregistered){await h.db.prepare("UPDATE clients SET phone='0000000001' WHERE tenant_id=?").bind(h.tenant).run();await h.db.prepare("UPDATE chat_threads SET customer_name='Joberson' WHERE tenant_id=?").bind(h.tenant).run()}
     // Store data some flows need: MotoDog options, a fictitious PIX key, service descriptions.
     if(flow.setup?.transport){await h.db.prepare("UPDATE tenant_module_settings SET store_city='Cidade Teste' WHERE tenant_id=?").bind(h.tenant).run();for(const [id,label,fee,pick,drop] of [['buscar','Só buscar',1000,1,0],['levar','Só levar',1000,0,1],['buscar_levar','Buscar e levar',2000,1,1]] as const)await h.db.prepare("INSERT OR REPLACE INTO transport_options(tenant_id,module_id,id,label,fee_cents,pickup_required,dropoff_required,outside_city,status,sort_order) VALUES(?,'petshop',?,?,?,?,?,0,'active',1)").bind(h.tenant,id,label,fee,pick,drop).run()}
+    // A 25 kg pet and a MotoDog that carries up to 10 kg.
+    if(flow.setup?.heavy){await h.db.prepare("UPDATE transport_options SET max_weight_grams=10000 WHERE tenant_id=?").bind(h.tenant).run();await h.db.prepare("UPDATE pets SET weight_kg=25 WHERE tenant_id=?").bind(h.tenant).run()}
     if(flow.setup?.pix)await h.db.prepare("UPDATE module_settings_extensions SET data_json=json_set(data_json,'$.pix_key','pix-teste@exemplo.com','$.pix_holder_name','Loja Teste') WHERE tenant_id=?").bind(h.tenant).run()
     if(flow.setup?.descriptions)await h.db.prepare("UPDATE services SET description='Banho com shampoo neutro e condicionador, secagem, corte de unhas e limpeza de ouvidos.' WHERE tenant_id=?").bind(h.tenant).run()
     // A customer with an address on file, and a pet with no weight registered.

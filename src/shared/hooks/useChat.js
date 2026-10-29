@@ -288,6 +288,7 @@ export function useChat() {
         const current=previous&&activeSessionIdRef.current===previous.id?mapped.find(session=>session.id===previous.id):null
         return current?{...previous,...current}:previous
       })
+      return mapped
     } finally {
       setLoading(false)
     }

@@ -1723,6 +1723,128 @@
         "not_reply": "pet_id|\\bID\\b|atendente|tentei"
       },
       "unregistered": true
+    },
+    {
+      "id": "FLOW-14-1",
+      "family": "flow",
+      "name": "MotoDog pedido para pet de 25 kg: explica o limite de 10 kg",
+      "input_fragments": [],
+      "turns": [
+        "banho pro Thor segunda às 8h",
+        "motodog"
+      ],
+      "expect": {
+        "appointments": 0,
+        "reply": "10 ?kg",
+        "not_reply": "Rua das Flores"
+      },
+      "setup": {
+        "transport": true,
+        "heavy": true,
+        "address": true
+      }
+    },
+    {
+      "id": "FLOW-14-2",
+      "family": "flow",
+      "name": "Segundo banho depois de um confirmado chega ao resumo sem falar de rascunho",
+      "input_fragments": [],
+      "turns": [
+        "banho pra Mel quarta às 10h, eu levo",
+        "confirmo",
+        "quero outro banho pra Mel sexta às 14h, eu levo"
+      ],
+      "expect": {
+        "appointments": 1,
+        "reply": "confirm",
+        "not_reply": "rascunho|andamento|c[oó]digo|t[eé]cnico"
+      }
+    },
+    {
+      "id": "FLOW-14-3",
+      "family": "flow",
+      "name": "Segundo banho confirmado vira o segundo agendamento",
+      "input_fragments": [],
+      "turns": [
+        "banho pra Mel quarta às 10h, eu levo",
+        "confirmo",
+        "quero outro banho pra Mel sexta às 14h, eu levo",
+        "confirmo"
+      ],
+      "expect": {
+        "appointments": 2
+      }
+    },
+    {
+      "id": "FLOW-14-4",
+      "family": "flow",
+      "name": "Só tosa higiênica: explica que vem inclusa no banho",
+      "input_fragments": [],
+      "turns": [
+        "queria só a tosa higiênica pra Mel"
+      ],
+      "expect": {
+        "appointments": 0,
+        "reply": "inclu",
+        "not_reply": "sem banho\\?"
+      }
+    },
+    {
+      "id": "FLOW-14-5",
+      "family": "flow",
+      "name": "Desiste do resumo aberto: diz que não marcou nada",
+      "input_fragments": [],
+      "turns": [
+        "banho pra Mel amanhã às 9h, eu levo",
+        "não, deixa, cancela. depois eu vejo"
+      ],
+      "expect": {
+        "appointments": 0,
+        "not_reply": "n[aã]o encontrei"
+      }
+    },
+    {
+      "id": "FLOW-14-6",
+      "family": "flow",
+      "name": "Pede uma pessoa: avisa que a loja continua",
+      "input_fragments": [],
+      "turns": [
+        "quero falar com uma pessoa"
+      ],
+      "expect": {
+        "appointments": 0,
+        "reply": "loja|atendente|equipe|pessoa"
+      }
+    },
+    {
+      "id": "FLOW-14-7",
+      "family": "flow",
+      "name": "Sintoma de saúde: orienta veterinário sem oferecer produto",
+      "input_fragments": [],
+      "turns": [
+        "meu cachorro tá vomitando desde ontem, o que eu dou pra ele?"
+      ],
+      "expect": {
+        "appointments": 0,
+        "sales": 0,
+        "reply": "veterin",
+        "not_reply": "ra[cç][aã]o|alimento leve|produto"
+      }
+    },
+    {
+      "id": "FLOW-14-8",
+      "family": "flow",
+      "name": "Raça digitada errado vira Husky Siberiano no resumo do cadastro",
+      "input_fragments": [],
+      "turns": [
+        "oi quero banho pro meu cachorro",
+        "Sou o Marcos Teste, CPF 222.333.666-38, nascido em 02/07/1992, CEP 36880-000, número 45, referência casa azul. Meu cachorro é o Thor, husckiberiano, 25 kg"
+      ],
+      "expect": {
+        "appointments": 0,
+        "reply": "Husky Siberiano"
+      },
+      "unregistered": true
     }
   ]
 }

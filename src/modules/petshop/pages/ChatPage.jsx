@@ -334,6 +334,27 @@ export default function ChatPage() {
   const isGlobalAdmin = auth?.profile?.role === 'admin'
   const activeChatStorageKey = `@yuisync-active-chat:${auth?.activeTenantId || 'tenant'}:${activeModule.id}`
 
+  // A number can have only one conversation per channel: "Nova Conversa" with a
+  // number already in use opens that conversation instead of failing.
+  const createOrOpenSession = async (form) => {
+    const digits = value => String(value || '').replace(/\D/g, '')
+    const channel = value => value === 'interno' ? 'internal' : String(value || '')
+    const samePhone = session => digits(session.customer_phone) === digits(form.customer_phone)
+    const same = session => samePhone(session) && channel(session.channel) === channel(form.channel)
+    const existing = sessions.find(same)
+    if (existing) return handleOpenSession(existing)
+    try {
+      return await createSession(form)
+    } catch (error) {
+      const everyDay = { from: '', to: '' }
+      setDateRange(everyDay)
+      setStatusFilter('')
+      const found = (await loadSessions('', everyDay) || []).find(samePhone)
+      if (!found) throw error
+      return handleOpenSession(found)
+    }
+  }
+
   const handleOpenSession = async (session) => {
     await openSession(session)
     sessionStorage.setItem(activeChatStorageKey, session.id)
@@ -720,7 +741,7 @@ export default function ChatPage() {
       {showModal && (
         <NewSessionModal
           onClose={() => setShowModal(false)}
-          onCreate={createSession}
+          onCreate={createOrOpenSession}
         />
       )}
       <HandoffAlerts

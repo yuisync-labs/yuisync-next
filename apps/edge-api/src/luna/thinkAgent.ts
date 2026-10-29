@@ -229,11 +229,19 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       const kinds=query?serviceKinds(rows,query,said):[]
       if(kinds.length)services+='\nO cliente pediu "'+query+'" sem dizer o tipo, e a loja tem tipos diferentes: '+kinds.join('; ')+'. Pergunte qual tipo ele quer, explicando a diferença pelo includes, antes de dar o preço de um só ou salvar o serviço no rascunho; não escolha por ele.'
     }
+    // "Deixa, cancela" while a summary waits: nothing was booked, so there is
+    // nothing to look up and cancel.
+    if(pending&&/\b(?:cancela|cancelar|desisto|deixa|esquece|nao quero mais|depois eu vejo)\b/.test(this.text(t).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()))services+='\nDESISTÊNCIA: o cliente desistiu do resumo que estava esperando confirmação. Nada foi agendado nem comprado. Diga que tudo bem, que não marcou nada, e que é só chamar quando quiser; não procure agendamentos para cancelar.'
+    // A sick pet: the vet comes first, never a product for the symptom.
+    if(/\b(?:vomit|diarreia|sangu|nao (?:quer )?come|febre|mancand|convuls|desmai|ferid|coceira|tosse|espirr)/.test(this.text(t).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()))services+='\nSAÚDE: o cliente descreve um sintoma. Oriente procurar um veterinário com carinho; não indique remédio, alimento ou produto para o sintoma e não tente vender nada nessa resposta.'
+    // A service the store does not sell alone ("só a tosa higiênica"): the server
+    // checks the catalog Luna can offer and tells the model it comes included.
+    if(/higieni/.test(this.text(t).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase())&&!await db.prepare("SELECT 1 x FROM services WHERE tenant_id=? AND module_id='petshop' AND status='active' AND default_price_cents>0 AND name LIKE '%higi%' AND id NOT IN (SELECT value FROM module_settings_extensions m, json_each(COALESCE(json_extract(m.data_json,'$.luna_hidden_service_ids'),'[]')) WHERE m.tenant_id=services.tenant_id AND m.module_id=services.module_id) LIMIT 1").bind(c.tenantId).first())services+='\nTOSA HIGIÊNICA: a loja não faz tosa higiênica separada; ela já vem inclusa no banho e nas tosas. Diga isso com clareza e ofereça o banho; não pergunte se ele quer só a higiênica.'
     // Booking steps are decided here, not by the model.
     const bookings=Object.entries(operational.state.operations).filter(([,d])=>d.kind==='booking'&&d.status==='active')
     if(bookings.length&&!t.confirm){const offered=await transportOffered(db,c.tenantId);for(const [id,d] of bookings){
       // What the customer already gave (a weight, the address on file) is saved by the server.
-      const known=await this.fillKnown(id,d,customer),s=nextBookingStep(known,{transportOffered:offered,weightNeeded:await this.weightNeeded(known,customer),addressOnFile:this.addressOnFile(customer)?.text})
+      const known=await this.fillKnown(id,d,customer),s=nextBookingStep(known,{transportOffered:offered,weightNeeded:await this.weightNeeded(known,customer),addressOnFile:this.addressOnFile(customer)?.text,transportLimit:await this.transportLimit(known,customer)})
       services+='\nAGENDAMENTO '+id+' (etapa decidida pelo servidor): já tem '+(s.done.join(', ')||'nada')+'. Próxima etapa: '+s.step+'. '+s.instruction+' Se o cliente já disse dados de etapas seguintes, salve-os também; pergunte o que faltar numa mensagem só.'}}
     // A purchase also needs a customer record, asked for only when the order is about to be closed.
     if(unregistered&&topics.commerce&&!t.confirm)services+='\nCLIENTE SEM CADASTRO: busque e monte o carrinho normalmente. Para fechar o pedido ele precisa de cadastro: o cadastro pede nome do tutor, data de nascimento, CPF, CEP da rua, número da casa e ponto de referência, nome, espécie e raça do pet (raça e porte não são nome); pergunte tudo o que faltar numa mensagem só e use prepare_customer_registration só com dados ditos por ele. Depois de confirmado, siga com o pedido.'+'\n'+registrationStatus(await this.orderedSaid())
@@ -318,8 +326,9 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       const active=Object.values(loaded.state.operations).filter(d=>d.kind==='cart'&&d.status==='active')
       if(!input.operation_id&&active.length>1)return fail('OPERATION_AMBIGUOUS')
       const operation_id=input.operation_id??active[0]?.id??'cart-'+this.turn().batch.id.slice(0,24)
-      const current=loaded.state.operations[operation_id]
-      if(current&&(current.kind!=='cart'||current.status!=='active'))return fail('DRAFT_NOT_ACTIVE')
+      // A finished cart is not diffed against: applyDraft opens a new one.
+      const existing=loaded.state.operations[operation_id],current=existing?.status==='active'?existing:undefined
+      if(existing&&existing.kind!=='cart')return fail('DRAFT_NOT_ACTIVE')
       const mapped=cartSnapshotChanges(input,current)
       if(!mapped.ok)return fail(mapped.code)
       return mapped.changes.length?this.applyDraft({operation_id,kind:'cart',prepare:true,changes:mapped.changes}):this.prepareDraft(operation_id,'cart')
@@ -355,6 +364,17 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     actions.register_restock_interest=action({description:'Registra interesse em SKU apresentado com consentimento explícito para aviso neste canal local. Sim sozinho exige esclarecimento: "pode me avisar".',inputSchema:z.object({product_id:z.string().min(1),consent:z.literal(true)}).strict(),permissions:['petshop:draft'],idempotencyKey:({input})=>this.actionKey('restock',input),execute:async({product_id})=>{const t=this.turn();if(!explicitRestockConsent(this.text()))return fail('RESTOCK_CONSENT_REQUIRED');if(!Object.values(this.state.catalog).some(m=>m.lastProductIds.includes(product_id)))return fail('PRODUCT_NOT_PRESENTED');await this.db.prepare("UPDATE chat_threads SET context_json=json_set(context_json,'$.think.restock_product',?,'$.think.restock_consent_message',?) WHERE tenant_id=? AND module_id='petshop' AND id=?").bind(product_id,t.context.sourceMessageId,t.context.tenantId,t.context.conversationId).run();return {ok:true,data:{interest_registered:true}}}})
     return actions
   }
+  // The MotoDog only carries pets up to the options' weight limit. Heavier pets
+  // get the explanation instead of the offer.
+  private async transportLimit(draft:{fields:Readonly<Record<string,string|undefined>>},customer:Awaited<ReturnType<ReturnType<typeof createLunaToolRegistry>['execute']>>):Promise<string|null>{
+    const pets=customer.ok&&Array.isArray(record(customer.data).pets)?record(customer.data).pets as Record<string,unknown>[]:[],pet=pets.find(p=>p.id===draft.fields.pet_id)
+    const kg=pet?.weight_kg!=null?Number(pet.weight_kg):draft.fields.weight_kg?Number(draft.fields.weight_kg.replace(',','.')):NaN
+    if(!Number.isFinite(kg))return null
+    const row=await this.db.prepare("SELECT max(max_weight_grams) mx,sum(max_weight_grams IS NULL) open FROM transport_options WHERE tenant_id=? AND module_id='petshop' AND status='active'").bind(this.turn().context.tenantId).first<{mx:number|null;open:number|null}>()
+    if(!row||row.open||row.mx==null||kg*1000<=row.mx)return null
+    const max=String(row.mx/1000).replace('.',',')
+    return `O MotoDog só leva pets até ${max} kg e ${pet?.name?String(pet.name):'o pet'} tem ${String(kg).replace('.',',')} kg. Não ofereça o MotoDog: explique isso e pergunte se o cliente consegue trazer o pet (trazer = transport_mode self). Se ele já pediu o MotoDog, explique o limite antes de seguir.`
+  }
   // The model sometimes sends a pet name, a customer id or an id from before the
   // registration as pet_id. The server maps it to the customer's own pet.
   private async resolvePet(value:string,customer:Awaited<ReturnType<ReturnType<typeof createLunaToolRegistry>['execute']>>):Promise<string|null|undefined>{
@@ -370,6 +390,16 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
   }
   private async applyDraft(input:DraftInput){
     const registry=createLunaToolRegistry(this.db)
+    // A booking or cart already confirmed is not edited: a new request gets its own
+    // draft, starting from the same service and pet when the model did not resend them.
+    if(input.kind!=='registration'){
+      const t=this.turn(),state=(await new LunaConversationRepository(this.db).loadState(t.context)).state,old=state.operations[input.operation_id]
+      if(old&&old.status!=='active'){
+        const fresh=input.operation_id.slice(0,80)+'-'+t.batch.id.replace(/[^a-zA-Z0-9]/g,'').slice(0,12)
+        const carried:DraftChange[]=old.kind===input.kind&&input.kind==='booking'?[...(input.changes.some(ch=>/_item$/.test(ch.action))?[]:old.items.map(i=>({action:'add_item',item_id:i.id,quantity:1}))),...(input.changes.some(ch=>ch.field==='pet_id')||!old.fields.pet_id?[]:[{action:'set_field',field:'pet_id',value:old.fields.pet_id}])]:[]
+        input={...input,operation_id:fresh,changes:[...carried,...input.changes]}
+      }
+    }
     const petChange=input.kind==='booking'?input.changes.find(ch=>ch.action==='set_field'&&ch.field==='pet_id'):undefined
     if(petChange?.value){
       const customer=await registry.execute('get_customer_context',{},this.turn().context),resolved=await this.resolvePet(petChange.value,customer)
@@ -380,6 +410,11 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const weight=input.kind==='booking'?input.changes.find(ch=>ch.action==='set_field'&&ch.field==='weight_kg')?.value:undefined
     if(weight!==undefined&&(!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(weight)||!weightSaid(weight,await this.saidText())))return {...fail('WEIGHT_NOT_SAID'),instruction:'O cliente não disse esse peso. Pergunte o peso aproximado; nunca estime pela raça.'}
     const mode=input.kind==='booking'?input.changes.find(ch=>ch.action==='set_field'&&ch.field==='transport_mode')?.value:undefined
+    if(mode&&!/^(self|none)$/.test(mode)){
+      const c=this.turn().context,current=(await new LunaConversationRepository(this.db).loadState(c)).state.operations[input.operation_id],pet=input.changes.find(ch=>ch.field==='pet_id')?.value??current?.fields.pet_id,kg=input.changes.find(ch=>ch.field==='weight_kg')?.value??current?.fields.weight_kg
+      const limit=await this.transportLimit({fields:{pet_id:pet,weight_kg:kg}},await registry.execute('get_customer_context',{},c))
+      if(limit)return {...fail('TRANSPORT_WEIGHT_EXCEEDED'),instruction:limit}
+    }
     // An assumed "self" is dropped while the rest of the booking is kept; the transport step then asks.
     if(mode&&/^(self|none)$/.test(mode)&&!selfTransportSaid(await this.saidText())){
       const kept=input.changes.filter(ch=>!(ch.action==='set_field'&&ch.field==='transport_mode'))
@@ -492,6 +527,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
   private async prepareDraft(operation_id:string,kind:'cart'|'booking'):Promise<Record<string,unknown>>{
     const c=this.turn().context,registry=createLunaToolRegistry(this.db),loaded=await new LunaConversationRepository(this.db).loadState(c)
     let draft=loaded.state.operations[operation_id]
+    if(draft&&draft.kind===kind&&draft.status!=='active')return {...fail('DRAFT_ALREADY_DONE'),instruction:'Esse pedido já foi concluído. Para um novo, use update_draft com os dados do novo pedido; o servidor abre outro rascunho.'}
     if(!draft||draft.kind!==kind||draft.status!=='active')return fail('DRAFT_NOT_ACTIVE')
     const missing=[...(!draft.items.length?['items']:[]),...(kind==='cart'&&!draft.fields.fulfillment_type?['fulfillment_type']:[]),...(kind==='cart'&&draft.fields.fulfillment_type==='delivery'&&!draft.fields.address?['address']:[]),...(kind==='booking'?['pet_id','scheduled_at'].filter(field=>!draft.fields[field]):[])]
     if(missing.length)return {...fail('DRAFT_INCOMPLETE'),missing_fields:missing}
@@ -502,7 +538,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     // A pet_id saved before the registration is mapped to the pet just registered.
     if(kind==='booking'&&draft.fields.pet_id){const resolved=await this.resolvePet(draft.fields.pet_id,customer);if(resolved&&resolved!==draft.fields.pet_id&&record(await this.applyDraft({operation_id,kind:'booking',prepare:false,changes:[{action:'set_field',field:'pet_id',value:resolved}]})).ok)return this.prepareDraft(operation_id,kind)}
     if(kind==='booking')draft=await this.fillKnown(operation_id,draft,customer)
-    if(kind==='booking'){const s=nextBookingStep(draft,{transportOffered:await transportOffered(this.db,c.tenantId),weightNeeded:await this.weightNeeded(draft,customer),addressOnFile:this.addressOnFile(customer)?.text});if(s.step==='transport_option'){let city='';try{city=String(JSON.parse(String(draft.fields.address)).city??'')}catch{};const quote=await registry.execute('get_transport_quote',{pet_id:draft.fields.pet_id,city,...(draft.fields.weight_kg?{weight_kg:Number(draft.fields.weight_kg.replace(',','.'))}:{})},c);// No leg named: the server picks buscar e levar instead of asking the model to.
+    if(kind==='booking'){const s=nextBookingStep(draft,{transportOffered:await transportOffered(this.db,c.tenantId),weightNeeded:await this.weightNeeded(draft,customer),addressOnFile:this.addressOnFile(customer)?.text,transportLimit:await this.transportLimit(draft,customer)});if(s.step==='transport_option'){let city='';try{city=String(JSON.parse(String(draft.fields.address)).city??'')}catch{};const quote=await registry.execute('get_transport_quote',{pet_id:draft.fields.pet_id,city,...(draft.fields.weight_kg?{weight_kg:Number(draft.fields.weight_kg.replace(',','.'))}:{})},c);// No leg named: the server picks buscar e levar instead of asking the model to.
       const both=quote.ok&&!oneLegSaid(await this.saidText())?(record(quote.data).options as Record<string,unknown>[]|undefined)?.find(o=>Number(o.pickup_required)===1&&Number(o.dropoff_required)===1):undefined
       if(both&&record(await this.applyDraft({operation_id,kind:'booking',prepare:false,changes:[{action:'set_field',field:'transport_option_id',value:String(both.id)}]})).ok)return this.prepareDraft(operation_id,kind)
       return {...fail('BOOKING_STEP_PENDING'),step:s.step,instruction:'Escolha em options a opção de buscar e levar, salvo se o cliente disse só buscar ou só levar, e salve transport_option_id com prepare:true.',options:quote.ok?record(quote.data).options:[]}}if(s.step!=='summary')return {...fail('BOOKING_STEP_PENDING'),step:s.step,instruction:s.instruction}}
@@ -588,7 +624,9 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     // Prices the conversation already established also back the reply: summaries
     // still awaiting confirmation and the current price of products already shown.
     const known=rows.length?[]:await this.knownPriceEvidence(c)
-    const validation=rows.length?{ok:true}:validateThinkReply(reply,[...t.results,...known,...receiptRows.results.map(r=>({name:'validated_commit_receipt',result:JSON.parse(r.payload_json)}))],this.text(t))
+    let validation:{ok:boolean;reason?:string;unverifiedHour?:string}=rows.length?{ok:true}:validateThinkReply(reply,[...t.results,...known,...receiptRows.results.map(r=>({name:'validated_commit_receipt',result:JSON.parse(r.payload_json)}))],this.text(t))
+    // A stock claim without data is rewritten, not handed off: the customer can still pick another product.
+    if(!validation.ok&&/^STOCK_/.test(String(validation.reason))){console.log(JSON.stringify({event:'think_response_rewritten',reason:validation.reason}));reply='Não consegui confirmar se esse produto está disponível agora. Quer que eu procure uma opção parecida, ou prefere que alguém da loja confirme para você?';validation={ok:true}}
     if(!validation.ok)console.log(JSON.stringify({event:'think_response_rejected',reason:validation.reason,...('unverifiedHour' in validation?{unverified_hour:validation.unverifiedHour}:{})}))
     let handoff=t.results.some(r=>r.name==='handoff_to_human'&&record(r.result).ok===true)
     // "Vou encaminhar para um atendente" without the handoff tool: the store must really get the chat.
@@ -598,6 +636,8 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     const unfinishedAtQuota=t.quota&&!rows.length&&!committed&&!rating&&!finalText
     if(unfinishedAtQuota||!validation.ok||clinicalRisk(this.text(t))){await createLunaToolRegistry(db).execute('handoff_to_human',{reason:clinicalRisk(this.text(t))?'Solicitação clínica exige atendimento humano.':t.quota?'Limite de consumo do turno.':validation.reason??'Resposta comercial sem evidência.'},c);handoff=true;reply='Não consegui concluir esse atendimento com segurança. Deixei o contexto na fila da loja para uma pessoa continuar.'}
     if(handoff)await this.writeHandoff(t,clinicalRisk(this.text(t))?'Solicitação clínica exige atendimento humano.':t.quota?(t.dailyLow?'Limite diário de IA da Cloudflare quase no fim.':'Orçamento de consumo atingido.'):validation.reason??String(record(t.results.find(r=>r.name==='handoff_to_human')?.input).reason??'Atendimento humano solicitado.'))
+    // A handoff always tells the customer someone from the store continues.
+    if(handoff&&!/\b(?:atendente|equipe|alguem d[ao] loja|pessoa|humano)\b/i.test(reply.normalize('NFD').replace(/[\u0300-\u036f]/g,'')))reply='Vou passar seu atendimento para alguém da loja continuar com você. Em breve te respondem por aqui.'
     if(!reply.trim())reply='Pode me dizer como posso ajudar?'
     await this.addMessages([{...response.message,parts:[...response.message.parts.filter(p=>p.type!=='text'),{type:'text',text:reply}]}],{mode:'upsert'})
     const now=Date.now(),external='think-response:'+t.batch.id

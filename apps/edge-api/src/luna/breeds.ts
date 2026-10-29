@@ -59,9 +59,10 @@ export function canonicalBreed(raw: unknown): string | null {
   if (typed.length < 3) return null
   let best: { name: string; cost: number } | null = null
   for (const [name, aliases] of BREEDS) for (const alias of aliases.map(compact)) {
-    // Short names must match exactly; longer ones allow about one typo per five letters.
+    // Short names must match exactly; longer ones allow about one typo per five letters,
+    // and long two-word names ("husckiberiano") one per four.
     const cost = alias === typed ? 0 : alias.length < 5 ? Infinity : distance(typed, alias)
-    if (cost <= Math.max(1, Math.floor(alias.length / 5)) && (!best || cost < best.cost)) best = { name, cost }
+    if (cost <= Math.max(1, Math.floor(alias.length / (alias.length >= 12 ? 4 : 5))) && (!best || cost < best.cost)) best = { name, cost }
   }
   return best?.name ?? null
 }

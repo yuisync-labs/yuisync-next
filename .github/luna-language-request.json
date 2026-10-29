@@ -1,12 +1,17 @@
 {
-  "run": false,
+  "run": true,
   "cases": [
-    "FLOW-13-3",
-    "FLOW-13-1",
-    "FLOW-09-2",
-    "FLOW-09-3",
+    "FLOW-14-1",
+    "FLOW-14-2",
+    "FLOW-14-3",
+    "FLOW-14-4",
+    "FLOW-14-5",
+    "FLOW-14-6",
+    "FLOW-14-7",
+    "FLOW-14-8",
+    "FLOW-13-2",
     "FLOW-07-2"
   ],
-  "reason": "time_said_before_registration",
+  "reason": "agent_battery_retest",
   "model": "openai:gpt-4.1-mini"
 }
