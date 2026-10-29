@@ -178,6 +178,7 @@ jobs:
           export SIM_SEED=$(node -p "JSON.parse(require('fs').readFileSync('$r','utf8')).seed")
           export LANG_MODEL=$(node -p "JSON.parse(require('fs').readFileSync('$r','utf8')).model")
           export SIM_CUSTOMER_MODEL=$(node -p "JSON.parse(require('fs').readFileSync('$r','utf8')).customer_model")
+          export SIM_GOALS=$(node -p "(JSON.parse(require('fs').readFileSync('$r','utf8')).goals??[]).join('|')")
           npx vitest run --config vitest.simulator.config.ts || true
       - if: always() && steps.gate.outputs.run == 'true'
         name: Report results on the pull request

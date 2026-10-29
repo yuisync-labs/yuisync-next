@@ -9,7 +9,7 @@ import {claimsDone} from '../src/luna/thinkPresentation'
 // random scenario, Luna answers on local Think/D1 fixtures with the QuatroPatas
 // catalogue, and the run is judged on the database plus one reading of the chat.
 // Admitted only by vitest.simulator.config.ts; standard CI skips it.
-const config=env as unknown as {SIM_COUNT?:string;SIM_SEED?:string;SIM_CUSTOMER_MODEL?:string}
+const config=env as unknown as {SIM_COUNT?:string;SIM_SEED?:string;SIM_CUSTOMER_MODEL?:string;SIM_GOALS?:string}
 const count=Number(config.SIM_COUNT??0),seed=Number(config.SIM_SEED??1),customerModel=config.SIM_CUSTOMER_MODEL??'gpt-4.1-mini'
 const MAX_TURNS=10
 type Line={from:'cliente'|'luna';text:string;status?:string}
@@ -46,7 +46,7 @@ Responda em JSON: {"pergunta_repetida": bool (a atendente pediu de novo um dado 
 const INTERNAL=/\b[a-z]+_id\b|[0-9a-f]{8}-[0-9a-f]{4}|\brascunho|\bc[oó]digo (?:corret|errad)|problema t[eé]cnico|\bfiltro (?:de|para|por)\b|\bferramenta|\bjson\b|\bschema\b/i
 
 describe.skipIf(!liveService||!count)('Simulated customers',()=>{
- for(const s of simulatorScenarios(count,seed))it(s.id+' '+s.goal,async test=>{
+ for(const s of simulatorScenarios(count,seed,(config.SIM_GOALS??'').split('|').filter(Boolean)))it(s.id+' '+s.goal,async test=>{
   const control=await(await liveService.fetch('https://live-model.local/control')).json() as {stop:boolean}
   if(control.stop){test.skip();return}
   const h=await createLiveHarness(9000+s.index)

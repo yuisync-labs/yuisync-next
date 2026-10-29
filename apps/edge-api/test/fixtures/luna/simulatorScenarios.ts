@@ -41,7 +41,7 @@ function cpf(seed:number){
 type Goal={name:string;weight:number;registered:boolean;build:(o:{day:string;hour:number;n:number})=>{persona:string;facts:string;expect:SimExpect}}
 const pet=(p:SimPet)=>`${p.name}, ${p.species==='dog'?'cachorro':'gata'} ${p.breed}, ${String(p.weightKg).replace('.',',')} kg`
 const address=`${CUSTOMER.street}, ${CUSTOMER.number}, ${CUSTOMER.neighborhood}`
-const GOALS:Goal[]=[
+const ALL_GOALS:Goal[]=[
  {name:'banho, cliente leva',weight:3,registered:true,build:({day,hour})=>({persona:`Quer marcar um banho para a ${PETS.mel.name} ${day} às ${hour}h e vai levar ela na loja.`,facts:`Pet: ${pet(PETS.mel)}. Você mesma leva e busca o pet.`,expect:{appointments:1,service:'banho-p',transport:null,hour}})},
  {name:'banho com MotoDog',weight:3,registered:true,build:({day,hour})=>({persona:`Quer banho para a ${PETS.mel.name} ${day} às ${hour}h e quer que o MotoDog busque e leve.`,facts:`Pet: ${pet(PETS.mel)}. Endereço do cadastro (${address}) continua o mesmo.`,expect:{appointments:1,service:'banho-p',transport:'buscar_e_levar',hour}})},
  {name:'MotoDog para pet de 25 kg',weight:2,registered:true,build:({day,hour})=>({persona:`Quer banho para o ${PETS.thor.name} ${day} às ${hour}h com o MotoDog. Se disserem que o MotoDog não leva o Thor, aceita levar ele você mesma.`,facts:`Pet: ${pet(PETS.thor)}, pelo grosso de husky.`,expect:{appointments:1,serviceOneOf:['banho-g-duplo','banho-g-longo','banho-g-curto'],transport:null,hour}})},
@@ -60,7 +60,9 @@ const GOALS:Goal[]=[
 ]
 
 function rng(seed:number){let a=seed>>>0;return ()=>{a=(a+0x6D2B79F5)>>>0;let t=a;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return ((t^(t>>>14))>>>0)/4294967296}}
-export function simulatorScenarios(count:number,seed:number):SimScenario[]{
+// goals narrows a run to the kinds of conversation that failed before.
+export function simulatorScenarios(count:number,seed:number,goals:string[]=[]):SimScenario[]{
+ const GOALS=goals.length?ALL_GOALS.filter(g=>goals.includes(g.name)):ALL_GOALS
  const r=rng(seed),total=GOALS.reduce((n,g)=>n+g.weight,0),pick=<T,>(list:readonly T[])=>list[Math.floor(r()*list.length)]
  return Array.from({length:count},(_,index)=>{
   // Every goal appears once before any repeats; then weighted draws.
