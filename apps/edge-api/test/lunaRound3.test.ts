@@ -67,4 +67,34 @@ describe('rodada 3 do agente',()=>{
   const q=await first.run('quero uma ração',[c('search_products',{filters:{productType:'feed'}}),'ok'])
   expect(shown(q)).toMatch(/cachorro ou gato\?.*porte.*filhote, adulto ou idoso/)
  },60000)
+ const sales=async(h:{db:D1Database;tenant:string})=>(await h.db.prepare("SELECT COUNT(*) n FROM sales WHERE tenant_id=?").bind(h.tenant).first<{n:number}>())!.n
+ async function cart(id:number){
+  const h=await shelf(id)
+  await h.run('quero 2 da ultralife frango, vou buscar na loja',[c('search_products',{filters:{productType:'feed',species:'dog',brand:'Special Dog',productLine:'Ultralife'}}),c('set_cart',{items:[{product_id:'sd-ultralife-3',quantity:2}],fulfillment_type:'counter'}),'ok'])
+  return h
+ }
+ it('"pix" e depois "sim, 109,80 no pix, pode fechar" fecham o pedido (01/11, Tiago)',async()=>{
+  const h=await cart(7921),p=await h.proposal('product_order_create')
+  await h.run('pix',['A loja envia os dados do Pix. Posso fechar o pedido?'])
+  expect(await sales(h)).toBe(0)
+  await h.run('sim, 109,80 no pix, pode fechar',[c('commit_confirmed_proposal',p),'feito'])
+  expect(await sales(h)).toBe(1)
+ },60000)
+ it('"cartão na entrega" e depois "pode mandar" fecham o pedido (01/11, Otávio)',async()=>{
+  const h=await cart(7922),p=await h.proposal('product_order_create')
+  await h.run('cartão na entrega',['Certo, cartão na entrega. Quer que eu finalize?'])
+  await h.run('pode mandar',[c('commit_confirmed_proposal',p),'feito'])
+  expect(await sales(h)).toBe(1)
+ },60000)
+ it('sim com outro total depois do pix não fecha',async()=>{
+  const h=await cart(7923),p=await h.proposal('product_order_create')
+  await h.run('pix',['A loja envia os dados do Pix. Posso fechar o pedido?'])
+  await h.run('sim, 100,00 no pix, pode fechar',[c('commit_confirmed_proposal',p),'O total é R$ 109,80.'],['CONFIRMATION_REQUIRED'])
+  expect(await sales(h)).toBe(0)
+ },60000)
+ it('"ração special dog cordeiro raças pequenas 3kg" acha a cordeiro (01/11, Helena)',async()=>{
+  const h=await shelf(7924)
+  const r=await h.run('quero 1 ração special dog cordeiro raças pequenas 3kg pra retirar',[c('search_products',{query:'ração special dog cordeiro raças pequenas 3kg',filters:{productType:'feed',species:'dog'}}),'ok'])
+  expect(shown(r)).toContain('sd-cordeiro-3')
+ },60000)
 })

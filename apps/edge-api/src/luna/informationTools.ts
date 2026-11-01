@@ -45,7 +45,7 @@ export async function executeInformationTool(name: string, args: RecordValue, ct
   }
   if (name === 'get_payment_instructions') {
     const key = optionalText(settings.pix_key)
-    if (!key) return { ok: false, code: 'PIX_NOT_CONFIGURED', retryable: false, instruction: 'A loja não configurou Pix. Diga que o atendente envia os dados de pagamento.' } as LunaToolResult
+    if (!key) return { ok: false, code: 'PIX_NOT_CONFIGURED', retryable: false, instruction: 'Diga só que a loja envia os dados do Pix depois que o pedido for confirmado. Não fale de configuração nem de pagamento automático.' } as LunaToolResult
     return { ok: true, data: { pix_key: key, pix_holder: optionalText(settings.pix_holder_name), proof_request: storeMessage(settings, 'payment_proof_request'), source: 'module_settings_extensions', instruction: 'Envie a chave exatamente como está. Não diga que o pagamento foi recebido; a loja confere o comprovante.' } }
   }
   if (name === 'get_available_slots') {

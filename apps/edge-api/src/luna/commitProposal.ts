@@ -14,7 +14,7 @@ import { saleDeliveryAddressStatement } from '../saleDeliveryAddress'
 import { appointmentScheduleGuardStatement } from '../appointmentScheduleGuard'
 import { validateGroomingMachine } from '../groomingMachinePolicy'
 import { resolveTransportSnapshot } from './transportContract'
-import { naturalConfirmation, closingConfirmation, scopedConfirmation, namesSummary, confirmationWords, requestsChange, consistentConfirmation } from './confirmationLanguage'
+import { naturalConfirmation, closingConfirmation, scopedConfirmation, namesSummary, confirmationWords, requestsChange, consistentConfirmation, commandsCommit } from './confirmationLanguage'
 
 type ProposalRow = {
   id: string
@@ -101,7 +101,13 @@ async function latestConfirmation(database: D1Database, context: LunaExecutionCo
   const words = confirmationWords(confirmation)
   const haggle = (value: string) => /\bdesconto|\bmais barat|\babaix|\d+ ?%|\bregras?\b|\bpromo/.test(value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase())
   if (single && words.length <= 8 && words.some(w => /^confirm(?:o|a|ado|ada|ar)$/.test(w)) && !words.includes('nao') && !requestsChange(confirmation)
-    && intervening.results.length <= 10 && intervening.results.every(m => m.direction === 'outbound' ? m.actor_type === 'assistant' : m.actor_type === 'customer' && (!requestsChange(m.content_text) || haggle(m.content_text)))) return true
+    && intervening.results.length <= 10 && intervening.results.every(m => m.direction === 'outbound' ? m.actor_type === 'assistant' : m.actor_type === 'customer' && (!requestsChange(m.content_text) || haggle(m.content_text) || consistentConfirmation(m.content_text, proposal.operation_kind, payload, lunaNow(context))))) return true
+  // The payment method or a question answered in between ("pix", "aceitam
+  // cartão?"), then a yes that orders the operation and restates nothing
+  // different: it confirms the summary still waiting (rodada de 01/11).
+  const unchanged = (value: string) => !requestsChange(value) || consistentConfirmation(value, proposal.operation_kind, payload, lunaNow(context))
+  if (single && natural && commandsCommit(confirmation) && intervening.results.length <= 10
+    && intervening.results.every(m => m.direction === 'outbound' ? m.actor_type === 'assistant' : m.actor_type === 'customer' && unchanged(m.content_text))) return true
   // A bare "sim" may answer whatever was asked in between. A confirmation that
   // names the summary survives only hesitation from the customer and Luna's
   // replies, never a requested change, a human/system message or a long detour.

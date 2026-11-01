@@ -141,6 +141,13 @@ const GO_ON = new Set(['agendar', 'marcar', 'confirmar', 'fechar', 'deixar', 'se
 const CHANGE = new Set(['troca', 'trocar', 'muda', 'mudar', 'altera', 'alterar', 'tira', 'tirar', 'coloca', 'colocar', 'adiciona', 'aumenta', 'diminui', 'mais', 'menos', 'outro', 'outra', 'corrige', 'corrigindo', 'cancela', 'cancelar', 'desisto', 'desistir'])
 const WEEKDAYS = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado']
 const QUESTION = /\b(quanto|qual|quais|como|onde|quando|tem|teria|aceita|aceitam|voces|vcs|vc)\b/
+// A yes that orders the operation itself ("confirmo", "pode fechar", "pode mandar"),
+// stronger than a bare "sim" that could answer any question asked in between.
+export function commandsCommit(value: string) {
+  const words = confirmationWords(value)
+  return words.some((w, i) => /^(confirm(?:o|a|ado|ada|ar)|fecha(?:do|r)?|fechou|finaliza(?:r)?|conclui(?:r)?)$/.test(w) || w === 'pode' && GO_ON.has(words[i + 1] ?? ''))
+}
+
 export function consistentConfirmation(value: string, operationKind: string, payload: JsonRecord, nowMs: number, timeZone = 'America/Sao_Paulo'): boolean {
   if (!SUBJECTS[operationKind]) return false
   // Questions about something else are set aside; a question that holds the yes is not a yes.

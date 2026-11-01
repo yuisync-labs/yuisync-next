@@ -37,7 +37,7 @@ describe('Luna closing and scoped confirmation', () => {
     expect(scopedConfirmation(phrase, orderSummary, [bathSummary])).toBe(false)
   })
   it.each(['Confirmo o banho e o pedido.', 'Fecha o banho, a compra também.', 'Sim.', 'Confirma só o banho?'])('não escolhe entre resumos: %s', phrase => expect(scopedConfirmation(phrase, bathSummary, [orderSummary])).toBe(false))
-  it('busca nomes sem acento e plural', () => { expect(nameTerms('saches')).toEqual(['saches', 'sache']); expect(nameTerms('Rações')).toEqual(['racoes', 'racao']); expect(nameTerms('gato')).toEqual(['gato']) })
+  it('busca nomes sem acento e plural', () => { expect(nameTerms('saches')).toEqual(['saches', 'sache']); expect(nameTerms('Cordões')).toEqual(['cordoes', 'cordao']); expect(nameTerms('Rações')).toEqual([]); expect(nameTerms('gato')).toEqual(['gato']) })
 })
 
 import { consistentConfirmation } from '../src/luna/confirmationLanguage'

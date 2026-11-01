@@ -53,8 +53,12 @@ export function applyPreferences(memory:Memory,input:unknown,userText:string,mes
 // Names match without accents or plural endings: "saches" finds "Sachê".
 const ACCENTS:[string,string][]=[['á','a'],['à','a'],['â','a'],['ã','a'],['é','e'],['ê','e'],['í','i'],['ó','o'],['ô','o'],['õ','o'],['ú','u'],['ü','u'],['ç','c']].flatMap(([from,to])=>[[from,to],[from.toUpperCase(),to]] as [string,string][]);
 const foldedName=ACCENTS.reduce((sql,[from,to])=>`REPLACE(${sql},'${from}','${to}')`,'LOWER(p.name)');
+// Words of the request that the name may abbreviate or omit ("AD", "RP", no
+// "RAÇÃO"): kind, stage, size and weight are filters, not name terms.
+const NOT_NAME=/^(racao|racoes|sabor|de|da|do|das|dos|para|pra|com|e|kg|g|gr|kilos?|quilos?|pacotes?|sacos?|adultos?|ad|filhotes?|senior|idosos?|racas?|porte|pequen[oa]s?|medi[oa]s?|grandes?|mini|\d+(?:[.,]\d+)?(?:kg|g|gr|ml|l)?)$/
 export function nameTerms(keyword:string){
  const w=keyword.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();
+ if(NOT_NAME.test(w))return [];
  if(w.length<=3||!w.endsWith('s'))return w?[w]:[];
  return [w,w.endsWith('oes')||w.endsWith('aes')?w.slice(0,-3)+'ao':w.endsWith('ais')?w.slice(0,-2)+'l':w.slice(0,-1)];
 }
@@ -102,7 +106,7 @@ export async function searchProducts(db:D1Database,preferences:Preferences,input
   count=await db.prepare(`SELECT COUNT(*) AS total ${query.from}`).bind(...query.params).first<{total:number}>();if(!count)throw new Error('CATALOG_QUERY_FAILED');
   speciesConfirmationRequired=count.total>0;
  }
- if(count.total>12&&!(anyChoiceSaid(said)&&preferences.species)||(count.total>0&&preferences.productType==='feed'&&!preferences.species&&!preferences.productName&&!unrestricted.includes('species'))){
+ if(count.total>12&&!(anyChoiceSaid(said)&&preferences.species)||(count.total>3&&preferences.productType==='feed'&&!preferences.species&&!preferences.productName&&!preferences.productLine&&!unrestricted.includes('species'))){
   const facets=await db.prepare(`SELECT DISTINCT a.brand_label,a.life_stage,a.sale_form,a.package_weight_grams ${query.from} ORDER BY a.brand_label,a.package_weight_grams LIMIT 8`).bind(...query.params).all<{brand_label:string|null;life_stage:string|null;sale_form:string|null;package_weight_grams:number|null}>();
   const refinement=await chooseRefinement(db,query,preferences,unrestricted,true);
   return {status:'needs_refinement' as const,total:count.total,preferences,products:[],facets:facets.results,refinement,instruction:'Use a pergunta de refinamento baseada nos resultados. Não liste todo o catálogo nem repita perguntas já respondidas.'};
