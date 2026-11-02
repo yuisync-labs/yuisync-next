@@ -290,11 +290,11 @@ export function createLunaToolRegistry(database: D1Database): LunaToolRegistry {
     const customer = await database.prepare(`
       SELECT id,name,phone,email,address,address_number,address_complement,address_reference,neighborhood,city,postal_code FROM clients
       WHERE tenant_id=?1 AND module_id=?2 AND ${conversationClients}
-      ORDER BY updated_at_ms DESC LIMIT 10
+      ORDER BY (COALESCE(document,'')<>'') DESC,updated_at_ms DESC LIMIT 10
     `).bind(context.tenantId, context.moduleId, JSON.stringify(phoneVariants(context.customerAddress))).all<Record<string, unknown>>()
     if (customer.results.length === 0) return { ok: false, code: 'CUSTOMER_NOT_FOUND', retryable: false }
     if (customer.results.length > 1 && !samePerson(customer.results.map(row => row.name))) return { ok: false, code: 'CUSTOMER_AMBIGUOUS', retryable: false }
-    // A duplicated registration is one customer: the newest record, with the pets of all of them.
+    // A duplicated registration is one customer: the record with a CPF (else the newest), with the pets of all of them.
     const selected = customer.results[0]
     const pets = await database.prepare(`
       SELECT id,name,species,breed,weight_kg FROM pets

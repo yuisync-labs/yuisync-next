@@ -1,4 +1,5 @@
 import type { LunaExecutionContext } from './contracts'
+import { samePerson } from '../clientIdentity'
 
 // The store keeps most phones as DDD + number (no 55), some with the old 8-digit
 // mobile; WhatsApp sends 55 + DDD, with or without the 9. Every spelling of the
@@ -14,12 +15,9 @@ export function phoneVariants(address: string): string[] {
   return [...forms].flatMap(form => [form, '+' + form])
 }
 
-// Imported data often has the same person registered twice under one phone.
-// Same name means one customer; different names stay ambiguous.
-export function samePerson(names: unknown[]): boolean {
-  const keys = new Set(names.map(name => String(name ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()))
-  return keys.size === 1 && !keys.has('')
-}
+// Imported data often has the same person registered twice under one phone,
+// sometimes with a shorter name ("JOAO" and "Joao Pedro").
+export { samePerson } from '../clientIdentity'
 
 // Clients of this conversation's phone (?3, from phoneVariants): on the record,
 // or linked after the customer confirmed a CPF already on file.

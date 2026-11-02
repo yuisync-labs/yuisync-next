@@ -208,6 +208,7 @@ export function useChat() {
   const activeSessionIdRef = useRef(null)
   const handoffAlertIdsRef = useRef(new Set())
   const handoffSeededRef = useRef(false)
+  const knownSessionIdsRef = useRef(new Set())
   const botRequestsInFlightRef = useRef(0)
   const botPollControllersRef = useRef(new Map())
   const { activeModuleId } = useModuleCtx()
@@ -220,7 +221,7 @@ export function useChat() {
   useEffect(()=>{
     for(const controller of botPollControllersRef.current.values())controller.abort()
     botPollControllersRef.current.clear()
-    activeSessionIdRef.current=null;setActiveSession(null);setMessages([]);setSessions([]);setBotTurn(null);handoffSeededRef.current=false
+    activeSessionIdRef.current=null;setActiveSession(null);setMessages([]);setSessions([]);setBotTurn(null);handoffSeededRef.current=false;knownSessionIdsRef.current=new Set()
   },[activeTenantId,activeModuleId])
 
   const pushHandoffAlert = useCallback((source, session, silent = false) => {
@@ -239,49 +240,60 @@ export function useChat() {
     setHandoffAlerts((prev) => prev.filter((alert) => alert.id !== alertId))
   }, [])
 
+  // Reads chats without touching the list on screen.
+  const fetchSessions = useCallback(async (statusFilter = '', dateRange = { from: '', to: '' }) => {
+    if (!activeModuleId) return []
+    const bounds = chatDateBounds(dateRange)
+    const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
+      let query = supabase
+        .from('chat_sessions')
+        .select('id, customer_phone, customer_name, channel, context, status, intent, last_message_at, opened_at, csat_score, clients(name, details)')
+        .eq('module_id', activeModuleId)
+        .order('last_message_at', { ascending: false, nullsFirst: true })
+
+      query = applyTenantFilter(query, activeTenantId, includeTenant)
+      if (statusFilter) query = query.eq('status', statusFilter)
+      // A chat matches when it was open at some point in the range.
+      if (bounds.to) query = query.lte('opened_at', bounds.to)
+      if (bounds.from) query = query.or(`last_message_at.gte.${bounds.from},opened_at.gte.${bounds.from}`)
+      return query
+    })
+
+    if (response.error) throw response.error
+
+    const mapped = (response.data || []).map((session) => {
+      if (!session.clients) return session
+      return {
+        ...session,
+        pets: {
+          pet_name: session.clients.details?.pet_name || session.clients.name || '',
+          species: session.clients.details?.species || '',
+        },
+        clients: undefined,
+      }
+    })
+
+    // A new thread has no last_message_at yet. NULLS FIRST keeps it inside the
+    // 200-row page; this sort then places it by opened_at among recent chats.
+    const activity=session=>Date.parse(String(session.last_message_at||session.opened_at||session.created_at||'').replace(/^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)$/,'$1T$2Z'))||Date.now()
+    mapped.sort((a,b)=>activity(b)-activity(a))
+    return mapped
+  }, [activeModuleId, activeTenantId])
+
   const loadSessions = useCallback(async (statusFilter = '', dateRange) => {
     if (!activeModuleId) return
     // Background reloads call without a range and keep the one on screen.
     if (dateRange !== undefined) dateRangeRef.current = dateRange
-    const bounds = chatDateBounds(dateRangeRef.current)
     setLoading(true)
 
     try {
-      const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
-        let query = supabase
-          .from('chat_sessions')
-          .select('id, customer_phone, customer_name, channel, context, status, intent, last_message_at, opened_at, csat_score, clients(name, details)')
-          .eq('module_id', activeModuleId)
-          .order('last_message_at', { ascending: false, nullsFirst: true })
-
-        query = applyTenantFilter(query, activeTenantId, includeTenant)
-        if (statusFilter) query = query.eq('status', statusFilter)
-        // A chat matches when it was open at some point in the range.
-        if (bounds.to) query = query.lte('opened_at', bounds.to)
-        if (bounds.from) query = query.or(`last_message_at.gte.${bounds.from},opened_at.gte.${bounds.from}`)
-        return query
-      })
-
-      if (response.error) throw response.error
-
-      const mapped = (response.data || []).map((session) => {
-        if (!session.clients) return session
-        return {
-          ...session,
-          pets: {
-            pet_name: session.clients.details?.pet_name || session.clients.name || '',
-            species: session.clients.details?.species || '',
-          },
-          clients: undefined,
-        }
-      })
-
-      // A new thread has no last_message_at yet. NULLS FIRST keeps it inside the
-      // 200-row page; this sort then places it by opened_at among recent chats.
-      const activity=session=>Date.parse(String(session.last_message_at||session.opened_at||session.created_at||'').replace(/^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)$/,'$1T$2Z'))||Date.now()
-      mapped.sort((a,b)=>activity(b)-activity(a))
-      // The first load only remembers handoffs already on screen; later loads alert new ones.
-      for (const session of mapped) pushHandoffAlert(session, undefined, !handoffSeededRef.current)
+      const mapped = await fetchSessions(statusFilter, dateRangeRef.current)
+      // Only a chat already on screen can raise a handoff alert on reload. A chat
+      // that shows up because a filter changed carries an old handoff, not a new
+      // one; new handoffs on other chats arrive through realtime.
+      const known = knownSessionIdsRef.current
+      for (const session of mapped) pushHandoffAlert(session, undefined, !handoffSeededRef.current || !known.has(session.id))
+      for (const session of mapped) known.add(session.id)
       handoffSeededRef.current = true
       setSessions(mapped)
       setActiveSession(previous=>{
@@ -292,7 +304,7 @@ export function useChat() {
     } finally {
       setLoading(false)
     }
-  }, [activeModuleId, activeTenantId, pushHandoffAlert])
+  }, [activeModuleId, fetchSessions, pushHandoffAlert])
 
   const loadMessages = useCallback(async (sessionId) => {
     const { data } = await supabase
@@ -568,6 +580,7 @@ export function useChat() {
     quickReplies,
     handoffAlerts,
     loadSessions,
+    fetchSessions,
     loadMessages,
     loadQuickReplies,
     openSession,

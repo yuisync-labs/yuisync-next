@@ -1,4 +1,5 @@
 import { getBetterAuthSession, type BetterAuthRuntimeBindings } from './auth/betterAuthRuntime'
+import { tutorByCpf } from './clientIdentity'
 
 type Bindings = BetterAuthRuntimeBindings & { DB?: D1Database }
 type Scope = { tenantId: string; moduleId: string }
@@ -174,16 +175,29 @@ async function createClient(request: Request, bindings: Bindings): Promise<Respo
   const now = Date.now()
   const requestedClientId = text(body.tutor_group_id)
   let clientId = requestedClientId
+  let reusedTutor = false
   if (clientId) {
     const existing = await bindings.DB!.prepare("SELECT id FROM clients WHERE tenant_id=?1 AND module_id=?2 AND id=?3 AND status='active' LIMIT 1")
       .bind(scope.tenantId, scope.moduleId, clientId).first<{ id: string }>()
     if (!existing) return json({ code: 'TUTOR_NOT_FOUND' }, 404)
   } else {
-    clientId = crypto.randomUUID()
+    // A new pet for a CPF already on file joins that tutor instead of creating a
+    // second one; the tutor's empty fields take what was typed now.
+    const onFile = await tutorByCpf(bindings.DB!, scope, body.owner_cpf)
+    reusedTutor = Boolean(onFile)
+    clientId = onFile || crypto.randomUUID()
   }
   const petId = crypto.randomUUID()
   const statements: D1PreparedStatement[] = []
-  if (!requestedClientId) statements.push(bindings.DB!.prepare(`
+  if (reusedTutor) statements.push(bindings.DB!.prepare(`UPDATE clients SET
+      phone=COALESCE(NULLIF(phone,''),?4),email=COALESCE(NULLIF(email,''),?5),birth_date=COALESCE(NULLIF(birth_date,''),?6),
+      address=COALESCE(NULLIF(address,''),?7),address_number=COALESCE(NULLIF(address_number,''),?8),address_complement=COALESCE(NULLIF(address_complement,''),?9),
+      address_reference=COALESCE(NULLIF(address_reference,''),?10),neighborhood=COALESCE(NULLIF(neighborhood,''),?11),city=COALESCE(NULLIF(city,''),?12),
+      postal_code=COALESCE(NULLIF(postal_code,''),?13),updated_at_ms=?14
+    WHERE tenant_id=?1 AND module_id=?2 AND id=?3`).bind(scope.tenantId, scope.moduleId, clientId, nullable(body.phone), nullable(body.email),
+    nullable(body.tutor_birth_date), nullable(body.owner_address), nullable(body.address_number), nullable(body.address_complement),
+    nullable(body.address_reference), nullable(body.owner_neighborhood), nullable(body.owner_city), nullable(body.zip_code), now))
+  else if (!requestedClientId) statements.push(bindings.DB!.prepare(`
     INSERT INTO clients(tenant_id,module_id,id,name,document,phone,email,birth_date,address,address_number,address_complement,
       address_reference,neighborhood,city,postal_code,notes,status,created_at_ms,updated_at_ms)
     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,'active',?17,?17)

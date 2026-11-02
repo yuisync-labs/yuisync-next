@@ -311,7 +311,7 @@ export default function ChatPage() {
   const {
     sessions, messages, activeSession, botTyping, botTurn, quickReplies,
     handoffAlerts,
-    loadSessions, loadMessages, loadQuickReplies, openSession, createSession,
+    loadSessions, fetchSessions, loadMessages, loadQuickReplies, openSession, createSession,
     sendClientMessage, sendHumanMessage,
     takeOver, returnToBot, closeSession,
     subscribeSessionsList, setActiveSession, statusConfig, dismissHandoffAlert,
@@ -346,10 +346,10 @@ export default function ChatPage() {
     try {
       return await createSession(form)
     } catch (error) {
-      const everyDay = { from: '', to: '' }
-      setDateRange(everyDay)
-      setStatusFilter('')
-      const found = (await loadSessions('', everyDay) || []).find(samePhone)
+      // The chat for this number is outside the list on screen (another day or
+      // status). Find it without changing the filters, so the list and the
+      // handoff alerts stay as they were.
+      const found = (await fetchSessions('') || []).find(same) || null
       if (!found) throw error
       return handleOpenSession(found)
     }
