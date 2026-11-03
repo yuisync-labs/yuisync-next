@@ -193,7 +193,7 @@ describe('a registered customer with pets asks for a service', () => {
     expect(many).toContain('"Olá, Marta! É para Pipoca, Max ou Luna?"')
     expect(many).toContain('Não pergunte nome, raça ou espécie')
     expect(petChoiceInstruction('MARTA', pets, 'banho pro max amanhã')).toBe('')
-    expect(petChoiceInstruction('MARTA', [{ name: 'PIPOCA' }], 'quero um banho')).toContain('tem um pet cadastrado, Pipoca')
+    expect(petChoiceInstruction('MARTA', [{ name: 'PIPOCA' }], 'quero um banho')).toContain('Pipoca, único cadastrado')
     expect(petChoiceInstruction('MARTA', [], 'quero um banho')).toBe('')
   })
 })

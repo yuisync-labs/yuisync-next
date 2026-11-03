@@ -2,6 +2,8 @@
 // Internal codes and the model's own wording become one category plus, for
 // free text, the model's short detail.
 const CODES: [RegExp, string][] = [
+  [/Muitas mensagens em pouco tempo/i, 'Muitas mensagens em pouco tempo: confira a conversa e responda.'],
+  [/mensagens ofensivas/i, 'Cliente com mensagens ofensivas: atendimento humano.'],
   [/LUNA_PROMISED_HANDOFF/, 'A Luna não conseguiu concluir e passou a conversa para a loja: responda este cliente.'],
   [/AI_QUOTA|DAILY_AI_BUDGET|Limite diário de IA/i, 'Limite diário da IA atingido: responda este cliente manualmente.'],
   [/TURN_BUDGET|Limite (?:de consumo )?do turno|Orçamento de consumo|Capacidade fora/i, 'A Luna não conseguiu concluir a resposta: responda este cliente manualmente.'],

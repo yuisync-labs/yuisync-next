@@ -21,6 +21,7 @@ import { THINK_MODEL, THINK_TURN_NEURON_LIMIT, thinkNeurons, thinkInstructions, 
 import { getProduct, type Memory } from './thinkCatalog/catalog'
 import { addressKept, lastHourSaid, nextBookingStep, oneLegSaid, weightFromSaid, weightSaid, dateSaid, selfTransportSaid, serviceKinds, timeSaid } from './bookingSteps'
 import { publishTableInvalidation } from '../realtimeApi'
+import { conversationGuard, GUARD_HANDOFF_REASON, GUARD_REPLY, withAssistantNotice, type GuardDecision } from './conversationGuards'
 import { claimsDone, freeSlotsReply, validateThinkReply, withoutInternalErrors, zonedIsoTime } from './thinkPresentation'
 import { findConfirmationTarget } from './commitProposal'
 import { onlyBuying, registrationComplete, registrationIssue, registrationStatus } from './registrationLanguage'
@@ -31,7 +32,7 @@ type Inbox = {id:string;job:InternalChatJob;at:number}
 type Batch = {id:string;entries:Inbox[]}
 // The reply tells the customer a person will take over.
 export const promisesHandoff=(reply:string)=>/\b(?:vou|irei|vamos|ja|estou)\s+(?:te\s+)?(?:encaminh\w*|transferi\w*|passa\w*|direcion\w*|cham\w*)\b[^.!?]{0,60}\b(?:atendente|humano|pessoa|equipe|alguem|colaborador|responsavel)/.test(reply.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase())
-type Turn = {batch:Batch;context:LunaExecutionContext;results:{name:string;input:unknown;result:unknown}[];events:string[];calls:number;modelCalls:number;inputTokens:number;outputTokens:number;quota:boolean;neuronLimit?:number;dailyLow?:boolean;rating?:number;confirm?:{proposal_id:string;proposal_version:number};register?:boolean}
+type Turn = {batch:Batch;context:LunaExecutionContext;results:{name:string;input:unknown;result:unknown}[];events:string[];calls:number;modelCalls:number;inputTokens:number;outputTokens:number;quota:boolean;neuronLimit?:number;dailyLow?:boolean;rating?:number;confirm?:{proposal_id:string;proposal_version:number};register?:boolean;guard?:GuardDecision}
 type State = {scope?:InternalChatJob;pending:Inbox[];flushing?:Batch;turns:Record<string,Turn>;catalog:Record<string,Memory>;capability?:string;unregistered?:boolean}
 export type ThinkBindings = EdgeEnv & {LUNA_RUNTIME?:string;LUNA_THINK_TENANT_IDS?:string;LUNA_INBOX_DEBOUNCE_MS?:string;LUNA_MODEL?:string;OPENAI_API_KEY?:string;LUNA_POSTAL_LOOKUP?:string}
 const record = (v:unknown):Record<string,unknown> => v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{}
@@ -194,6 +195,11 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     this.setState({...this.state,turns:{...this.state.turns,[ctx.requestId]:t}})
     const registry=createLunaToolRegistry(db),customer=await registry.execute('get_customer_context',{},c),store=await cachedStore(c.tenantId,()=>registry.execute('get_store_information',{},c))
     // Recorded as a turn result so the reply is checked as a handoff, not as a lost thread.
+    // Offensive messages and floods are decided here, before the model.
+    const inbound=await db.prepare("SELECT content_text text,created_at_ms at FROM chat_messages WHERE tenant_id=? AND module_id='petshop' AND thread_id=? AND direction='inbound' AND created_at_ms>? ORDER BY created_at_ms DESC LIMIT 80").bind(c.tenantId,c.conversationId,Date.now()-86400000).all<{text:string;at:number}>()
+    const guard=conversationGuard(inbound.results,Date.now())
+    this.updateTurn({guard},ctx.requestId)
+    if(guard.block&&!this.turn(ctx.requestId).results.some(r=>r.name==='handoff_to_human')){const input={reason:GUARD_HANDOFF_REASON[guard.block]},result=await registry.execute('handoff_to_human',input,c);this.updateTurn({results:[...this.turn(ctx.requestId).results,{name:'handoff_to_human',input,result}]},ctx.requestId)}
     if(!customer.ok&&customer.code==='CUSTOMER_AMBIGUOUS'&&!t.results.some(r=>r.name==='handoff_to_human')){const input={reason:'Identidade do cliente ambígua.'},result=await registry.execute('handoff_to_human',input,c);this.updateTurn({results:[...this.turn(ctx.requestId).results,{name:'handoff_to_human',input,result}]},ctx.requestId)}
     const operational=await new LunaConversationRepository(db).loadState(c),pending=await new LunaConversationRepository(db).loadPendingProposalState(c)
     await this.context.refreshSystemPrompt()
@@ -207,6 +213,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     // A booking request opens the agenda tools and runs its service search before
     // the first model call, saving the two calls the model would spend on them.
     let services=''
+    if(guard.warnOffense)services+='\nOFENSA: o cliente usou palavras ofensivas. Responda com calma e educação, sem revidar nem comentar a ofensa, e volte ao atendimento. Se ele repetir, a loja assume.'
     const unregistered=!customer.ok&&customer.code==='CUSTOMER_NOT_FOUND'
     if(Boolean(this.state.unregistered)!==unregistered)this.setState({...this.state,unregistered})
     if(topics.agenda&&!topics.commerce&&(customer.ok||unregistered)&&!t.confirm){
@@ -281,7 +288,7 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     if(!thinkTopics(text).appointmentChange)groups.agenda=groups.agenda.filter(n=>!/^(get_customer_appointments|prepare_appointment_reschedule|prepare_appointment_cancellation)$/.test(n))
     return [...new Set([...base,...(groups[this.state.capability??'initial']??[])])]
   }
-  beforeStep(){const t=this.turn();if(t.quota||t.modelCalls>=6)throw Error('THINK_TURN_BUDGET_EXHAUSTED');this.updateTurn({modelCalls:t.modelCalls+1});const prepared=t.results.some(r=>/^prepare_|^present_proposal$/.test(r.name)&&record(r.result).ok);if(prepared||t.results.some(r=>r.name==='record_rating'&&record(r.result).ok))return {activeTools:[],toolChoice:'none' as const,model:this.getModel()};if(t.rating!==undefined)return {activeTools:['record_rating'],toolChoice:{type:'tool' as const,toolName:'record_rating'},model:this.getModel()};if(t.confirm&&!t.results.some(r=>r.name==='commit_confirmed_proposal'))return {activeTools:['commit_confirmed_proposal'],toolChoice:{type:'tool' as const,toolName:'commit_confirmed_proposal'},model:this.getModel()};if(t.register&&!t.results.some(r=>r.name==='prepare_customer_registration'))return {activeTools:['prepare_customer_registration'],toolChoice:{type:'tool' as const,toolName:'prepare_customer_registration'},model:this.getModel()};return {activeTools:this.availableTools(),toolChoice:'auto' as const,model:this.getModel()}}
+  beforeStep(){const t=this.turn();if(t.quota||t.modelCalls>=6)throw Error('THINK_TURN_BUDGET_EXHAUSTED');this.updateTurn({modelCalls:t.modelCalls+1});if(t.guard?.block)return {activeTools:[],toolChoice:'none' as const,model:this.getModel()};const prepared=t.results.some(r=>/^prepare_|^present_proposal$/.test(r.name)&&record(r.result).ok);if(prepared||t.results.some(r=>r.name==='record_rating'&&record(r.result).ok))return {activeTools:[],toolChoice:'none' as const,model:this.getModel()};if(t.rating!==undefined)return {activeTools:['record_rating'],toolChoice:{type:'tool' as const,toolName:'record_rating'},model:this.getModel()};if(t.confirm&&!t.results.some(r=>r.name==='commit_confirmed_proposal'))return {activeTools:['commit_confirmed_proposal'],toolChoice:{type:'tool' as const,toolName:'commit_confirmed_proposal'},model:this.getModel()};if(t.register&&!t.results.some(r=>r.name==='prepare_customer_registration'))return {activeTools:['prepare_customer_registration'],toolChoice:{type:'tool' as const,toolName:'prepare_customer_registration'},model:this.getModel()};return {activeTools:this.availableTools(),toolChoice:'auto' as const,model:this.getModel()}}
   async beforeToolCall(ctx:ToolCallContext){await validateThinkJob(this.db,this.turn().batch.entries.at(-1)!.job,true);const t=this.turn();if(!this.businessNames().has(ctx.toolName))return {action:'block' as const,reason:'Capacidade fora do atendimento.'};if(t.calls>=10||t.quota)return {action:'block' as const,reason:'Limite do turno atingido.'};if(ctx.toolName==='set_context'&&record(ctx.input).label!=='memoria')return {action:'block' as const,reason:'Somente memória pessoal é gravável.'};this.updateTurn({calls:t.calls+1})}
   onStepFinish(ctx:Parameters<Think['onStepFinish']>[0]){const t=this.turn();const usage=ctx.usage;const input=t.inputTokens+(usage.inputTokens??0),output=t.outputTokens+(usage.outputTokens??0);this.updateTurn({inputTokens:input,outputTokens:output,quota:thinkNeurons(input,output)>=(t.neuronLimit??THINK_TURN_NEURON_LIMIT)})}
   async afterToolCall(ctx:ToolCallResultContext){
@@ -675,6 +682,8 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       validation={ok:true}
     }
     if(!validation.ok)console.log(JSON.stringify({event:'think_response_rejected',reason:validation.reason,...('unverifiedHour' in validation?{unverified_hour:validation.unverifiedHour}:{})}))
+    // A flood or repeated offenses: the store takes over with a fixed reply.
+    if(t.guard?.block){reply=GUARD_REPLY[t.guard.block];validation={ok:true}}
     let handoff=t.results.some(r=>r.name==='handoff_to_human'&&record(r.result).ok===true)
     // "Vou encaminhar para um atendente" without the handoff tool: the store must really get the chat.
     if(!handoff&&promisesHandoff(reply)){await createLunaToolRegistry(db).execute('handoff_to_human',{reason:'LUNA_PROMISED_HANDOFF'},c);t.results.push({name:'handoff_to_human',input:{reason:'LUNA_PROMISED_HANDOFF'},result:{ok:true}});handoff=true;reply='Vou passar seu atendimento para alguém da loja continuar com você. Em breve te respondem por aqui.'}
@@ -686,6 +695,8 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     // A handoff always tells the customer someone from the store continues.
     if(handoff&&!/\b(?:atendente|equipe|alguem d[ao] loja|pessoa|humano)\b/i.test(reply.normalize('NFD').replace(/[\u0300-\u036f]/g,'')))reply='Vou passar seu atendimento para alguém da loja continuar com você. Em breve te respondem por aqui.'
     if(!reply.trim())reply='Pode me dizer como posso ajudar?'
+    // The first reply of the conversation says Luna is a virtual assistant.
+    if(!await db.prepare("SELECT 1 x FROM chat_messages WHERE tenant_id=? AND module_id='petshop' AND thread_id=? AND direction='outbound' LIMIT 1").bind(c.tenantId,c.conversationId).first())reply=withAssistantNotice(reply,record(record(store).data).store_name)
     await this.addMessages([{...response.message,parts:[...response.message.parts.filter(p=>p.type!=='text'),{type:'text',text:reply}]}],{mode:'upsert'})
     const now=Date.now(),external='think-response:'+t.batch.id
     const old=await db.prepare("SELECT id FROM chat_messages WHERE tenant_id=? AND module_id='petshop' AND thread_id=? AND external_message_id=? AND direction='outbound'").bind(c.tenantId,c.conversationId,external).first<{id:string}>()
