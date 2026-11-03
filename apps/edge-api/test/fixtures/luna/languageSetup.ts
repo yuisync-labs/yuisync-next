@@ -6,6 +6,9 @@ import {command as c} from './thinkHarness'
 import type {createLiveHarness} from './liveHarness'
 import type {ThinkRecoveryTestAgent} from '../../thinkTestWorker'
 type Harness=Awaited<ReturnType<typeof createLiveHarness>>
+// The store day of the date_boundary case: tomorrow in UTC, so the booked
+// 09:00 stays in the future of the real clock whatever day the tests run.
+export const DATE_BOUNDARY_DAY=new Date(Date.now()+86400000).toISOString().slice(0,10)
 export async function prepareLanguageCase(h:Harness,family:string){
  const pending=['confirmation_quote','fragmented_correction','scoped_operations','price_race','last_unit','transport_retry','handoff_interrupt','ambiguous_reference'].includes(family)
  if(family==='last_unit')await h.db.prepare("UPDATE inventory_balances SET on_hand_milliunits=1000,reserved_milliunits=0 WHERE tenant_id=? AND product_id='racao-a'").bind(h.tenant).run()
@@ -41,7 +44,7 @@ export async function prepareLanguageCase(h:Harness,family:string){
   // which native workflow leases/alarms and the daily budget must keep real.
   // Domain validation keeps real time; the selected appointment is future in
   // both clocks. This tests relative-date interpretation and offset roundtrip.
-  const realDate=Date,offset=Date.parse('2026-11-02T02:55:00Z')-Date.now()
+  const realDate=Date,offset=Date.parse(DATE_BOUNDARY_DAY+'T02:55:00Z')-Date.now()
   const storeDate=new Proxy(realDate,{construct(target,args,newTarget){return Reflect.construct(target,args.length?args:[target.now()+offset],newTarget)}})
   vi.stubGlobal('Date',storeDate);restore=()=>vi.stubGlobal('Date',realDate)
  }

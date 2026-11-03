@@ -21,7 +21,7 @@ import { THINK_MODEL, THINK_TURN_NEURON_LIMIT, thinkNeurons, thinkInstructions, 
 import { getProduct, type Memory } from './thinkCatalog/catalog'
 import { addressKept, lastHourSaid, nextBookingStep, oneLegSaid, weightFromSaid, weightSaid, dateSaid, selfTransportSaid, serviceKinds, timeSaid } from './bookingSteps'
 import { publishTableInvalidation } from '../realtimeApi'
-import { claimsDone, validateThinkReply, withoutInternalErrors, zonedIsoTime } from './thinkPresentation'
+import { claimsDone, freeSlotsReply, validateThinkReply, withoutInternalErrors, zonedIsoTime } from './thinkPresentation'
 import { findConfirmationTarget } from './commitProposal'
 import { onlyBuying, registrationComplete, registrationIssue, registrationStatus } from './registrationLanguage'
 import { withPostalAddress } from './postalCode'
@@ -665,6 +665,13 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
     if(!validation.ok&&/^STOCK_/.test(String(validation.reason))){console.log(JSON.stringify({event:'think_response_rewritten',reason:validation.reason}));reply='Não consegui confirmar se esse produto está disponível agora. Quer que eu procure uma opção parecida, ou prefere que alguém da loja confirme para você?';validation={ok:true}}
     // "Tem vaga" before the agenda was checked: ask the time and check it, the customer keeps talking to Luna.
     if(!validation.ok&&validation.reason==='SLOT_UNVERIFIED'){console.log(JSON.stringify({event:'think_response_rewritten',reason:validation.reason}));reply='Qual dia e horário você prefere? Eu confiro a vaga na agenda.';validation={ok:true}}
+    // An hour the agenda did not return: answer with the real free times instead
+    // of handing the chat to the store. Without times to show, ask for the time.
+    if(!validation.ok&&validation.reason==='SLOT_NOT_RETURNED'){
+      console.log(JSON.stringify({event:'think_response_rewritten',reason:validation.reason,unverified_hour:validation.unverifiedHour}))
+      reply=freeSlotsReply(t.results)
+      validation={ok:true}
+    }
     if(!validation.ok)console.log(JSON.stringify({event:'think_response_rejected',reason:validation.reason,...('unverifiedHour' in validation?{unverified_hour:validation.unverifiedHour}:{})}))
     let handoff=t.results.some(r=>r.name==='handoff_to_human'&&record(r.result).ok===true)
     // "Vou encaminhar para um atendente" without the handoff tool: the store must really get the chat.

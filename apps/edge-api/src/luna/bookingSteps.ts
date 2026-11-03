@@ -84,4 +84,5 @@ export function lastHourSaid(said: string): number | null {
   return hours.length ? hours[hours.length - 1] : null
 }
 // A time, a period or a request for the list lets Luna show slots; a bare day does not.
-export const timeSaid = (said: string) => /\b\d{1,2}\s*(?:h\b|:\d{2}|horas?\b)|\bas \d{1,2}\b|\bmeio[- ]dia\b|\b(?:manha|tarde|noite|cedo|horarios?|que horas)\b/.test(plain(said))
+// "Boa noite" greets; it is no period of the day.
+export const timeSaid = (said: string) => /\b\d{1,2}\s*(?:h\b|:\d{2}|horas?\b)|\bas \d{1,2}\b|\bmeio[- ]dia\b|\b(?:manha|tarde|noite|cedo|horarios?|que horas)\b/.test(plain(said).replace(/\b(?:bom+ dia+|boa+ (?:tarde|noite)\w*)\b/g, ' '))

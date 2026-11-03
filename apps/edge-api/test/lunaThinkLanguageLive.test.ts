@@ -1,7 +1,7 @@
 import {env} from 'cloudflare:workers'
 import {describe,it,expect} from 'vitest'
 import {runInDurableObject} from 'cloudflare:test'
-import {prepareLanguageCase} from './fixtures/luna/languageSetup'
+import {prepareLanguageCase,DATE_BOUNDARY_DAY } from './fixtures/luna/languageSetup'
 import {createLiveHarness,liveService} from './fixtures/luna/liveHarness'
 import catalogue from '../../../docs/luna-think-language-cases.json'
 const liveIds=(env as unknown as {LANG_CASE_IDS?:string}).LANG_CASE_IDS
@@ -107,9 +107,9 @@ describe.skipIf(!liveService||!liveIds)('Budgeted real-model language variants',
     expect(await sales()).toHaveLength(0)
    }else if(s.family==='date_boundary'){
     expect(await sales()).toHaveLength(0);expect((await appointments()).results).toHaveLength(0)
-    const p=await payload('appointment_create');expect(Number(p.scheduled_at_ms)).toBe(Date.parse('2026-11-02T09:00:00-03:00'))
+    const p=await payload('appointment_create');expect(Number(p.scheduled_at_ms)).toBe(Date.parse(DATE_BOUNDARY_DAY+'T09:00:00-03:00'))
     await h.turn(s.follow_up!);expect((await appointments()).results).toHaveLength(1)
-    expect(await h.db.prepare('SELECT scheduled_at_ms FROM appointments WHERE tenant_id=?').bind(h.tenant).first()).toEqual({scheduled_at_ms:Date.parse('2026-11-02T09:00:00-03:00')})
+    expect(await h.db.prepare('SELECT scheduled_at_ms FROM appointments WHERE tenant_id=?').bind(h.tenant).first()).toEqual({scheduled_at_ms:Date.parse(DATE_BOUNDARY_DAY+'T09:00:00-03:00')})
    }else if(s.family==='rating_quantity'){
     const p=await payload();expect(p.items.map((i:any)=>({id:i.product_id,quantity:i.quantity}))).toEqual([{id:'sache',quantity:5}])
     expect(await h.db.prepare('SELECT csat_score FROM chat_threads WHERE tenant_id=?').bind(h.tenant).first()).toEqual({csat_score:null})

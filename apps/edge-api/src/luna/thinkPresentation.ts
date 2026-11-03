@@ -51,3 +51,14 @@ export function withoutInternalErrors(reply:string){
   const kept=reply.replace(/[^.!?\n]*(?:[.!?]+|\n|$)/g,sentence=>internalError.test(normalized(sentence))?'':sentence).replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim()
   return kept||reply
 }
+
+// The real free times the agenda returned in this turn, as one question for the
+// customer. Without times to show, ask for the time.
+export function freeSlotsReply(results:readonly {name:string;result:unknown}[]){
+  const rec=(v:unknown)=>v&&typeof v==='object'?v as Record<string,unknown>:{}
+  const options=results.filter(r=>r.name==='get_available_slots'&&rec(r.result).ok===true).flatMap(r=>{const data=rec(rec(r.result).data);return Array.isArray(data.options)?data.options.map(rec):[]})
+  const hour=(o:Record<string,unknown>)=>String(o.local_time??'').replace(/^0?(\d{1,2}):00$/,'$1h').replace(/^0?(\d{1,2}):(\d{2})$/,'$1h$2')
+  const shown=[...new Set(options.map(hour).filter(Boolean))].slice(0,3),day=String(options[0]?.local_date??'').trim().slice(0,5)
+  if(!shown.length)return 'Qual horário você prefere? Eu confiro a vaga na agenda.'
+  return `Tenho estes horários livres${day?' no dia '+day:''}: ${shown.length>1?shown.slice(0,-1).join(', ')+' e '+shown[shown.length-1]:shown[0]}. Qual fica melhor para você?`
+}

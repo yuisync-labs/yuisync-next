@@ -25,7 +25,7 @@ it('keeps separate prepared cart and booking proposals for scoped confirmation',
 
 // The extended fixture paths must work on real local D1 without any AI call.
 import {createLiveHarness} from './fixtures/luna/liveHarness'
-import {prepareLanguageCase} from './fixtures/luna/languageSetup'
+import {prepareLanguageCase,DATE_BOUNDARY_DAY } from './fixtures/luna/languageSetup'
 const families=['confirmation_quote','fragmented_correction','scoped_operations','price_race','last_unit','transport_retry','handoff_interrupt','ambiguous_reference','tenant_injection','date_boundary','unknown_attribute','rating_quantity']
 for(const [index,family] of families.entries())it('seeds '+family+' without inference or business effects',async()=>{
  const h=await createLiveHarness(8500+index);let restore=()=>{}
@@ -46,8 +46,8 @@ it('controls the store date while native alarms keep real time',async()=>{
  try{
   restore=(await prepareLanguageCase(h,'date_boundary')).restore
   expect(Date.now()-wall).toBeLessThan(3000)
-  expect(new Date().toISOString().slice(0,16)).toBe('2026-11-02T02:55')
-  const at='2026-11-02T09:00:00-03:00'
+  expect(new Date().toISOString().slice(0,16)).toBe(DATE_BOUNDARY_DAY+'T02:55')
+  const at=DATE_BOUNDARY_DAY+'T09:00:00-03:00'
   await h.run('Banho da Mel amanhã às nove. Eu levo e busco.',[c('open_tools',{capability:'agenda'}),h.update([h.add('banho'),{action:'set_field',field:'pet_id',value:'mel'},{action:'set_field',field:'scheduled_at',value:at}],true,'banho-mel','booking')])
   const p=await h.db.prepare("SELECT payload_json FROM luna_proposals WHERE tenant_id=? AND operation_kind='appointment_create'").bind(h.tenant).first<{payload_json:string}>()
   expect(JSON.parse(p!.payload_json).scheduled_at_ms).toBe(Date.parse(at))

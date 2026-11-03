@@ -56,6 +56,22 @@ describe('a bare day asks for the time', () => {
     for (const text of ['na sexta às 10', 'sexta 15h', 'quarta de tarde', 'quais horários tem?', 'amanhã 9:30']) expect(timeSaid(text), text).toBe(true)
     for (const text of ['na sexta', 'amanhã', 'eu quero pra sexta feira agora', 'dia 30']) expect(timeSaid(text), text).toBe(false)
   })
+  it('a greeting is not a period of the day', async () => {
+    const { timeSaid } = await import('../src/luna/bookingSteps')
+    for (const text of ['Ola boa noite, queria agendar um banho pra mel, tem vaga sexta?', 'Bom dia! tem vaga amanhã?', 'boaa tardee, sexta pode?']) expect(timeSaid(text), text).toBe(false)
+    for (const text of ['boa noite, sexta à noite tem?', 'bom dia, sexta de manhã', 'boa tarde, quinta 14h']) expect(timeSaid(text), text).toBe(true)
+  })
+})
+
+describe('an hour the agenda did not return', () => {
+  it('answers with the real free times instead of a handoff', async () => {
+    const { freeSlotsReply } = await import('../src/luna/thinkPresentation')
+    const slots = (times: string[]) => ({ name: 'get_available_slots', result: { ok: true, data: { options: times.map(t => ({ local_date: '06/11/2026', local_time: t })) } } })
+    expect(freeSlotsReply([slots(['08:00', '09:30', '10:00', '11:00'])])).toBe('Tenho estes horários livres no dia 06/11: 8h, 9h30 e 10h. Qual fica melhor para você?')
+    expect(freeSlotsReply([slots(['14:00'])])).toBe('Tenho estes horários livres no dia 06/11: 14h. Qual fica melhor para você?')
+    expect(freeSlotsReply([])).toBe('Qual horário você prefere? Eu confiro a vaga na agenda.')
+    expect(freeSlotsReply([{ name: 'get_available_slots', result: { ok: false } }])).toBe('Qual horário você prefere? Eu confiro a vaga na agenda.')
+  })
 })
 
 it('phoneVariants finds the stored number from the WhatsApp spelling', async () => {
