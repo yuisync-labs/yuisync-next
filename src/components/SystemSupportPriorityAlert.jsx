@@ -44,7 +44,8 @@ export function SystemSupportPriorityAlert() {
 
   useEffect(() => {
     if (!isGlobalAdmin) return undefined
-    const timer = setInterval(loadPriority, 12000)
+    // Mounted on every page: poll only while the tab is visible, once a minute.
+    const timer = setInterval(() => { if (!document.hidden) loadPriority() }, 60_000)
     return () => clearInterval(timer)
   }, [isGlobalAdmin, loadPriority])
 

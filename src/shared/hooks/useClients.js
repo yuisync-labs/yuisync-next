@@ -180,7 +180,8 @@ export function useClients() {
   const { activeModuleId }      = useModuleCtx()
   const { activeTenantId }      = useAuthCtx()
 
-  const load = useCallback(async (search = '') => {
+  // fresh: the client list page itself always rereads; pickers on other pages reuse a recent copy.
+  const load = useCallback(async (search = '', { fresh = false } = {}) => {
     if (!activeModuleId) return
     setLoading(true); setError(null)
     try {
@@ -190,6 +191,7 @@ export function useClients() {
           moduleId: activeModuleId,
           search: sanitizeSearch(search),
           allPages: true,
+          fresh,
         }))
         return
       }

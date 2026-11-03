@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest'
-import {naturalConfirmation,requestsChange} from '../src/luna/confirmationLanguage'
+import {consistentConfirmation,naturalConfirmation,requestsChange} from '../src/luna/confirmationLanguage'
 import {command as c,createThinkHarness} from './fixtures/luna/thinkHarness'
 
 const racao={items:[{name:'Ração A',quantity:1}],fulfillment_type:'counter',total_cents:9000}
@@ -32,9 +32,11 @@ describe('confirmação natural de um resumo apresentado (frases da bateria de 2
   ['Quero cinco sachês pra retirar.',saches],
  ])('recusa: %s',(phrase,payload)=>expect(naturalConfirmation(phrase,'product_order_create',payload)).toBe(false))
  it('recusa horário novo no agendamento',()=>expect(naturalConfirmation('Confirmo o banho da Mel amanhã às dez.','appointment_create',banho)).toBe(false))
- it('não usa a gramática natural para cancelamento ou reagendamento',()=>{
-  expect(naturalConfirmation('Pode confirmar o cancelamento.','appointment_cancel',banho)).toBe(false)
-  expect(naturalConfirmation('Pode confirmar.','appointment_reschedule',banho)).toBe(false)
+ it('aceita o sim natural para cancelamento e reagendamento (rodada 3, teste 10)',()=>{
+  expect(naturalConfirmation('Pode confirmar.','appointment_reschedule',banho)).toBe(true)
+  expect(consistentConfirmation('sim, confirmo o cancelamento','appointment_cancel',banho,Date.now())).toBe(true)
+  expect(consistentConfirmation('pode cancelar','appointment_cancel',banho,Date.now())).toBe(true)
+  expect(consistentConfirmation('não, não cancela','appointment_cancel',banho,Date.now())).toBe(false)
  })
  it('distingue hesitação de pedido de mudança',()=>{
   expect(requestsChange('Não confirme o pedido ainda. Só estou conferindo o resumo.')).toBe(false)
@@ -77,6 +79,20 @@ describe('Think: confirmação decidida pelo servidor',()=>{
   await h.run('Tem sachê também?',['Tenho sachê. Quer incluir?'])
   const turn=await h.run('Sim',['Posso incluir o sachê. Quantos?'])
   expect(turn.tools.some(t=>t.name==='commit_confirmed_proposal')).toBe(false)
+  expect((await h.saleRows()).results).toHaveLength(0)
+ },30000)
+})
+
+describe('Think: confirmação de um resumo entre dois pendentes',()=>{
+ for(const [n,phrase] of [[0,'Confirma só o banho; a compra ainda não.'],[1,'O pedido fica pra depois. Pode concluir apenas o agendamento da Mel.'],[2,'Fecha o horario da Mel, mas nao fecha a racao ainda.']] as const)it('conclui só o banho: '+phrase,async()=>{
+  const h=await createThinkHarness(931+n,'-scoped-confirm')
+  await h.run('Prepare 1 Ração A para retirada.',[c('open_tools',{capability:'cart'}),h.update([h.add('racao-a'),h.pickup])])
+  const date=new Date();date.setUTCDate(date.getUTCDate()+3);while([0,6].includes(date.getUTCDay()))date.setUTCDate(date.getUTCDate()+1)
+  const at=date.toISOString().slice(0,10)+'T09:00:00-03:00'
+  await h.run('Prepare também só banho da Mel em '+at+'. Eu levo e busco.',[c('open_tools',{capability:'agenda'}),h.update([h.add('banho'),{action:'set_field',field:'pet_id',value:'mel'},{action:'set_field',field:'scheduled_at',value:at}],true,'banho-mel','booking')])
+  const turn=await h.run(phrase,[c('commit_confirmed_proposal',{proposal_id:'x',proposal_version:1})])
+  expect(turn.tools.find(t=>t.name==='commit_confirmed_proposal')?.result).toMatchObject({ok:true})
+  expect((await h.db.prepare('SELECT id FROM appointments WHERE tenant_id=?').bind(h.tenant).all()).results).toHaveLength(1)
   expect((await h.saleRows()).results).toHaveLength(0)
  },30000)
 })

@@ -17,7 +17,7 @@ describe('designed scenario 19 — real Worker/local D1/simulated provider',()=>
       if(key==='prepare')return(sql:string)=>{
         const wrap=(statement:D1PreparedStatement):D1PreparedStatement=>new Proxy(statement,{get(s,k){
           if(k==='bind')return(...values:unknown[])=>wrap(s.bind(...values))
-          if(k==='all'&&sql.includes('SELECT scheduled_at_ms,duration_min FROM appointments'))return async()=>{
+          if(k==='all'&&sql.includes('SELECT a.id,a.scheduled_at_ms,a.duration_min'))return async()=>{
             queryAttempts++
             if(!faultInjected){faultInjected=true;throw new Error('FIXTURE_AGENDA_TIMEOUT')}
             return s.all()

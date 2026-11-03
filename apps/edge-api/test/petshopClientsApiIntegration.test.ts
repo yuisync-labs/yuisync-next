@@ -72,6 +72,20 @@ describe('native petshop clients API', () => {
       expect(clientId).toBeTruthy()
       expect(petId).not.toBe(clientId)
 
+      // A second pet typed with the same CPF (zeros lost, dotted) joins the same tutor.
+      const createPet = (body: Record<string, unknown>) => handlePetshopClientsApiRequest(new Request('https://edge.test/api/petshop/clients', {
+        method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body),
+      }), bindings()).then(r => r!.json<{ client: { id: string; tutor_group_id: string; phone: string } }>())
+      const first = await createPet({ owner_name: 'Rita CPF QA', owner_cpf: '05250357610', pet_name: 'Nino QA', species: 'dog' })
+      const second = await createPet({ owner_name: 'RITA CPF QA', owner_cpf: '052.503.576-10', phone: '11988887777', pet_name: 'Mel QA', species: 'cat' })
+      const third = await createPet({ owner_name: 'Rita CPF QA', owner_cpf: '5250357610', pet_name: 'Bob QA', species: 'dog' })
+      expect(second.client.tutor_group_id).toBe(first.client.tutor_group_id)
+      expect(third.client.tutor_group_id).toBe(first.client.tutor_group_id)
+      expect(second.client.phone).toBe('11988887777')
+      const tutors = await db.prepare("SELECT count(*) n FROM clients WHERE tenant_id=?1 AND name LIKE '%CPF QA'").bind(tenantId).first<{ n: number }>()
+      expect(tutors?.n).toBe(1)
+      await db.prepare("UPDATE pets SET status='inactive' WHERE tenant_id=?1 AND client_id=?2").bind(tenantId, first.client.tutor_group_id).run()
+
       const searched = await handlePetshopClientsApiRequest(new Request('https://edge.test/api/petshop/clients?search=lua', { headers }), bindings())
       await expect(searched?.json()).resolves.toEqual({ clients: [expect.objectContaining({ id: petId, tutor_group_id: clientId })] })
 
@@ -144,6 +158,8 @@ describe('native petshop clients API', () => {
     } finally {
       if (petId) await db.prepare('DELETE FROM pets WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(tenantId, 'petshop', petId).run()
       if (clientId) await db.prepare('DELETE FROM clients WHERE tenant_id=?1 AND module_id=?2 AND id=?3').bind(tenantId, 'petshop', clientId).run()
+      await db.prepare('DELETE FROM pets WHERE tenant_id=?1').bind(tenantId).run()
+      await db.prepare('DELETE FROM clients WHERE tenant_id=?1').bind(tenantId).run()
       await db.prepare('DELETE FROM tenant_memberships WHERE tenant_id=?1').bind(tenantId).run()
       await db.prepare('DELETE FROM identity_principals WHERE id=?1').bind(principalId).run()
       await db.prepare('DELETE FROM tenants WHERE id=?1').bind(tenantId).run()

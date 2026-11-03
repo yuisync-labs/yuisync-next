@@ -1,0 +1,430 @@
+{
+ "source": "Configuração da PetShop QuatroPatas no staging em 29/10/2026 (só dados de catálogo e regras; sem cliente, CPF ou chave PIX).",
+ "store": {
+  "name": "PetShop QuatroPatas",
+  "city": "Muriaé"
+ },
+ "hours": {
+  "1": [
+   {
+    "open": "08:00",
+    "close": "18:00"
+   }
+  ],
+  "2": [
+   {
+    "open": "08:00",
+    "close": "18:00"
+   }
+  ],
+  "3": [
+   {
+    "open": "08:00",
+    "close": "18:00"
+   }
+  ],
+  "4": [
+   {
+    "open": "08:00",
+    "close": "18:00"
+   }
+  ],
+  "5": [
+   {
+    "open": "08:00",
+    "close": "18:00"
+   }
+  ],
+  "6": [
+   {
+    "open": "08:00",
+    "close": "18:00"
+   }
+  ],
+  "7": [
+   {
+    "open": "08:00",
+    "close": "18:00"
+   }
+  ]
+ },
+ "transport": [
+  {
+   "id": "buscar_e_levar",
+   "label": "Buscar e levar",
+   "fee_cents": 2000,
+   "pickup_required": 1,
+   "dropoff_required": 1,
+   "outside_city": 0,
+   "max_weight_grams": 10000,
+   "sort_order": 0
+  },
+  {
+   "id": "buscar_e_levar_fora_muriae",
+   "label": "Buscar e levar fora de Muriaé",
+   "fee_cents": 2000,
+   "pickup_required": 1,
+   "dropoff_required": 1,
+   "outside_city": 1,
+   "max_weight_grams": 10000,
+   "sort_order": 1
+  },
+  {
+   "id": "somente_buscar",
+   "label": "Somente buscar",
+   "fee_cents": 1000,
+   "pickup_required": 1,
+   "dropoff_required": 0,
+   "outside_city": 0,
+   "max_weight_grams": 10000,
+   "sort_order": 2
+  },
+  {
+   "id": "somente_levar",
+   "label": "Somente levar",
+   "fee_cents": 1000,
+   "pickup_required": 0,
+   "dropoff_required": 1,
+   "outside_city": 0,
+   "max_weight_grams": 10000,
+   "sort_order": 3
+  }
+ ],
+ "delivery_coverage": [
+  {
+   "city": "Muriaé",
+   "neighborhood": "*",
+   "active": true,
+   "fee_cents": 1000
+  }
+ ],
+ "hidden_service_ids": [
+  "higienica-detalhes"
+ ],
+ "services": [
+  {
+   "id": "banho-gato",
+   "name": "BANHO GATO (TODAS AS PELAGENS)",
+   "group_type": "banho_tosa",
+   "price_cents": 13000,
+   "duration_min": 60,
+   "min_weight_grams": null,
+   "max_weight_grams": null,
+   "species_target": "cat",
+   "description": ""
+  },
+  {
+   "id": "banho-p",
+   "name": "BANHO PET PORTE PEQUENO 0 KG A 10 KG (TODAS AS PELAGENS)",
+   "group_type": "banho_tosa",
+   "price_cents": 5500,
+   "duration_min": 60,
+   "min_weight_grams": 0,
+   "max_weight_grams": 10099,
+   "species_target": "dog",
+   "description": "Banho com corte de unha, limpeza de ouvido e tosa higiênica (debaixo da barriguinha e atrás no bumbum)."
+  },
+  {
+   "id": "banho-m-curto",
+   "name": "BANHO PET PORTE MEDIO 10,1 A 22 KG (PELO CURTO)",
+   "group_type": "banho_tosa",
+   "price_cents": 6000,
+   "duration_min": 60,
+   "min_weight_grams": 10100,
+   "max_weight_grams": 22100,
+   "species_target": "dog",
+   "description": "Banho com corte de unha, limpeza de ouvido e tosa higiênica (debaixo da barriguinha e atrás no bumbum)."
+  },
+  {
+   "id": "banho-m-medio",
+   "name": "BANHO PET PORTE MEDIO 10,1 A 22 KG (PELO MEDIO)",
+   "group_type": "banho_tosa",
+   "price_cents": 6500,
+   "duration_min": 60,
+   "min_weight_grams": 10100,
+   "max_weight_grams": 22100,
+   "species_target": "dog",
+   "description": "Banho com corte de unha, limpeza de ouvido e tosa higiênica (debaixo da barriguinha e atrás no bumbum)."
+  },
+  {
+   "id": "banho-m-duplo",
+   "name": "BANHO PET PORTE MEDIO 10,1 A 22 KG (PELO DUPLO)",
+   "group_type": "banho_tosa",
+   "price_cents": 7000,
+   "duration_min": 60,
+   "min_weight_grams": 10100,
+   "max_weight_grams": 22100,
+   "species_target": "dog",
+   "description": "Banho com corte de unha, limpeza de ouvido e tosa higiênica (debaixo da barriguinha e atrás no bumbum)."
+  },
+  {
+   "id": "banho-m-longo",
+   "name": "BANHO PET PORTE MEDIO 10,1 A 22 KG (PELO LONGO)",
+   "group_type": "banho_tosa",
+   "price_cents": 10000,
+   "duration_min": 60,
+   "min_weight_grams": 10100,
+   "max_weight_grams": 22100,
+   "species_target": "dog",
+   "description": "Banho com corte de unha, limpeza de ouvido e tosa higiênica (debaixo da barriguinha e atrás no bumbum)."
+  },
+  {
+   "id": "banho-g-curto",
+   "name": "BANHO PET PORTE GRANDE 22 A 40 KG (PELO CURTO)",
+   "group_type": "banho_tosa",
+   "price_cents": 8000,
+   "duration_min": 60,
+   "min_weight_grams": 22101,
+   "max_weight_grams": 40000,
+   "species_target": "dog",
+   "description": "Banho com corte de unha, limpeza de ouvido e tosa higiênica (debaixo da barriguinha e atrás no bumbum)."
+  },
+  {
+   "id": "banho-g-duplo",
+   "name": "BANHO PET PORTE GRANDE 22 A 40 KG (PELO DUPLO)",
+   "group_type": "banho_tosa",
+   "price_cents": 12500,
+   "duration_min": 60,
+   "min_weight_grams": 22101,
+   "max_weight_grams": 40000,
+   "species_target": "dog",
+   "description": "Banho com corte de unha, limpeza de ouvido e tosa higiênica (debaixo da barriguinha e atrás no bumbum)."
+  },
+  {
+   "id": "banho-g-longo",
+   "name": "BANHO PET PORTE GRANDE 22 A 40 KG (PELO LONGO)",
+   "group_type": "banho_tosa",
+   "price_cents": 13000,
+   "duration_min": 60,
+   "min_weight_grams": 22101,
+   "max_weight_grams": 40000,
+   "species_target": "dog",
+   "description": "Banho com corte de unha, limpeza de ouvido e tosa higiênica (debaixo da barriguinha e atrás no bumbum)."
+  },
+  {
+   "id": "tosa-maq-p",
+   "name": "TOSA MAQUINA 0 KG A 10 KG",
+   "group_type": "banho_tosa",
+   "price_cents": 9000,
+   "duration_min": 60,
+   "min_weight_grams": 0,
+   "max_weight_grams": 10099,
+   "species_target": null,
+   "description": "Banho com corte de unha, limpeza de ouvido, tosa higiênica (debaixo da barriguinha e atrás no bumbum) e tosa do corpinho na máquina."
+  },
+  {
+   "id": "tosa-maq-m",
+   "name": "TOSA MAQUINA 10 KG A 22 KG",
+   "group_type": "banho_tosa",
+   "price_cents": 11000,
+   "duration_min": 60,
+   "min_weight_grams": 10100,
+   "max_weight_grams": 22100,
+   "species_target": null,
+   "description": "Banho com corte de unha, limpeza de ouvido, tosa higiênica (debaixo da barriguinha e atrás no bumbum) e tosa do corpinho na máquina."
+  },
+  {
+   "id": "tosa-tes-p",
+   "name": "TOSA TESOURA 0 KG A 10 KG",
+   "group_type": "banho_tosa",
+   "price_cents": 13000,
+   "duration_min": 60,
+   "min_weight_grams": 0,
+   "max_weight_grams": 10099,
+   "species_target": null,
+   "description": "Banho com corte de unha, limpeza de ouvido, tosa higiênica (debaixo da barriguinha, atrás no bumbum e debaixo das patinhas) e tosa do corpinho na tesoura."
+  },
+  {
+   "id": "tosa-total-p",
+   "name": "TOSA TOTAL 0 KG A 10 KG",
+   "group_type": "banho_tosa",
+   "price_cents": 8500,
+   "duration_min": 60,
+   "min_weight_grams": 0,
+   "max_weight_grams": 10099,
+   "species_target": null,
+   "description": "Banho com corte de unha, limpeza de ouvido, tosa higiênica (debaixo da barriguinha e atrás no bumbum) e tosa total: cabeça, rabinho e corpinho na mesma altura."
+  },
+  {
+   "id": "tosa-total-m",
+   "name": "TOSA TOTAL 10 KG A 22 KG",
+   "group_type": "banho_tosa",
+   "price_cents": 9500,
+   "duration_min": 60,
+   "min_weight_grams": 10100,
+   "max_weight_grams": 22100,
+   "species_target": null,
+   "description": "Banho com corte de unha, limpeza de ouvido, tosa higiênica (debaixo da barriguinha e atrás no bumbum) e tosa total: cabeça, rabinho e corpinho na mesma altura."
+  },
+  {
+   "id": "unha",
+   "name": "CORTE DE UNHA PET",
+   "group_type": "banho_tosa",
+   "price_cents": 2500,
+   "duration_min": 60,
+   "min_weight_grams": null,
+   "max_weight_grams": null,
+   "species_target": null,
+   "description": ""
+  },
+  {
+   "id": "hidratacao",
+   "name": "HIDRATAÇÃO",
+   "group_type": "banho_tosa",
+   "price_cents": 2000,
+   "duration_min": 60,
+   "min_weight_grams": null,
+   "max_weight_grams": null,
+   "species_target": null,
+   "description": ""
+  },
+  {
+   "id": "escovacao",
+   "name": "ESCOVACAO DENTARIA PET (MATERIAL EMPRESA)",
+   "group_type": "banho_tosa",
+   "price_cents": 1200,
+   "duration_min": 60,
+   "min_weight_grams": null,
+   "max_weight_grams": null,
+   "species_target": null,
+   "description": "Escovação dentária com escova e creme dental da loja."
+  },
+  {
+   "id": "higienica-detalhes",
+   "name": "Tosa higiênica com detalhes 0 a 10 kg",
+   "group_type": "banho_tosa",
+   "price_cents": 2500,
+   "duration_min": 15,
+   "min_weight_grams": 0,
+   "max_weight_grams": 10099,
+   "species_target": null,
+   "description": ""
+  },
+  {
+   "id": "consulta",
+   "name": "CONSULTA VETERINARIA",
+   "group_type": "veterinaria",
+   "price_cents": 18000,
+   "duration_min": 60,
+   "min_weight_grams": null,
+   "max_weight_grams": null,
+   "species_target": null,
+   "description": ""
+  },
+  {
+   "id": "vacina-v8",
+   "name": "VACINA V 8",
+   "group_type": "veterinaria",
+   "price_cents": 6600,
+   "duration_min": 60,
+   "min_weight_grams": null,
+   "max_weight_grams": null,
+   "species_target": null,
+   "description": ""
+  },
+  {
+   "id": "vacina-raiva",
+   "name": "VACINA CANIGEN/NOBIVAC RAIVA PET",
+   "group_type": "veterinaria",
+   "price_cents": 3500,
+   "duration_min": 60,
+   "min_weight_grams": null,
+   "max_weight_grams": null,
+   "species_target": null,
+   "description": ""
+  }
+ ],
+ "products": [
+  {
+   "id": "sd-ultralife-3",
+   "name": "RACAO SPECIAL DOG ULTRALIFE ADULTO FRANGO RACAS PEQUENAS 3 KG",
+   "price_cents": 5490,
+   "stock_units": 10,
+   "category": "Ração"
+  },
+  {
+   "id": "sd-light-15",
+   "name": "SPECIAL DOG ULTRA RAC PEQ LIGHT/CASTRADOS FRANGO 15 KG",
+   "price_cents": 19490,
+   "stock_units": 0,
+   "category": "Ração"
+  },
+  {
+   "id": "premier-bulldog",
+   "name": "RACAO PREMIER BULLDOG FRANCES ADULTOS FRANGO 1KG",
+   "price_cents": 5190,
+   "stock_units": 6,
+   "category": "Ração"
+  },
+  {
+   "id": "granel-premier-peq",
+   "name": "GRANEL PREMIER FRANGO RAÇAS PEQUENAS ADULTOS KG",
+   "price_cents": 2150,
+   "stock_units": 14,
+   "category": "Ração"
+  },
+  {
+   "id": "granel-sd-peq",
+   "name": "GRANEL SPECIAL DOG ADULTO FRANGO RAÇAS PEQUENAS KG",
+   "price_cents": 1250,
+   "stock_units": 15,
+   "category": "Ração"
+  },
+  {
+   "id": "golden-gato-frango",
+   "name": "GOLDEN FORMULA GATO ADULTO FRANGO 1 KG",
+   "price_cents": 3690,
+   "stock_units": 2,
+   "category": "Ração"
+  },
+  {
+   "id": "golden-gato-castrado",
+   "name": "GOLDEN FORMULA GATO ADULTO CASTRADO SALMÃO 1 KG",
+   "price_cents": 4090,
+   "stock_units": 0,
+   "category": "Ração"
+  },
+  {
+   "id": "golden-filhote",
+   "name": "GOLDEN SELEÇÃO NATURAL CÃES FILHOTES MINI BITS 1 KG",
+   "price_cents": 3400,
+   "stock_units": 2,
+   "category": "Ração"
+  },
+  {
+   "id": "golden-adulto-3",
+   "name": "GOLDEN SELEÇÃO NATURALCÃES ADULTO MINI BITS 3 KG",
+   "price_cents": 7800,
+   "stock_units": 0,
+   "category": "Ração"
+  },
+  {
+   "id": "pipicat-4",
+   "name": "AREIA PIPICAT CLASSIC 4 KG",
+   "price_cents": 1700,
+   "stock_units": 27,
+   "category": "Higiene"
+  },
+  {
+   "id": "pipicat-floral-12",
+   "name": "AREIA PIPICAT FLORAL 12 KG",
+   "price_cents": 6990,
+   "stock_units": 3,
+   "category": "Higiene"
+  },
+  {
+   "id": "bifinho",
+   "name": "BIFINHO SPECIAL DOG CARNE",
+   "price_cents": 450,
+   "stock_units": 9,
+   "category": "Petisco"
+  },
+  {
+   "id": "episoothe-500",
+   "name": "EPISOOTHE SHAMPOO 500ML",
+   "price_cents": 22100,
+   "stock_units": 1,
+   "category": "Medicamento"
+  }
+ ]
+}

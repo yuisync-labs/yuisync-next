@@ -8,6 +8,8 @@ const body=await response.json()
 if(!response.ok||body.errors?.length||!body.data?.viewer?.accounts?.length)throw Error('DAILY_USAGE_UNAVAILABLE')
 // Include a small reserve for delayed analytics. The runtime enforces a 9,000 ceiling.
 const used=Math.ceil(body.data.viewer.accounts[0].aiInferenceAdaptiveGroups.reduce((sum,g)=>sum+Number(g.sum.totalNeurons),0))+100
-if(!Number.isFinite(used)||used>=9000)throw Error('DAILY_FREE_BUDGET_UNAVAILABLE')
+// With OpenAI configured, Luna does not spend Workers AI neurons; an exhausted
+// free tier only matters as the fallback model's ceiling.
+if(!Number.isFinite(used)||used>=9000){if(!process.env.OPENAI_API_KEY)throw Error('DAILY_FREE_BUDGET_UNAVAILABLE');console.log(JSON.stringify({day,baselineNeurons:used,note:'free Workers AI neurons exhausted; staging Luna uses OpenAI'}))}
 await appendFile(process.env.GITHUB_ENV,`LUNA_AI_BASELINE_DATE=${day}\nLUNA_AI_BASELINE_NEURONS=${used}\n`)
 console.log(JSON.stringify({day,baselineNeurons:used,limit:9000,freeLimit:10000}))

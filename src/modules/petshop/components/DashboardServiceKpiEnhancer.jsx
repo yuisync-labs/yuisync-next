@@ -230,7 +230,7 @@ export function DashboardServiceKpiEnhancer() {
     const observer = new MutationObserver(schedule)
     observer.observe(document.body, { childList: true, subtree: true, characterData: true })
     void refresh()
-    const interval = window.setInterval(() => void refresh(), 60_000)
+    const interval = window.setInterval(() => { if (!document.hidden) void refresh() }, 120_000)
 
     return () => {
       cancelled = true

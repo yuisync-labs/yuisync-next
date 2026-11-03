@@ -65,7 +65,22 @@ async function request(path, { tenantId, moduleId = 'petshop', method = 'GET', b
   return payload
 }
 
-export async function listClientPetsCommand({ tenantId, moduleId = 'petshop', search = '', limit = 1000, allPages = false }) {
+// The full tutor+pet list is read by many pages; one copy per store for a short
+// time keeps page changes from rereading every pet. Any write clears it.
+const fullListCache = new Map()
+const FULL_LIST_TTL_MS = 2 * 60_000
+export function clearClientPetsCache() { fullListCache.clear() }
+
+export async function listClientPetsCommand({ tenantId, moduleId = 'petshop', search = '', limit = 1000, allPages = false, fresh = false }) {
+  const key = allPages && !search ? `${tenantId}:${moduleId}` : null
+  const hit = key && !fresh ? fullListCache.get(key) : null
+  if (hit && Date.now() - hit.at < FULL_LIST_TTL_MS) return hit.rows
+  const rows = await loadClientPets({ tenantId, moduleId, search, limit, allPages })
+  if (key) fullListCache.set(key, { at: Date.now(), rows })
+  return rows
+}
+
+async function loadClientPets({ tenantId, moduleId, search, limit, allPages }) {
   const params = new URLSearchParams({ limit: String(limit) })
   if (search) params.set('search', search)
   if (allPages) params.set('paginate', '1')
@@ -92,19 +107,23 @@ export async function getClientPetCommand({ tenantId, moduleId = 'petshop', id }
 }
 
 export async function createClientPetCommand({ tenantId, moduleId = 'petshop', payload }) {
+  clearClientPetsCache()
   const result = await request('', { tenantId, moduleId, method: 'POST', body: payload })
   return result.client
 }
 
 export async function updateClientPetCommand({ tenantId, moduleId = 'petshop', id, payload }) {
+  clearClientPetsCache()
   const result = await request(`/${encodeURIComponent(id)}`, { tenantId, moduleId, method: 'PATCH', body: payload })
   return result.client
 }
 
 export async function removeClientPetCommand({ tenantId, moduleId = 'petshop', id }) {
+  clearClientPetsCache()
   return request(`/${encodeURIComponent(id)}`, { tenantId, moduleId, method: 'DELETE' })
 }
 
 export async function removeTutorCommand({ tenantId, moduleId = 'petshop', id }) {
+  clearClientPetsCache()
   return request(`/${encodeURIComponent(id)}?scope=client`, { tenantId, moduleId, method: 'DELETE' })
 }

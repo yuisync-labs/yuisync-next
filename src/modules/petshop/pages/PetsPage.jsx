@@ -330,7 +330,7 @@ export default function PetsPage() {
   async function reloadAll() {
     try {
       setPageError('')
-      await Promise.all([load(), loadPlans().then(setPlans), loadClientSubscriptions().then(setSubscriptions)])
+      await Promise.all([load('', { fresh: true }), loadPlans().then(setPlans), loadClientSubscriptions().then(setSubscriptions)])
     } catch (error) {
       setPageError(error.message || 'Nao foi possivel carregar os clientes.')
     }

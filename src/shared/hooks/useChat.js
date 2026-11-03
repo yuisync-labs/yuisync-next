@@ -126,7 +126,7 @@ function playHandoffSound() {
 
 function normalizeHandoffTarget({ guard = {}, state = {}, reason = '' } = {}) {
   const rawTarget = String(guard.handoff_target || guard.handoffTarget || state.handoffTarget || '').toLowerCase()
-  const reasonText = String(reason || '').toLowerCase()
+  const reasonText = String(reason || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
   const intent = String(guard.intent || state.intent || '').toLowerCase()
   if (rawTarget === 'veterinaria' || reasonText.includes('veterinaria') || intent === 'veterinaria') return 'veterinaria'
   return 'atendente'
@@ -153,6 +153,20 @@ function handoffAlertFromMessage(message, session = {}) {
 }
 
 function handoffAlertFromSession(session = {}) {
+  // Luna (Think) leaves a summary when it hands the chat to the store.
+  const summary = session?.context?.think?.handoff_summary
+  if (session.status === 'human' && summary) {
+    const reason = String(summary.reason || 'Atendimento humano solicitado.')
+    return {
+      id: `think:${session.id}:${reason}:${(summary.recent || []).slice(-1)[0] || ''}`,
+      sessionId: session.id,
+      customerName: summary.customer?.name || session.customer_name || session.customer_phone || 'Cliente',
+      target: normalizeHandoffTarget({ reason }),
+      reason,
+      content: summary.request || '',
+      createdAt: session.last_message_at || new Date().toISOString(),
+    }
+  }
   const state = session?.context?.petbot || {}
   const reasons = Array.isArray(state.blockedReasons) ? state.blockedReasons : []
   const isHandoff = session.status === 'human' && (state.status === 'human_requested' || state.awaiting === 'human' || reasons.length > 0)
@@ -193,6 +207,8 @@ export function useChat() {
   const msgChannelRef = useRef(null)
   const activeSessionIdRef = useRef(null)
   const handoffAlertIdsRef = useRef(new Set())
+  const handoffSeededRef = useRef(false)
+  const knownSessionIdsRef = useRef(new Set())
   const botRequestsInFlightRef = useRef(0)
   const botPollControllersRef = useRef(new Map())
   const { activeModuleId } = useModuleCtx()
@@ -205,16 +221,17 @@ export function useChat() {
   useEffect(()=>{
     for(const controller of botPollControllersRef.current.values())controller.abort()
     botPollControllersRef.current.clear()
-    activeSessionIdRef.current=null;setActiveSession(null);setMessages([]);setSessions([]);setBotTurn(null)
+    activeSessionIdRef.current=null;setActiveSession(null);setMessages([]);setSessions([]);setBotTurn(null);handoffSeededRef.current=false;knownSessionIdsRef.current=new Set()
   },[activeTenantId,activeModuleId])
 
-  const pushHandoffAlert = useCallback((source, session) => {
+  const pushHandoffAlert = useCallback((source, session, silent = false) => {
     const alert = source?.metadata
       ? handoffAlertFromMessage(source, session)
       : handoffAlertFromSession(source)
     if (!alert?.sessionId || handoffAlertIdsRef.current.has(alert.id)) return
 
     handoffAlertIdsRef.current.add(alert.id)
+    if (silent) return
     setHandoffAlerts((prev) => [alert, ...prev].slice(0, 5))
     playHandoffSound()
   }, [])
@@ -223,56 +240,71 @@ export function useChat() {
     setHandoffAlerts((prev) => prev.filter((alert) => alert.id !== alertId))
   }, [])
 
+  // Reads chats without touching the list on screen.
+  const fetchSessions = useCallback(async (statusFilter = '', dateRange = { from: '', to: '' }) => {
+    if (!activeModuleId) return []
+    const bounds = chatDateBounds(dateRange)
+    const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
+      let query = supabase
+        .from('chat_sessions')
+        .select('id, customer_phone, customer_name, channel, context, status, intent, last_message_at, opened_at, csat_score, clients(name, details)')
+        .eq('module_id', activeModuleId)
+        .order('last_message_at', { ascending: false, nullsFirst: true })
+
+      query = applyTenantFilter(query, activeTenantId, includeTenant)
+      if (statusFilter) query = query.eq('status', statusFilter)
+      // A chat matches when it was open at some point in the range.
+      if (bounds.to) query = query.lte('opened_at', bounds.to)
+      if (bounds.from) query = query.or(`last_message_at.gte.${bounds.from},opened_at.gte.${bounds.from}`)
+      return query
+    })
+
+    if (response.error) throw response.error
+
+    const mapped = (response.data || []).map((session) => {
+      if (!session.clients) return session
+      return {
+        ...session,
+        pets: {
+          pet_name: session.clients.details?.pet_name || session.clients.name || '',
+          species: session.clients.details?.species || '',
+        },
+        clients: undefined,
+      }
+    })
+
+    // A new thread has no last_message_at yet. NULLS FIRST keeps it inside the
+    // 200-row page; this sort then places it by opened_at among recent chats.
+    const activity=session=>Date.parse(String(session.last_message_at||session.opened_at||session.created_at||'').replace(/^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)$/,'$1T$2Z'))||Date.now()
+    mapped.sort((a,b)=>activity(b)-activity(a))
+    return mapped
+  }, [activeModuleId, activeTenantId])
+
   const loadSessions = useCallback(async (statusFilter = '', dateRange) => {
     if (!activeModuleId) return
     // Background reloads call without a range and keep the one on screen.
     if (dateRange !== undefined) dateRangeRef.current = dateRange
-    const bounds = chatDateBounds(dateRangeRef.current)
     setLoading(true)
 
     try {
-      const response = await runWithTenantFallback(activeTenantId, async (includeTenant) => {
-        let query = supabase
-          .from('chat_sessions')
-          .select('id, customer_phone, customer_name, channel, context, status, intent, last_message_at, opened_at, csat_score, clients(name, details)')
-          .eq('module_id', activeModuleId)
-          .order('last_message_at', { ascending: false, nullsFirst: true })
-
-        query = applyTenantFilter(query, activeTenantId, includeTenant)
-        if (statusFilter) query = query.eq('status', statusFilter)
-        // A chat matches when it was open at some point in the range.
-        if (bounds.to) query = query.lte('opened_at', bounds.to)
-        if (bounds.from) query = query.or(`last_message_at.gte.${bounds.from},opened_at.gte.${bounds.from}`)
-        return query
-      })
-
-      if (response.error) throw response.error
-
-      const mapped = (response.data || []).map((session) => {
-        if (!session.clients) return session
-        return {
-          ...session,
-          pets: {
-            pet_name: session.clients.details?.pet_name || session.clients.name || '',
-            species: session.clients.details?.species || '',
-          },
-          clients: undefined,
-        }
-      })
-
-      // A new thread has no last_message_at yet. NULLS FIRST keeps it inside the
-      // 200-row page; this sort then places it by opened_at among recent chats.
-      const activity=session=>Date.parse(String(session.last_message_at||session.opened_at||session.created_at||'').replace(/^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d)$/,'$1T$2Z'))||Date.now()
-      mapped.sort((a,b)=>activity(b)-activity(a))
+      const mapped = await fetchSessions(statusFilter, dateRangeRef.current)
+      // Only a chat already on screen can raise a handoff alert on reload. A chat
+      // that shows up because a filter changed carries an old handoff, not a new
+      // one; new handoffs on other chats arrive through realtime.
+      const known = knownSessionIdsRef.current
+      for (const session of mapped) pushHandoffAlert(session, undefined, !handoffSeededRef.current || !known.has(session.id))
+      for (const session of mapped) known.add(session.id)
+      handoffSeededRef.current = true
       setSessions(mapped)
       setActiveSession(previous=>{
         const current=previous&&activeSessionIdRef.current===previous.id?mapped.find(session=>session.id===previous.id):null
         return current?{...previous,...current}:previous
       })
+      return mapped
     } finally {
       setLoading(false)
     }
-  }, [activeModuleId, activeTenantId])
+  }, [activeModuleId, fetchSessions, pushHandoffAlert])
 
   const loadMessages = useCallback(async (sessionId) => {
     const { data } = await supabase
@@ -314,11 +346,16 @@ export function useChat() {
   }, [activeSession?.id, activeSession?.channel, activeTenantId, activeModuleId, loadMessages])
 
   const openSession = useCallback(async (session) => {
+    // Switching chats must never show the previous chat while the new one loads,
+    // nor let the previous chat's realtime events land in it.
+    if (activeSessionIdRef.current !== session.id) setMessages([])
+    msgChannelRef.current?.unsubscribe()
+    msgChannelRef.current = null
     setActiveSession(session)
     activeSessionIdRef.current = session.id
     const loadedMessages = await loadMessages(session.id)
+    if (activeSessionIdRef.current !== session.id) return loadedMessages
 
-    msgChannelRef.current?.unsubscribe()
     msgChannelRef.current = supabase
       .channel(`messages-${session.id}`)
       .on('postgres_changes', {
@@ -328,12 +365,12 @@ export function useChat() {
         filter: `session_id=eq.${session.id}`,
       }, (payload) => {
         if (payload.eventType === 'DELETE') {
-          setMessages((prev) => prev.filter((message) => message.id !== payload.old?.id))
+          if (activeSessionIdRef.current === session.id) setMessages((prev) => prev.filter((message) => message.id !== payload.old?.id))
           return
         }
         if (!payload.new?.id) return
         pushHandoffAlert(payload.new, session)
-        setMessages((prev) => mergeIncomingMessage(prev, payload.new))
+        if (activeSessionIdRef.current === session.id) setMessages((prev) => mergeIncomingMessage(prev, payload.new))
       })
       .subscribe()
 
@@ -396,7 +433,8 @@ export function useChat() {
         || message?.metadata?.client_message_id === optimisticMessage.id
       ))
 
-      if (persistedMessage) {
+      // The customer may have switched chats while the turn ran.
+      if (persistedMessage && activeSessionIdRef.current === sessionId) {
         setMessages((prev) => mergeIncomingMessage(prev, persistedMessage))
       }
 
@@ -407,7 +445,7 @@ export function useChat() {
       return result
     } catch (error) {
       if (error.name === 'AbortError') throw error // polling cancelled; durable turn is not cancelled
-      setMessages((prev) => prev.map((message) => (
+      if (activeSessionIdRef.current === sessionId) setMessages((prev) => prev.map((message) => (
         message.id === optimisticMessage.id
           ? { ...message, metadata: { ...(message.metadata || {}), pending: false, failed: true } }
           : message
@@ -542,6 +580,7 @@ export function useChat() {
     quickReplies,
     handoffAlerts,
     loadSessions,
+    fetchSessions,
     loadMessages,
     loadQuickReplies,
     openSession,

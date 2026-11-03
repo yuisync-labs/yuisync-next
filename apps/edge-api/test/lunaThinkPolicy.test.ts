@@ -36,6 +36,13 @@ describe('Think: conversa e provas comerciais',()=>{
   expect(validateThinkReply('Opções até R$ 130,00: Ração A por R$ 90,00. Temos estoque.',facts).ok).toBe(true)
   expect(validateThinkReply('A Ração A custa R$ 130,00.',facts).ok).toBe(false)
  })
+ it('cita a chave PIX só como a loja configurou e nunca confirma pagamento',()=>{
+  const pix=[{name:'get_payment_instructions',result:{ok:true,data:{pix_key:'pix-teste@exemplo.com'}}}]
+  expect(validateThinkReply('A chave PIX é pix-teste@exemplo.com. Envie o comprovante, por favor.',pix).ok).toBe(true)
+  expect(validateThinkReply('A chave PIX é loja@outra.com.',pix)).toMatchObject({ok:false,reason:'PAYMENT_NOT_INTEGRATED'})
+  expect(validateThinkReply('A chave PIX é pix-teste@exemplo.com.',[])).toMatchObject({ok:false,reason:'PAYMENT_NOT_INTEGRATED'})
+  expect(validateThinkReply('Pagamento confirmado!',pix)).toMatchObject({ok:false,reason:'PAYMENT_NOT_INTEGRATED'})
+ })
  it('fornece horário com offset da loja preservando exatamente o instante',()=>{
   for(const [utc,local] of [['2026-10-17T17:00:00Z','2026-10-17T14:00:00-03:00'],['2026-10-17T01:00:00Z','2026-10-16T22:00:00-03:00']]){
    expect(zonedIsoTime(utc,'America/Sao_Paulo')).toBe(local)
@@ -63,6 +70,7 @@ describe('Think: conversa e provas comerciais',()=>{
  })
  it('aguarda dez segundos após a última mensagem, inclusive em sequências longas',()=>{expect(batchDue(1000,1200)).toBe(11200);expect(batchDue(1000,5900)).toBe(15900);expect(batchDue(1000,30000)).toBe(40000)})
  it('nota não se confunde com quantidades ou alternativas',()=>{expect(ratingFromMessage('5 estrelas')).toBe(5);expect(ratingFromMessage('5 sachês')).toBeNull();expect(ratingFromMessage('0')).toBeNull();expect(ratingFromMessage('1 ou 5')).toBeNull()})
+ it('nota aceita jeitos comuns de avaliar',()=>{for(const [text,score] of [['5',5],['5!',5],['nota 5',5],['5, adorei o atendimento',5],['5 estrelas muito bom',5],['cinco estrelas',5],['dou 4',4],['⭐⭐⭐⭐⭐',5],['4/5',4],['5 obrigado',5]] as const)expect(ratingFromMessage(text),text).toBe(score);for(const text of ['um banho','5 sachês','quero 2','5 kg','1 ou 5','5,5'])expect(ratingFromMessage(text),text).toBeNull()})
  it('desistência não é uma correção de serviço',()=>{expect(withdrawalMessage('deixa pra lá')).toBe(true);expect(withdrawalMessage('não é tosa, só banho')).toBe(false)})
  it('aceita linguagem explícita, rejeitando ressalvas, dúvida e negação',()=>{for(const text of ['sim pix','pode ser','pode fechar sim','confirmo sim'])expect(explicitConfirmation(text,'product_order_create')).toBe(true);for(const text of ['sim mas troca para 2','não confirmo','sim?','pode ser amanhã?','sim, entrega em outro lugar'])expect(explicitConfirmation(text,'product_order_create')).toBe(false)})
  it('repetir a modalidade só confirma quando corresponde à proposta',()=>{

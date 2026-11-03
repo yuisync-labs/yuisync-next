@@ -28,7 +28,7 @@ describe('Luna designed scenario 10 — real Worker/local D1/simulated provider'
         const field = (key:string,value:string) => commands.push({name:'update_operation_draft',args:{operationId:'registration',kind:'registration',expectedVersion:version++,action:'set_field',field:key,value}})
         if(turn===1){ commands.push({name:'get_customer_context',args:{}});field('customer_name','Marina');field('pet_name','Theo') }
         if(turn===2)field('customer_name','Mariana')
-        if(turn===3){field('species','dog');field('breed','Poodle');field('weight_kg','8');commands.push({name:'prepare_customer_registration',args:{customer_name:'Mariana',pet_name:'Theo',species:'dog',breed:'Poodle',weight_kg:8,operation_id:'registration'}})}
+        if(turn===3){field('species','dog');field('breed','Poodle');field('weight_kg','8');commands.push({name:'prepare_customer_registration',args:{customer_name:'Mariana',pet_name:'Theo',species:'dog',breed:'Poodle',weight_kg:8,tutor_birth_date:'1990-05-14',cpf:'52998224725',postal_code:'36880000',address_number:'191',address_reference:'perto da praça',operation_id:'registration'}})}
         if(turn===4){expect(reference).not.toBeNull();commands.push({name:'commit_confirmed_proposal',args:reference!})}
         let step=0,lastCall=''
         const provider={model:'offline-scripted-provider',async complete(input:{messages:readonly LunaMessage[]}):Promise<LunaProviderResponse & {requestLimit:number}>{
