@@ -36,6 +36,21 @@ export function namedPet<T extends { name?: unknown }>(text: string, pets: T[]) 
   return hits.length === 1 ? hits[0] : null
 }
 
+// A registered customer asking for a service without naming the pet: Luna
+// already knows the pets and asks which one, never the name, breed or weight
+// of a pet on file. With one pet, that pet is meant.
+export function petChoiceInstruction(customerName: unknown, pets: { name?: unknown }[], said: string) {
+  const named = pets.filter(p => typeof p.name === 'string' && p.name.trim() !== '')
+  if (!named.length || namedPet(said, named)) return ''
+  const title = (v: string) => v.toLowerCase().replace(/(^|\s)\p{L}/gu, m => m.toUpperCase())
+  const names = named.map(p => title(String(p.name).trim()))
+  const first = typeof customerName === 'string' && customerName.trim() ? title(customerName.trim().split(/\s+/)[0]) : ''
+  const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' ou ' + names[names.length - 1] : names[0]
+  return names.length > 1
+    ? `\nPETS CADASTRADOS: o cliente${first ? ' ' + first : ''} já tem cadastro com ${names.length} pets (${names.join(', ')}) e não disse para qual é. Cumprimente pelo primeiro nome e pergunte só qual deles, por exemplo: "Olá${first ? ', ' + first : ''}! É para ${list}?". Não pergunte nome, raça ou espécie de pet cadastrado.`
+    : `\nPET CADASTRADO: o cliente${first ? ' ' + first : ''} tem um pet cadastrado, ${names[0]}; é para ele. Não pergunte nome, raça ou espécie.`
+}
+
 export function thinkSkills() {
   return [skills.fromManifest({ id: 'next-petshop', fingerprint: 'think-petshop-v1', skills: [
     {name:'venda',description:'Detalhes do procedimento para carrinho, entrega e confirmação de compra.',body:'Consulte catálogo e saldo; mantenha quantidades por item. Peça modalidade e endereço necessários. Prepare proposta com total e frete reais. Aguarde confirmação posterior. Execute commit e informe pedido pendente. Não recebe pagamento. Alterações invalidam resumo. Não insista em desistência.'},

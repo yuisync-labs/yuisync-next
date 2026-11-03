@@ -17,7 +17,7 @@ import { hashCanonicalJson, canonicalJson } from './canonicalJson'
 import type { InternalChatJob } from './internalChatTurn'
 import type { LunaExecutionContext, LunaToolResult } from './contracts'
 import { catalogInput, normalizeSearchKey, thinkCatalogSearch, validateThinkJob, customerHistory, closeThinkConversation, recordThinkRating, explicitRestockConsent, fail } from './thinkDomain'
-import { THINK_MODEL, THINK_TURN_NEURON_LIMIT, thinkNeurons, thinkInstructions, thinkCommerceRules, thinkAgendaRules, thinkTopics, serviceQuery, namedPet, thinkSkills, batchDue, ratingFromMessage, clinicalRisk, storeCalendar } from './thinkPolicy'
+import { THINK_MODEL, THINK_TURN_NEURON_LIMIT, thinkNeurons, thinkInstructions, thinkCommerceRules, thinkAgendaRules, thinkTopics, serviceQuery, namedPet, thinkSkills, batchDue, ratingFromMessage, clinicalRisk, storeCalendar, petChoiceInstruction } from './thinkPolicy'
 import { getProduct, type Memory } from './thinkCatalog/catalog'
 import { addressKept, lastHourSaid, nextBookingStep, oneLegSaid, weightFromSaid, weightSaid, dateSaid, selfTransportSaid, serviceKinds, timeSaid } from './bookingSteps'
 import { publishTableInvalidation } from '../realtimeApi'
@@ -214,7 +214,9 @@ export class LunaThinkAgent extends Think<ThinkBindings,State> {
       const capability=unregistered?'signup':'agenda'
       if(this.state.capability!==capability)this.setState({...this.state,capability})
       const query=serviceQuery(text)??serviceQuery(recent?.text??''),pets=customer.ok?record(customer.data).pets:[],pet=namedPet(text,Array.isArray(pets)?pets as {id:string;name?:unknown}[]:[])
-      const said=(recent?.text??'')+'\n'+text,species=pet?undefined:/\b(gat[oa]s?|gatinh[oa]s?|felin[oa]s?)\b/i.test(said)?'cat':/\b(cachorr[oa]s?|c[aã]o|c[aã]es|cadel[ao]s?|dog)\b/i.test(said)?'dog':undefined
+      const said=(recent?.text??'')+'\n'+text
+      if(customer.ok&&Array.isArray(pets))services+=petChoiceInstruction(record(record(customer.data).customer).name,pets as {name?:unknown}[],said)
+      const species=pet?undefined:/\b(gat[oa]s?|gatinh[oa]s?|felin[oa]s?)\b/i.test(said)?'cat':/\b(cachorr[oa]s?|c[aã]o|c[aã]es|cadel[ao]s?|dog)\b/i.test(said)?'dog':undefined
       const found=query?await this.searchServices(query,pet?.id,t.context,capability,species):null
       // Recorded as this turn's own search so the reply's price is validated against it.
       if(found?.ok&&!t.results.some(r=>r.name==='search_services'))this.updateTurn({results:[...t.results,{name:'search_services',input:{query,...(pet?{pet_id:pet.id}:{})},result:found}]},ctx.requestId)

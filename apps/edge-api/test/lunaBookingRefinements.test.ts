@@ -184,3 +184,16 @@ describe('agent battery retest of 12 (29/10)', () => {
     expect(withoutInternalErrors('Temos horário em um momento tranquilo da manhã, às 9h.')).toBe('Temos horário em um momento tranquilo da manhã, às 9h.')
   })
 })
+
+describe('a registered customer with pets asks for a service', () => {
+  it('asks which pet by name, never name, breed or weight of a pet on file', async () => {
+    const { petChoiceInstruction } = await import('../src/luna/thinkPolicy')
+    const pets = [{ name: 'PIPOCA' }, { name: 'MAX' }, { name: 'LUNA' }]
+    const many = petChoiceInstruction('MARTA RAMOS SILVA', pets, 'Ola boa noite, quero agendar um banho')
+    expect(many).toContain('"Olá, Marta! É para Pipoca, Max ou Luna?"')
+    expect(many).toContain('Não pergunte nome, raça ou espécie')
+    expect(petChoiceInstruction('MARTA', pets, 'banho pro max amanhã')).toBe('')
+    expect(petChoiceInstruction('MARTA', [{ name: 'PIPOCA' }], 'quero um banho')).toContain('tem um pet cadastrado, Pipoca')
+    expect(petChoiceInstruction('MARTA', [], 'quero um banho')).toBe('')
+  })
+})
